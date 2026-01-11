@@ -95,8 +95,12 @@ class CYData:
         type(self).c2_cob    = property(lambda self: self._c2_cob)
         type(self).H_cob     = property(lambda self: self._H_cob)
     
+    # alternative constructor
+    # -----------------------
     @classmethod
-    def from_cy(cls, cy, coni_curve: "ArrayLike" = None) -> "CYData":
+    def from_cy(cls,
+        cy: "cytools.CalabiYau",
+        coni_curve: "ArrayLike" = None) -> "CYData":
         """
         **Description:**
         Construct a CYData object from a cytools.CalabiYau object.
@@ -120,6 +124,7 @@ class CYData:
         return cls(kappa=kappa, c2=c2, H=H, coni_curve=coni_curve)
 
     # getters
+    # -------
     @property
     def kappa(self):
         return self._kappa
@@ -214,8 +219,7 @@ class CYData:
 
     # basis for M-vectors
     # -------------------
-    # actual M-lattice basis
-    def M_lattice(self)-> "ArrayLike":
+    def M_lattice(self, verify: bool = True)-> "ArrayLike":
         """
         **Description:**
         Computes a basis of the sublattice of all vectors, M, such that
@@ -231,9 +235,8 @@ class CYData:
         Work with column bases throughout.
 
         **Arguments:**
-        - `kappa`:  The intersection numbers.
-        - `c2`:     The second chern class.
-        - `coni`:   Whether this is done in the Coni context (changes b).
+        - `verify`: Whether to verify the computation by checking dot products
+                    with a and b.
 
         **Returns:**
         A basis for M satisfying the integrality constraints. Basis vectors are
@@ -257,7 +260,11 @@ class CYData:
         out = dual * (24//denom)
         
         # LLL-reduce the dual to be extra nice
-        return lattice.lll_reduce(out)
+        out = lattice.lll_reduce(out)
+        if verify:
+            assert np.all((self.a@out)%2 == 0)
+            assert np.all((self.b.reshape(1,-1)@out)%24 == 0)
+        return out
 
 # compute possible p-vectors
 # --------------------------
