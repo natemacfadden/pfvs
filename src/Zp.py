@@ -64,7 +64,7 @@ def pvecs(data: "CYData", max_deg: int) -> "ArrayLike":
 
     # compute a grading vector
     # (just needs to be in strict interior of dual cone)
-    grading = data.H.sum(axis=0)
+    grading = H.sum(axis=0)
     grading = grading//functools.reduce(math.gcd,grading)
 
     # define a constraint-programming model to solve
@@ -107,7 +107,7 @@ def ZpM(
     tadpole_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
-    ):
+    ) -> tuple["ArrayLike", "ArrayLike"]:
     """
     A Python "Zp" implementation that takes in p-vectors and outputs PFVs.
 
@@ -119,6 +119,10 @@ def ZpM(
 
     returns a list of Ks and Ms
     """
+    # misc
+    only_positive_news = False
+
+    # read data
     kappa  = data.kappa
     Mbasis = data.M_lattice()
 
@@ -179,17 +183,273 @@ def ZpM(
 
         if True:#filter_tadpole:
             Qs = -np.sum(Ks*Ms,axis=0)
-            under_tadpole = Qs<Qmax
+            in_tadpole = (Qs>Qmin) & (Qs<Qmax)
             if verbosity >= 2:
                 if not only_positive_news:
-                    print(f"{len(under_tadpole)-sum(under_tadpole)}/{len(under_tadpole)} 'PFVs' violated tadpole :(")
-                if sum(under_tadpole):
-                    print(f"but {sum(under_tadpole)} under tadpole!!!")
-            Ks = Ks[:,under_tadpole]
-            Ms = Ms[:,under_tadpole]
+                    print(f"{len(in_tadpole)-sum(in_tadpole)}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
+                if sum(in_tadpole):
+                    print(f"but {sum(in_tadpole)} in tadpole!!!")
+            Ks = Ks[:,in_tadpole]
+            Ms = Ms[:,in_tadpole]
 
         # filter by N invertibility
         if True:#filter_Ninvertible:
+            batch_size = 5000
+            singular = []
+            for i in range(0, len(Ms), batch_size):
+                chunk = Ms[i:i+batch_size]
+
+                Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
+                Ns = Ns.transpose(2,0,1)
+
+                sign, logdet = np.linalg.slogdet(Ns)
+                is_zero = (sign == 0) | (logdet <= -1e-4)
+
+                singular.append(is_zero)
+
+            singular = np.concatenate(singular)
+
+            if verbosity >= 1:
+                if not only_positive_news:
+                    print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
+
+            Ks = Ks[:,~singular]
+            Ms = Ms[:,~singular]
+
+        # transpose to row-wise
+        Ks, Ms = Ks.T, Ms.T
+
+        # save to data structures
+        all_Ks = np.vstack([all_Ks, Ks])
+        all_Ms = np.vstack([all_Ms, Ms])
+
+    # return
+    return all_Ks, all_Ms
+
+def ZpK(
+    data: "cydata",
+    ps: "ArrayLike",
+    Qmax: float,
+    Qmin: float = 0,
+    tadpole_dilation: float = 1, # typically want >=1
+    max_N_pfvs: int = 1_000_000_000,
+    verbosity: int = 0
+    ) -> tuple["ArrayLike", "ArrayLike"]:
+    """
+    A Python Zp implementation that takes in p-vectors and outputs PFVs
+
+    filter_Ninvertible = whether the PFV has a invertible N matrix
+
+    returns a list of Ks and Ms
+    """
+    # misc
+    only_positive_news = False
+
+    # read data
+    kappa  = data.kappa
+    Mbasis = data.M_lattice()
+
+    # the search
+    # ----------
+    all_Ks = np.zeros((0,data.h11), dtype=int)
+    all_Ms = np.zeros((0,data.h11), dtype=int)
+
+    # iterate over p-vectors
+    if verbosity >= 1:
+        iterator = tqdm(ps)
+    else:
+        iterator = ps
+    for _i, p in enumerate(iterator):
+        if verbosity > 0:
+            print(f"progress={_i}/{len(ps)-1}", end='\r')
+
+        # helper variables
+        A = kappa@p@Mbasis
+        try:
+            Ainv, scale = lattice.inv_scaled(A)#np.linalg.inv(A)
+        except:
+            print(f"PANIC!!!! {p.tolist()} CAUSED WEIRD AINV!!!")
+        
+        # define the lattices for K
+        # -------------------------
+        # (need K^T@p = 0)
+        B = lattice.orthogonal_lattice(p=p)
+        
+        # find lattice points in tadpole
+        mat = -B.T@np.linalg.inv(kappa@p)@B
+
+        if np.allclose(mat, np.round(mat)):
+            mat = np.rint(mat).astype(int)
+
+        #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
+        lattice_points = lattice.fp_ellipsoid(
+            mat,
+            tadpole_dilation*Qmax,
+            Q_lower=Qmin,
+            max_N_out=max_N_pfvs,
+            verbosity=verbosity-1)
+
+        # only keep primitive lattice points (can reclaim other PFVs easily)
+        primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
+        lattice_points = lattice_points[primitiveQ]
+        
+        # compute Ms, Ks, and reduced by GCD
+
+        # read the data
+        cs = ((Ainv@B)@lattice_points.T).T
+        gcds = np.gcd.reduce(cs,axis=1)
+        cs_scaled = cs//gcds.reshape(-1,1)
+
+        Ks = B@lattice_points.T # as columns
+        Ms = Mbasis@cs_scaled.T
+
+        # filter
+        #if reduce_gcds:
+        #    Ks = Ks//np.gcd.reduce(Ks, axis=0)
+
+        if True:#filter_tadpole:
+            Qs = -np.sum(Ks*Ms,axis=0)
+            in_tadpole = (Qs>Qmin) & (Qs<Qmax)
+            if verbosity >= 2:
+                if not only_positive_news:
+                    print(f"{len(in_tadpole)-sum(in_tadpole)}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
+                if sum(in_tadpole):
+                    print(f"but {sum(in_tadpole)} in tadpole!!!")
+            Ks = Ks[:,in_tadpole]
+            Ms = Ms[:,in_tadpole]
+
+        # filter by N invertibility
+        if True:#filter_Ninvertible:
+            batch_size = 5000
+            singular = []
+            for i in range(0, len(Ms), batch_size):
+                chunk = Ms[i:i+batch_size]
+
+                Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
+                Ns = Ns.transpose(2,0,1)
+
+                sign, logdet = np.linalg.slogdet(Ns)
+                is_zero = (sign == 0) | (logdet <= -1e-4)
+
+                singular.append(is_zero)
+
+            singular = np.concatenate(singular)
+
+            if verbosity >= 2:
+                if not only_positive_news:
+                    print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
+
+            Ks = Ks[:,~singular]
+            Ms = Ms[:,~singular]
+
+        # transpose to row-wise
+        Ks, Ms = Ks.T, Ms.T
+
+        # save to data structures
+        all_Ks = np.vstack([all_Ks, Ks])
+        all_Ms = np.vstack([all_Ms, Ms])
+
+    # return
+    return all_Ks, all_Ms
+
+# Coni-Zp
+# -------
+def coniZpM(
+    data: "cydata",
+    ps: "ArrayLike",
+    Qmax: float,
+    Qmin: float = 0,
+    tadpole_dilation: float = 1, # typically want >=1
+    max_N_pfvs: int = 1_000_000_000,
+    verbosity: int = 0
+    ) -> tuple["ArrayLike", "ArrayLike"]:
+    """
+    A Python "Zp" implementation that takes in p-vectors and outputs PFVs.
+
+    Operates by constructing a lattice of valid M-vectors and writing the
+    K-vector in terms of M and p. Then the tadpole constraint 0 <= -K.M <= Q
+    defines an ellipsoid of M-vectors
+
+    filter_Ninvertible = whether the PFV has a invertible N matrix
+
+    returns a list of Ks and Ms
+    """
+    # misc
+    only_positive_news = False
+
+    # read data
+    kappa  = data.kappa
+    Mbasis = data.M_lattice()
+
+    # the search
+    # ----------
+    all_Ks = np.zeros((0,data.h11), dtype=int)
+    all_Ms = np.zeros((0,data.h11), dtype=int)
+
+    # iterate over p-vectors
+    if verbosity >= 1:
+        iterator = tqdm(ps)
+    else:
+        iterator = ps
+    for _i, p in enumerate(iterator):
+        if verbosity > 0:
+            print(f"progress={_i}/{len(ps)-1}", end='\r')
+
+        # helper variable
+        _0p = np.concatenate([0],p)
+        Z = kappa@_0p
+        
+        # define the lattices for M
+        # -------------------------
+        # (need M = Mbasis@c and T.T@M = 0)
+        T = kappa@_0p@_0p
+
+        # need T.T @ Mbasis@c = 0
+        # thus just need c in the orthogonal lattice to Mbasis.T @ T
+        # (the output will be lattice generators of such cs... we'll want
+        #  lattice generators of valid Ms so we multiply on left by Mbasis)
+        Binter = Mbasis@lattice.orthogonal_lattice(p=T.T@Mbasis)
+        
+        # find lattice points in tadpole
+        mat = -(Binter).T@(Z@Binter)
+
+        if np.allclose(mat, np.round(mat)):
+            mat = np.rint(mat).astype(int)
+
+        #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
+        lattice_points = lattice.fp_ellipsoid(
+            mat,
+            tadpole_dilation*Qmax,
+            Q_lower=Qmin,
+            max_N_out=max_N_pfvs,
+            verbosity=verbosity-1)
+
+        # only keep primitive lattice points (can reclaim other PFVs easily)
+        primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
+        lattice_points = lattice_points[primitiveQ]
+        
+        # compute Ms, Ks, and reduced by GCD
+        Ms = Binter@lattice_points.T # as columns
+        Ks = Z@Ms
+
+        #if reduce_gcds:
+        #K_gcds = gcd_row(Ks.T)
+        K_gcds = np.gcd.reduce(Ks, axis=0)
+        Ks = Ks//K_gcds
+
+        if False:#filter_tadpole:
+            Qs = -np.sum(Ks*Ms,axis=0)
+            in_tadpole = (Qs>Qmin) & (Qs<Qmax)
+            if verbosity >= 2:
+                if not only_positive_news:
+                    print(f"{len(in_tadpole)-sum(in_tadpole)}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
+                if sum(in_tadpole):
+                    print(f"but {sum(in_tadpole)} in tadpole!!!")
+            Ks = Ks[:,in_tadpole]
+            Ms = Ms[:,in_tadpole]
+
+        # filter by N invertibility
+        if False:#filter_Ninvertible:
             batch_size = 5000
             singular = []
             for i in range(0, len(Ms), batch_size):
