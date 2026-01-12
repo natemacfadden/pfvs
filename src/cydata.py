@@ -46,7 +46,8 @@ class CYData:
         kappa: "ArrayLike",
         c2: "ArrayLike",
         H: "ArrayLike",
-        coni_curve: "ArrayLike" = None):
+        coni_curve: "ArrayLike" = None,
+        coni_cob: "ArrayLike" = None):
         """
         **Description:**
         Initializes an instance of a simple class to hold the relevant data of
@@ -58,6 +59,8 @@ class CYData:
         - `H`:          Inwards-facing hyperplaness defining the Kahler cone.
         - `coni_curve`: The conifold curve. If not provided, then non-Coni PFVs
                         are assumed.
+        - `coni_cob`:   A change of basis matrix used to map the coni curve to
+                        a preferred presentation (1,0,...0)
         """
         self._kappa = np.array(kappa)
         self._c2    = np.array(c2)
@@ -67,6 +70,7 @@ class CYData:
         # variables for the M-lattice
         self._a     = None
         self._b     = None
+        self._M_lattice = None
 
         # misc
         self._h11   = self._kappa.shape[0]
@@ -82,14 +86,17 @@ class CYData:
         type(self).coni_curve = property(lambda self: self._coni_curve)
 
         # compute the change of basis via the HNF
-        q = np.array(self._coni_curve).reshape(-1,1)
-        q = flint.fmpz_mat(q.tolist())
-        self._cob = q.hnf(transform=True)[1]
-        self._cob = np.array(self._cob.tolist()).astype(int)
+        if coni_cob is None:
+            q = np.array(self._coni_curve).reshape(-1,1)
+            q = flint.fmpz_mat(q.tolist())
+            self._cob = q.hnf(transform=True)[1]
+            self._cob = np.array(self._cob.tolist()).astype(int)
+        else:
+            self._cob = np.array(coni_cob)
         type(self).cob = property(lambda self: self._cob)
 
         # map kappa, c2, and H via this change of basis
-        self._kappa_cob = np.einsum('ia,jb,kc,ijk->abc',
+        self._kappa_cob = np.einsum('ai,bj,ck,ijk->abc',
             self._cob, self._cob, self._cob, self._kappa)
         self._c2_cob = (self._cob@self._c2).reshape(-1)
         self._H_cob  = (self._H@self._cob.T)[:,1:]
@@ -107,7 +114,8 @@ class CYData:
     @classmethod
     def from_cy(cls,
         cy: "cytools.CalabiYau",
-        coni_curve: "ArrayLike" = None) -> "CYData":
+        coni_curve: "ArrayLike" = None,
+        coni_cob: "ArrayLike" = None) -> "CYData":
         """
         **Description:**
         Construct a CYData object from a cytools.CalabiYau object.
@@ -124,11 +132,16 @@ class CYData:
         kappa = cy.intersection_numbers(in_basis=True, format='dense')
         c2    = cy.second_chern_class(in_basis=True)
         # (hyperplanes of the Kahler cone)
-        H     = cy.mori_cone_cap(in_basis=True).rays()
+        H     = cy.mori_cone_cap(in_basis=True).extremal_rays()
 
         # return
         # ------
-        return cls(kappa=kappa, c2=c2, H=H, coni_curve=coni_curve)
+        return cls(
+            kappa=kappa,
+            c2=c2,
+            H=H,
+            coni_curve=coni_curve,
+            coni_cob=coni_cob)
 
     # getters
     # -------
@@ -178,16 +191,24 @@ class CYData:
             return self._a
 
         # compute the a-matrix
-        kappa = self.kappa
+        if not self.coni:
+            kappa = self.kappa
+        else:
+            kappa = self.kappa_cob
         h11 = kappa.shape[0]
         a   = np.zeros((h11, h11), dtype=int)
 
         # fill the matrix
         for x,y in itertools.product(range(h11), range(h11)):
             if x>=y:
-                a[x,y] = kappa[x,y,y]
-            else:
                 a[x,y] = kappa[x,x,y]
+            else:
+                a[x,y] = kappa[x,y,y]
+
+        # trim if coni
+        # (project out coni index)
+        if self.coni:
+            a = a[1:]
 
         # return
         self._a = a
@@ -220,9 +241,11 @@ class CYData:
             return self._b
 
         # for non-Coni, this is just c2...
-        self._b = self.c2
         if not self.coni:
-            return self._b
+            self._b = self.c2
+            return self._b.copy()
+        else:
+            self._b = self.c2_cob.copy()
 
         # adjust for Coni
         self._b[0] = self._b[0]+2
@@ -253,6 +276,11 @@ class CYData:
         A basis for M satisfying the integrality constraints. Basis vectors are
         columns.
         """
+        # already known
+        if self._M_lattice is not None:
+            return self._M_lattice
+
+        # compute from scratch
         h11 = self.kappa.shape[0]
 
         # construct the primal lattice
