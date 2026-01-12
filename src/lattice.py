@@ -215,8 +215,8 @@ def fp_ellipsoid(
     # cholesky decomposition
     try:
         L = np.linalg.cholesky(mat)
-    except:
-        print(mat, flush=True)
+    except np.linalg.LinAlgError as e:
+        raise e
 
     # solve it!
     if recursive:
