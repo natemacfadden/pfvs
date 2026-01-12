@@ -96,6 +96,70 @@ def pvecs(data: "CYData", max_deg: int) -> "ArrayLike":
     # return
     return printer.points
 
+# Zp helpers
+# ----------
+def allow_gcds(Ks, Ms, Qmax):
+    """
+    Introduce nontrivial GCDs into (K,M) pairs
+    """
+    h11 = len(Ks[0])
+
+    KMs_out = set()
+    
+    for K,M in zip(Ks,Ms):
+        Qtmp = -np.dot(K,M)
+
+        for a in range(1,Qmax//Qtmp+1):
+            for b in range(1,Qmax//(a*Qtmp)+1):
+                Ktmp = (a*K).tolist()
+                Mtmp = (b*M).tolist()
+                KMs_out.add(tuple(Ktmp+Mtmp))
+
+    # split back into K and M arrays
+    Ks, Ms = [], []
+    for KM in KMs_out:
+        Ks.append(KM[:h11])
+        Ms.append(KM[h11:])
+
+    return np.vstack(Ks), np.vstack(Ms)
+
+def all_coni_K0(Ks, Ms, Qmax, verbosity: int = 0):
+    """
+    For Coni PFV, set K0 to all permissible values
+    """
+    h11 = len(Ks[0])
+
+    KMs_out = set()
+    
+    for K,M in zip(Ks,Ms):
+        if M[0] == 0:
+            if verbosity >= 1:
+                print(f"infinite # of PFVs K=[?,{K[1:].tolist()}], M={M.tolist()}")
+            continue
+
+        Qtmp  = -np.dot(K[1:],M[1:])
+
+        # compute the ranges such that (K,M) are under tadpole
+        K0min, K0max = Qtmp/M[0], -(Qmax+Qtmp)/M[0]
+        if K0min > K0max:
+            K0min, K0max = K0max, K0min
+        K0min = math.floor(K0min)
+        K0max = math.ceil(K0max)
+
+        Ktmp = K[1:].tolist()
+        Mtmp = M.tolist()
+        for K0 in range(K0min, K0max+1):
+            if -np.dot([K0]+Ktmp,Mtmp) <= Qmax:
+                KMs_out.add(tuple([K0]+Ktmp+Mtmp))
+
+    # split back into K and M arrays
+    Ks, Ms = [], []
+    for KM in KMs_out:
+        Ks.append(KM[:h11])
+        Ms.append(KM[h11:])
+
+    return np.vstack(Ks), np.vstack(Ms)
+
 # Zp
 # --
 # ZpM
@@ -104,7 +168,7 @@ def ZpM(
     ps: "ArrayLike",
     Qmax: float,
     Qmin: float = 0,
-    tadpole_dilation: float = 1, # typically want >=1
+    ellipsoid_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
     ) -> tuple["ArrayLike", "ArrayLike"]:
@@ -140,7 +204,7 @@ def ZpM(
         if verbosity > 0:
             print(f"progress={_i}/{len(ps)-1}", end='\r')
 
-        # helper variable
+        # helper variable (K = Z@M)
         Z = kappa@p
         
         # define the lattices for M
@@ -163,7 +227,7 @@ def ZpM(
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         lattice_points = lattice.fp_ellipsoid(
             mat,
-            tadpole_dilation*Qmax,
+            ellipsoid_dilation*Qmax,
             Q_lower=Qmin,
             max_N_out=max_N_pfvs,
             verbosity=verbosity-1)
@@ -224,14 +288,14 @@ def ZpM(
         all_Ms = np.vstack([all_Ms, Ms])
 
     # return
-    return all_Ks, all_Ms
+    return allow_gcds(all_Ks, all_Ms, Qmax)
 
 def ZpK(
     data: "cydata",
     ps: "ArrayLike",
     Qmax: float,
     Qmin: float = 0,
-    tadpole_dilation: float = 1, # typically want >=1
+    ellipsoid_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
     ) -> tuple["ArrayLike", "ArrayLike"]:
@@ -284,7 +348,7 @@ def ZpK(
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         lattice_points = lattice.fp_ellipsoid(
             mat,
-            tadpole_dilation*Qmax,
+            ellipsoid_dilation*Qmax,
             Q_lower=Qmin,
             max_N_out=max_N_pfvs,
             verbosity=verbosity-1)
@@ -350,7 +414,7 @@ def ZpK(
         all_Ms = np.vstack([all_Ms, Ms])
 
     # return
-    return all_Ks, all_Ms
+    return allow_gcds(all_Ks, all_Ms, Qmax)
 
 # Coni-Zp
 # -------
@@ -359,7 +423,7 @@ def coniZpM(
     ps: "ArrayLike",
     Qmax: float,
     Qmin: float = 0,
-    tadpole_dilation: float = 1, # typically want >=1
+    ellipsoid_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
     ) -> tuple["ArrayLike", "ArrayLike"]:
@@ -378,7 +442,7 @@ def coniZpM(
     only_positive_news = False
 
     # read data
-    kappa  = data.kappa
+    kappa  = data.kappa_cob
     Mbasis = data.M_lattice()
 
     # the search
@@ -395,10 +459,17 @@ def coniZpM(
         if verbosity > 0:
             print(f"progress={_i}/{len(ps)-1}", end='\r')
 
-        # helper variable
-        _0p = np.concatenate([0],p)
+        _0p = np.concatenate([[0],p])
+
+        # projection matrix
+        proj = np.hstack([
+            np.zeros((data.h11-1,1), dtype=int),
+            np.identity(data.h11-1,  dtype=int)
+        ])
+
+        # helper variable (K[1:] = (Z@M)[1:])
         Z = kappa@_0p
-        
+
         # define the lattices for M
         # -------------------------
         # (need M = Mbasis@c and T.T@M = 0)
@@ -409,7 +480,7 @@ def coniZpM(
         # (the output will be lattice generators of such cs... we'll want
         #  lattice generators of valid Ms so we multiply on left by Mbasis)
         Binter = Mbasis@lattice.orthogonal_lattice(p=T.T@Mbasis)
-        
+
         # find lattice points in tadpole
         mat = -(Binter).T@(Z@Binter)
 
@@ -419,7 +490,7 @@ def coniZpM(
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         lattice_points = lattice.fp_ellipsoid(
             mat,
-            tadpole_dilation*Qmax,
+            ellipsoid_dilation*Qmax,
             Q_lower=Qmin,
             max_N_out=max_N_pfvs,
             verbosity=verbosity-1)
@@ -427,7 +498,7 @@ def coniZpM(
         # only keep primitive lattice points (can reclaim other PFVs easily)
         primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
         lattice_points = lattice_points[primitiveQ]
-        
+
         # compute Ms, Ks, and reduced by GCD
         Ms = Binter@lattice_points.T # as columns
         Ks = Z@Ms
@@ -437,7 +508,7 @@ def coniZpM(
         K_gcds = np.gcd.reduce(Ks, axis=0)
         Ks = Ks//K_gcds
 
-        if False:#filter_tadpole:
+        if True:#filter_tadpole:
             Qs = -np.sum(Ks*Ms,axis=0)
             in_tadpole = (Qs>Qmin) & (Qs<Qmax)
             if verbosity >= 2:
@@ -449,7 +520,7 @@ def coniZpM(
             Ms = Ms[:,in_tadpole]
 
         # filter by N invertibility
-        if False:#filter_Ninvertible:
+        if True:#filter_Ninvertible:
             batch_size = 5000
             singular = []
             for i in range(0, len(Ms), batch_size):
@@ -457,6 +528,7 @@ def coniZpM(
 
                 Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
                 Ns = Ns.transpose(2,0,1)
+                Ns = Ns[:,1:,1:]
 
                 sign, logdet = np.linalg.slogdet(Ns)
                 is_zero = (sign == 0) | (logdet <= -1e-4)
@@ -480,4 +552,6 @@ def coniZpM(
         all_Ms = np.vstack([all_Ms, Ms])
 
     # return
+    all_Ks, all_Ms = allow_gcds(all_Ks, all_Ms, Qmax)
+    all_Ks, all_Ms = all_coni_K0(all_Ks, all_Ms, Qmax)
     return all_Ks, all_Ms
