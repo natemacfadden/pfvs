@@ -59,7 +59,7 @@ def lll_reduce(B: "ArrayLike") -> "ArrayLike":
     return B
 
 # orthogonal lattice
-def orthog_lattice(p: "ArrayLike") -> "ArrayLike":
+def orthogonal_lattice(p: "ArrayLike") -> "ArrayLike":
     """
     **Description:**
     Computes a basis of the orthogonal lattice to some vector p, with columns
