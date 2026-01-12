@@ -68,6 +68,9 @@ class CYData:
         self._a     = None
         self._b     = None
 
+        # misc
+        self._h11   = self._kappa.shape[0]
+
         # check if non-Coni...
         if not self._coni:
             return
@@ -90,6 +93,10 @@ class CYData:
             self._cob, self._cob, self._cob, self._kappa)
         self._c2_cob = (self._cob@self._c2).reshape(-1)
         self._H_cob  = (self._H@self._cob.T)[:,1:]
+
+        # delete rows of 0 from the hyperplanes
+        nonzero_mask = self._H_cob.any(axis=1)
+        self._H_cob = self._H_cob[nonzero_mask]
 
         type(self).kappa_cob = property(lambda self: self._kappa_cob)
         type(self).c2_cob    = property(lambda self: self._c2_cob)
@@ -140,6 +147,10 @@ class CYData:
     @property
     def coni(self):
         return self._coni
+
+    @property
+    def h11(self):
+        return self._h11
 
     # a-matrix, b-vector
     # ------------------
