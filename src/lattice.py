@@ -21,6 +21,8 @@
 
 # external imports
 import flint
+import functools
+import math
 from numba import njit
 import numpy as np
 import scipy as sp
@@ -85,7 +87,7 @@ def orthogonal_lattice(p: "ArrayLike") -> "ArrayLike":
     n = len(p)
 
     # A = p as a column
-    A = flint.fmpz_mat([p.tolist()]).transpose()
+    A = flint.fmpz_mat([np.array(p).tolist()]).transpose()
 
     # H = U * A
     U = A.hnf(transform=True)[1]
@@ -118,6 +120,40 @@ def dual_lattice(B: "ArrayLike") -> "ArrayLike":
     D, denom = (B*( (B.transpose()*B).inv() )).numer_denom()
 
     return np.array(D.tolist()).astype(int), denom
+
+# inverse scaled
+def lcm(a, b):
+    return abs(a*b) // math.gcd(a, b)
+def inv_scaled(A):
+    """
+    Return (B, s) such that B*A = s*I
+    """
+    A = flint.fmpz_mat(A.tolist())
+    n = A.nrows()
+
+    # Smith normal form diagonal
+    D = A.snf()
+
+    diag = [int(D[i, i]) for i in range(n)]
+    if any(d == 0 for d in diag):
+        raise ValueError("Matrix is singular over Q")
+
+    # Scaling factor
+    s = functools.reduce(lcm, diag, 1)
+
+    # Build scaled inverse column-by-column
+    B = flint.fmpz_mat(n, n)
+    for i in range(n):
+        rhs = flint.fmpz_mat(n, 1)
+        rhs[i, 0] = s
+        x = A.solve(rhs)   # exact integer solve
+        for j, xj in enumerate(x):
+            B[j, i] = int(xj)
+
+    return (
+        np.array([[int(B[i, j]) for j in range(n)] for i in range(n)]),
+        s
+    )
 
 # lattice points in ellipsoid
 # ===========================
