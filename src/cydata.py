@@ -84,7 +84,7 @@ class CYData:
         # ===================
         # store information on the conifold curve if it is set
         self._coni_curve = np.array(coni_curve)
-        type(self).coni_curve = property(lambda self: self._coni_curve)
+        type(self).coni_curve = property(lambda self: self._coni_curve.copy())
 
         # change of basis matrix to basis where coni_curve = (1,0,...,0)
         # --------------------------------------------------------------
@@ -99,8 +99,8 @@ class CYData:
             self._cob = np.array(coni_cob)
 
         # check the change of basis
-        assert np.all(self._cob@self.coni_curve == [1]+[0]*(self.h11-1))
-        type(self).cob = property(lambda self: self._cob)
+        assert np.all(self._cob@self._coni_curve == [1]+[0]*(self.h11-1))
+        type(self).cob = property(lambda self: self._cob.copy())
 
 
         # map kappa, c2, and H via this change of basis
@@ -113,9 +113,9 @@ class CYData:
         nonzero_mask = self._H_cob.any(axis=1)
         self._H_cob = self._H_cob[nonzero_mask]
 
-        type(self).kappa_cob = property(lambda self: self._kappa_cob)
-        type(self).c2_cob    = property(lambda self: self._c2_cob)
-        type(self).H_cob     = property(lambda self: self._H_cob)
+        type(self).kappa_cob = property(lambda self: self._kappa_cob.copy())
+        type(self).c2_cob    = property(lambda self: self._c2_cob.copy())
+        type(self).H_cob     = property(lambda self: self._H_cob.copy())
     
     # alternative constructor
     # -----------------------
@@ -163,19 +163,33 @@ class CYData:
             coni_curve=coni_curve,
             coni_cob=coni_cob)
 
+    # standard class methods
+    # ----------------------
+    def __repr__(self):
+        return str(self)
+
+    def __str__(self):
+        msg = f"Data defining an h11={self.h11} CY, for utility in making "
+        if self.coni:
+            msg += f"Coni PFVs (conifold curve = {self._fconi_curve.tolist()})"
+        else:
+            msg += "PFVs"
+
+        return msg
+
     # getters
     # -------
     @property
     def kappa(self):
-        return self._kappa
+        return self._kappa.copy()
     
     @property
     def c2(self):
-        return self._c2
+        return self._c2.copy()
 
     @property
     def H(self):
-        return self._H
+        return self._H.copy()
 
     @property
     def coni(self):
@@ -212,9 +226,9 @@ class CYData:
 
         # compute the a-matrix
         if not self.coni:
-            kappa = self.kappa
+            kappa = self._kappa
         else:
-            kappa = self.kappa_cob
+            kappa = self._kappa_cob
         h11 = kappa.shape[0]
         a   = np.zeros((h11, h11), dtype=int)
 
@@ -265,7 +279,7 @@ class CYData:
             self._b = self.c2
             return self._b.copy()
         else:
-            self._b = self.c2_cob.copy()
+            self._b = self.c2_cob
 
         # adjust for Coni
         self._b[0] = self._b[0]+2
