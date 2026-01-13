@@ -230,7 +230,7 @@ def all_coni_K0(Ks, Ms, Qmax, h11, verbosity: int = 0):
 def ZpM(
     data: "cydata",
     ps: "ArrayLike",
-    Qmax: float,
+    Qmax: float = None,
     Qmin: float = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
@@ -247,12 +247,17 @@ def ZpM(
 
     returns a list of Ks and Ms
     """
+    assert not data.coni
+
     # misc
     only_positive_news = False
 
     # read data
     kappa  = data.kappa
     Mbasis = data.M_lattice()
+
+    if Qmax is None:
+        Qmax = data.h11+data.h21+2
 
     # the search
     # ----------
@@ -357,7 +362,7 @@ def ZpM(
 def ZpK(
     data: "cydata",
     ps: "ArrayLike",
-    Qmax: float,
+    Qmax: float = None,
     Qmin: float = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
@@ -370,12 +375,17 @@ def ZpK(
 
     returns a list of Ks and Ms
     """
+    assert not data.coni
+
     # misc
     only_positive_news = False
 
     # read data
     kappa  = data.kappa
     Mbasis = data.M_lattice()
+
+    if Qmax is None:
+        Qmax = data.h11+data.h21+2
 
     # the search
     # ----------
@@ -485,7 +495,7 @@ def ZpK(
 def coniZpM(
     data: "cydata",
     ps: "ArrayLike",
-    Qmax: float,
+    Qmax: float = None,
     Qmin: float = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
@@ -502,12 +512,17 @@ def coniZpM(
 
     returns a list of Ks and Ms
     """
+    assert data.coni
+
     # misc
     only_positive_news = False
 
     # read data
     kappa  = data.kappa_cob
     Mbasis = data.M_lattice()
+
+    if Qmax is None:
+        Qmax = (data.h11+data.h21+2) + 2
 
     # the search
     # ----------
