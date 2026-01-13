@@ -16,8 +16,8 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  This module contains misc utilities for PFV construction and
-#               verification.
+# Description:  This module contains a class to store/compute certain CY data
+#               needed for PFV computations.
 # -----------------------------------------------------------------------------
 
 # external imports
