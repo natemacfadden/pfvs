@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pfvs"
+version = "0.0.4"
+description = "A software package for constructing/verifying PFVs."
+authors = [{ name = "Liam McAllister Group" }]
+readme = "README.md"
+license = "GPL-3.0-or-later"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+]
+dependencies = [
+    "python-flint",
+    "ortools",
+    "numba",
+    "numpy",
+    "scipy",
+    "tqdm",
+]
+requires-python = ">=3.9, <3.14"
+
+[project.optional-dependencies]
+test = [
+  "pytest",
+  "gurobipy"
+]
+
+[project.urls]
+Repository = "https://github.com/LiamMcAllisterGroup/pfvs"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
