@@ -40,6 +40,8 @@ class CYData:
     - `H`:          Inwards-facing hyperplaness defining the Kahler cone.
     - `coni_curve`: The conifold curve. If not provided, then non-Coni PFVs are
                     assumed.
+    - `coni_cob`:   A custom change of basis matrix used to map the coni curve
+                    to a preferred presentation (1,0,...0).
     """
     def __init__(
         self,
