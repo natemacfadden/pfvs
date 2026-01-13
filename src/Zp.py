@@ -23,7 +23,6 @@
 # -----------------------------------------------------------------------------
 
 # external imports
-import functools
 import math
 import numpy as np
 from ortools.sat.python import cp_model
@@ -77,7 +76,7 @@ def pvecs(
     # compute a grading vector
     # (just needs to be in strict interior of dual cone)
     grading = H.sum(axis=0)
-    grading = grading//functools.reduce(math.gcd,grading)
+    grading = grading//np.gcd.reduce(grading)
 
     if backend == "cpsat":
         if max_deg is None:
