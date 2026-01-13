@@ -171,7 +171,7 @@ class CYData:
     def __str__(self):
         msg = f"Data defining an h11={self.h11} CY, for utility in making "
         if self.coni:
-            msg += f"Coni PFVs (conifold curve = {self._fconi_curve.tolist()})"
+            msg += f"Coni PFVs (conifold curve = {self._coni_curve.tolist()})"
         else:
             msg += "PFVs"
 
