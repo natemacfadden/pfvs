@@ -59,8 +59,8 @@ class CYData:
         - `H`:          Inwards-facing hyperplaness defining the Kahler cone.
         - `coni_curve`: The conifold curve. If not provided, then non-Coni PFVs
                         are assumed.
-        - `coni_cob`:   A change of basis matrix used to map the coni curve to
-                        a preferred presentation (1,0,...0)
+        - `coni_cob`:   A custom change of basis matrix used to map the coni
+                        curve to a preferred presentation (1,0,...0).
         """
         self._kappa = np.array(kappa)
         self._c2    = np.array(c2)
@@ -80,20 +80,27 @@ class CYData:
             return
 
         # coni stuff below...
-        # -------------------
+        # ===================
         # store information on the conifold curve if it is set
         self._coni_curve = np.array(coni_curve)
         type(self).coni_curve = property(lambda self: self._coni_curve)
 
-        # compute the change of basis via the HNF
+        # change of basis matrix to basis where coni_curve = (1,0,...,0)
+        # --------------------------------------------------------------
         if coni_cob is None:
+            # compute the change of basis via HNF
             q = np.array(self._coni_curve).reshape(-1,1)
             q = flint.fmpz_mat(q.tolist())
             self._cob = q.hnf(transform=True)[1]
             self._cob = np.array(self._cob.tolist()).astype(int)
         else:
+            # user-input change of basis
             self._cob = np.array(coni_cob)
+
+        # check the change of basis
+        assert np.all(self._cob@self.coni_curve == [1]+[0]*(self.h11-1))
         type(self).cob = property(lambda self: self._cob)
+
 
         # map kappa, c2, and H via this change of basis
         self._kappa_cob = np.einsum('ai,bj,ck,ijk->abc',
@@ -116,6 +123,18 @@ class CYData:
         cy: "cytools.CalabiYau",
         coni_curve: "ArrayLike" = None,
         coni_cob: "ArrayLike" = None) -> "CYData":
+        """
+        **Description:**
+        Initializes an instance of a simple class to hold the relevant data of
+        a CY for constructing PFVs.
+
+        **Arguments:**
+        - `cy`:         The CYTools CalabiYau object of interest.
+        - `coni_curve`: The conifold curve. If not provided, then non-Coni PFVs
+                        are assumed.
+        - `coni_cob`:   A change of basis matrix used to map the coni curve to
+                        a preferred presentation (1,0,...0)
+        """
         """
         **Description:**
         Construct a CYData object from a cytools.CalabiYau object.
