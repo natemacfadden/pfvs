@@ -207,7 +207,7 @@ class CYData:
 
     @property
     def h21(self):
-        return self._h11
+        return self._h21
 
     # a-matrix, b-vector
     # ------------------
