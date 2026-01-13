@@ -16,9 +16,9 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  This module contains utilities constructing PFVs using the "Zp"
-#               style algorithms. These operate by fixing some p-vectors and
-#               then searching for lattice points in a derived ellipsoid, one
+# Description:  This module contains methods for constructing PFVs using the
+#               "Zp" style algorithms. These operate by fixing some p-vectors
+#               and then searching for lattice points in an ellipsoid, one
 #               for each p-vector.
 # -----------------------------------------------------------------------------
 
