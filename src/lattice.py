@@ -121,7 +121,7 @@ def dual_lattice(B: "ArrayLike") -> "ArrayLike":
 
     return np.array(D.tolist()).astype(int), denom
 
-# inverse scaled
+# integer 'inverse' of matrix (i.e., adjugate)
 def lcm(a, b):
     return abs(a*b) // math.gcd(a, b)
 def inv_scaled(A):
