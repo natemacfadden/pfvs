@@ -29,12 +29,21 @@ class PFV():
     def __init__(self,
         data: "cydata",
         K: "ArrayLike",
-        M: "ArrayLike"):
+        M: "ArrayLike",
+        silent: bool = False):
         self._cydata = data
         self._K      = np.array(K)
         self._M      = np.array(M)
+
+        # initialize other variables
         self._p      = None
         self._pgrading = None
+
+        self._N      = None
+        self._Ninv   = None
+
+        # whether to print anything
+        self.silent  = silent
 
     # getters
     # -------
@@ -72,7 +81,7 @@ class PFV():
     @property
     def Ninv(self):
         if self._Ninv is None:
-            self._Ninv = lattice.inv_scaled(self.N)[0]
+            self._Ninv = lattice.inv_scaled(self.N)
 
         return self._Ninv
 
@@ -101,9 +110,9 @@ class PFV():
             # (uses Ninv, which is inv(N), scaled to be integral)
             if self.coni:
                 self._pgrading = np.zeros(len(self.K), dtype=int)
-                self._pgrading[1:] = self.Ninv@self.K[1:]
+                self._pgrading[1:] = self.Ninv[0]@self.K[1:]
             else:
-                self._pgrading = self.Ninv@self.K
+                self._pgrading = self.Ninv[0]@self.K
 
             # remove the gcd of pgrading, save scaling
             gcd = np.gcd.reduce(self._pgrading)
@@ -111,11 +120,6 @@ class PFV():
             self._p_denom = self.Ninv[1]/gcd # NON INTEGRAL
 
             # save p
-            # (p = pgrading                   / p_denom
-            #    = (Ninv[0]@K)/gcd(Ninv[0]@K) / (Ninv[1]/gcd(Ninv[0]@K))
-            #    = (Ninv[0]@K)                / Ninv[1]
-            #    = inv(N)@K
-            # since inv(N) = Ninv[0]/Ninv[1]                            )
             self._p = self._pgrading/self._p_denom
 
         except:
@@ -176,7 +180,7 @@ class PFV():
 
     def check_tadpole(self):
         # check tadpole bound
-        upper = (self.cy.h11()+self.cy.h12()+2) + 2*self.coni
+        upper = (self._cydata.h11+self._cydata.h21+2) + 2*self.coni
         return 0 <= -np.dot(self.M,self.K) <= upper
 
     def check_Knonzero(self):
@@ -192,14 +196,15 @@ class PFV():
         # check that p is *strictly* contained in Kcup (the union of 2-face
         # equivalent kahler cones)
         if self.coni:
-            return min(self._cydata._H_cob@self.pgrading)>0.5
+            return min(self._cydata._H_cob@self.pgrading[1:])>0.5
         else:
             return min(self._cydata._H@self.p)>0.5
     
     def check_orthogonality(self):
         # check that K.p=0
         if self.coni:
-            return np.dot(self.pgrading, self.K[1:]) == 0
+            return (self.pgrading[0] == 0) and\
+                   (np.dot(self.pgrading[1:], self.K[1:]) == 0)
         else:
             return np.dot(self.pgrading, self.K) == 0
     
