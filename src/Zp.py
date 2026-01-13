@@ -236,8 +236,8 @@ def all_coni_K0(Ks, Ms, Qmax, h11, verbosity: int = 0):
 def ZpM(
     data: "cydata",
     ps: "ArrayLike",
-    Qmax: float = None,
-    Qmin: float = 0,
+    Qmax: int = None,
+    Qmin: int = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
@@ -284,7 +284,11 @@ def ZpM(
         
         # define the lattices for M
         # -------------------------
-        # (need M = Mbasis@c and T.T@M = 0)
+        # need K.p = 0
+        #
+        # note that K = kappa@M@p
+        # thus need dot(p, kappa@M@p) = 0
+        # equivalently, dot(kappa@p@p, M) = 0
         T = kappa@p@p
 
         # need T.T @ Mbasis@c = 0
@@ -368,8 +372,8 @@ def ZpM(
 def ZpK(
     data: "cydata",
     ps: "ArrayLike",
-    Qmax: float = None,
-    Qmin: float = 0,
+    Qmax: int = None,
+    Qmin: int = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
@@ -501,8 +505,10 @@ def ZpK(
 def coniZpM(
     data: "cydata",
     ps: "ArrayLike",
-    Qmax: float = None,
-    Qmin: float = 0,
+    Qmax: int = None,
+    Qmin: int = 0,
+    M0min: int = 13,
+    M0max: int = float('inf'),
     ellipsoid_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
@@ -546,18 +552,18 @@ def coniZpM(
 
         _0p = np.concatenate([[0],p])
 
-        # projection matrix
-        proj = np.hstack([
-            np.zeros((data.h11-1,1), dtype=int),
-            np.identity(data.h11-1,  dtype=int)
-        ])
-
         # helper variable (K[1:] = (Z@M)[1:])
         Z = kappa@_0p
 
         # define the lattices for M
         # -------------------------
-        # (need M = Mbasis@c and T.T@M = 0)
+        # need K.p = 0
+        #
+        # note that K[1:] = (kappa@M@p)[1:]
+        # (it can get K[0] wrong but that's OK since p[0]=0)
+        #
+        # thus need dot(p, kappa@M@p) = 0
+        # equivalently, dot(kappa@p@p, M) = 0
         T = kappa@_0p@_0p
 
         # need T.T @ Mbasis@c = 0
@@ -580,12 +586,11 @@ def coniZpM(
             max_N_out=max_N_pfvs,
             verbosity=verbosity-1)
 
-        # only keep primitive lattice points (can reclaim other PFVs easily)
-        primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
-        lattice_points = lattice_points[primitiveQ]
-
-        # compute Ms, Ks, and reduced by GCD
+        # compute Ms, cut on M_0
         Ms = Binter@lattice_points.T # as columns
+        Ms = Ms[(M0min<=Ms[0]) & (Ms[0]<=M0max)]
+
+        # compute Ks
         Ks = Z@Ms
 
         #if reduce_gcds:
@@ -593,7 +598,7 @@ def coniZpM(
         K_gcds = np.gcd.reduce(Ks, axis=0)
         Ks = Ks//K_gcds
 
-        if True:#filter_tadpole:
+        if False:#filter_tadpole:
             Qs = -np.sum(Ks*Ms,axis=0)
             in_tadpole = (Qs>Qmin) & (Qs<Qmax)
             if verbosity >= 2:
@@ -638,5 +643,5 @@ def coniZpM(
 
     # return
     all_Ks, all_Ms = allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
-    all_Ks, all_Ms = all_coni_K0(all_Ks, all_Ms, Qmax, data.h11)
+    #all_Ks, all_Ms = all_coni_K0(all_Ks, all_Ms, Qmax, data.h11)
     return all_Ks, all_Ms
