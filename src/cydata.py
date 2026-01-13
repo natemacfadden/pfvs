@@ -34,6 +34,7 @@ class CYData:
     Simple class to hold the relevant data of a CY for constructing PFVs.
 
     **Arguments:**
+    - `h21`:        The hodge number h^{2,1}.
     - `kappa`:      The intersection numbers.
     - `c2`:         The second chern class.
     - `H`:          Inwards-facing hyperplaness defining the Kahler cone.
@@ -44,6 +45,7 @@ class CYData:
     """
     def __init__(
         self,
+        h21: int,
         kappa: "ArrayLike",
         c2: "ArrayLike",
         H: "ArrayLike",
@@ -55,6 +57,7 @@ class CYData:
         a CY for constructing PFVs.
 
         **Arguments:**
+        - `h21`:        The hodge number h^{2,1}.
         - `kappa`:      The intersection numbers.
         - `c2`:         The second chern class.
         - `H`:          Inwards-facing hyperplaness defining the Kahler cone.
@@ -74,6 +77,7 @@ class CYData:
         self._M_lattice = None
 
         # misc
+        self._h21   = h21
         self._h11   = self._kappa.shape[0]
 
         # check if non-Coni...
@@ -157,6 +161,7 @@ class CYData:
         # return
         # ------
         return cls(
+            h21=cy.h21(),
             kappa=kappa,
             c2=c2,
             H=H,
@@ -198,6 +203,10 @@ class CYData:
 
     @property
     def h11(self):
+        return self._h11
+
+    @property
+    def h21(self):
         return self._h11
 
     # a-matrix, b-vector
