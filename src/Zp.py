@@ -200,17 +200,23 @@ def all_coni_K0(Ks, Ms, Qmax, h11, verbosity: int = 0):
         Qtmp  = -np.dot(K[1:],M[1:])
 
         # compute the ranges such that (K,M) are under tadpole
-        K0min, K0max = Qtmp/M[0], -(Qmax+Qtmp)/M[0]
+        # simple to derive:
+        #     0         <= -M[0]*K[0] + Qtmp <= Qmax
+        #     -Qtmp     <= -M[0]*K[0]        <= Qmax-Qtmp
+        #     Qtmp/M[0] ?= K[0]              ?= (Qtmp-Qmax)/M[0]
+        # where ?= is either >= or <= depending on whether M[0]>0 or M[0]<0
+        K0min, K0max = Qtmp/M[0], (Qtmp-Qmax)/M[0]
         if K0min > K0max:
             K0min, K0max = K0max, K0min
-        K0min = math.floor(K0min)
-        K0max = math.ceil(K0max)
 
         Ktmp = K[1:].tolist()
         Mtmp = M.tolist()
-        for K0 in range(K0min, K0max+1):
-            if -np.dot([K0]+Ktmp,Mtmp) <= Qmax:
-                KMs_out.add(tuple([K0]+Ktmp+Mtmp))
+        for K0 in range(math.floor(K0min), math.ceil(K0max)+1):
+            Q = Qtmp - K0*M[0]
+            if (Q < 0) or (Q > Qmax):
+                continue
+
+            KMs_out.add(tuple([K0]+Ktmp+Mtmp))
 
     # split back into K and M arrays
     Ks, Ms = [], []
