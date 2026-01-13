@@ -175,7 +175,6 @@ class PFV():
     
     def check_b(self):
         # check that b.M is a multiple of 24
-        # equivalent to M.(24*b) % 24 == 0 (componentwise)
         return np.dot(self._cydata.b, self.M)%24 == 0
 
     def check_tadpole(self):
@@ -200,6 +199,14 @@ class PFV():
         else:
             return min(self._cydata._H@self.p)>0.5
     
+    def check_NpK(self, tol=1e-4):
+        # check that N@p=K
+        if self.coni:
+            return (self.pgrading[0] == 0) and\
+                   np.linalg.norm(self.N@self.p[1:] - self.K[1:])<tol
+        else:
+            return np.linalg.norm(self.N@self.p - self.K)<tol
+
     def check_orthogonality(self):
         # check that K.p=0
         if self.coni:
