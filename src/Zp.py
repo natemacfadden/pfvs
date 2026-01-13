@@ -507,7 +507,7 @@ def coniZpM(
     ps: "ArrayLike",
     Qmax: int = None,
     Qmin: int = 0,
-    M0min: int = 13,
+    M0min: int = -float('inf'),
     M0max: int = float('inf'),
     ellipsoid_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
@@ -586,19 +586,32 @@ def coniZpM(
             max_N_out=max_N_pfvs,
             verbosity=verbosity-1)
 
-        # compute Ms, cut on M_0
-        Ms = Binter@lattice_points.T # as columns
-        Ms = Ms[(M0min<=Ms[0]) & (Ms[0]<=M0max)]
+        if False:
+            filter_tadpole = False
 
-        # compute Ks
-        Ks = Z@Ms
+            # compute Ms, cut on M_0
+            Ms = Binter@lattice_points.T # as columns
+            Ms = Ms[:, (M0min<=Ms[0]) & (Ms[0]<=M0max)]
+
+            # compute Ks
+            Ks = Z@Ms
+        else:
+            filter_tadpole = True
+
+            # only keep primitive lattice points (can reclaim other PFVs easily)
+            primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
+            lattice_points = lattice_points[primitiveQ]
+
+            # compute Ms, Ks
+            Ms = Binter@lattice_points.T # as columns
+            Ks = Z@Ms
 
         #if reduce_gcds:
         #K_gcds = gcd_row(Ks.T)
         K_gcds = np.gcd.reduce(Ks, axis=0)
         Ks = Ks//K_gcds
 
-        if False:#filter_tadpole:
+        if filter_tadpole:
             Qs = -np.sum(Ks*Ms,axis=0)
             in_tadpole = (Qs>Qmin) & (Qs<Qmax)
             if verbosity >= 2:
