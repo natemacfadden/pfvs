@@ -34,7 +34,11 @@ from . import lattice
 
 # compute p-vectors
 # -----------------
-def pvecs(data: "CYData", max_deg: int) -> "ArrayLike":
+def pvecs(
+    data: "CYData",
+    max_deg: int = None,
+    min_pts: int = None,
+    backend: str = "cpsat") -> "ArrayLike":
     """
     **Description:**
     Computes possible p-vectors.
@@ -53,10 +57,18 @@ def pvecs(data: "CYData", max_deg: int) -> "ArrayLike":
     **Arguments:**
     - `data`:    The CYData describing the CY.
     - `max_deg`: The maximum degree to compute points to.
+    - `backend`: THe backend to use. Either
 
     **Returns:**
     Possible p-vectors.
     """
+    # check inputs
+    if (max_deg is None) ^ (min_pts is None):
+        pass
+    else:
+        raise ValueError("Either `max_deg` or `min_pts` must be set...")
+
+    # read hyperplanes
     if data.coni:
         H = data.H_cob
     else:
@@ -67,42 +79,84 @@ def pvecs(data: "CYData", max_deg: int) -> "ArrayLike":
     grading = H.sum(axis=0)
     grading = grading//functools.reduce(math.gcd,grading)
 
-    # define a constraint-programming model to solve
-    model  = cp_model.CpModel()
-    max_xi = cp_model.INT32_MAX - 1
+    if backend == "cpsat":
+        if max_deg is None:
+            raise ValueError("CP-SAT backend assumes max_deg is set...")
 
-    x_vars = [model.NewIntVar(-max_xi, max_xi, f'x{i}') for i in range(H.shape[1])]
+        # define a constraint-programming model to solve
+        model  = cp_model.CpModel()
+        max_pi = cp_model.INT32_MAX - 1
 
-    for row in H:
-        model.Add(sum(int(row[j])*x_vars[j] for j in range(H.shape[1])) >= 1)
-    model.Add(sum(int(grading[j])*x_vars[j] for j in range(H.shape[1])) <= max_deg)
+        p_vars = [model.NewIntVar(-max_pi, max_pi, f'x{i}') for i in\
+                                                            range(H.shape[1])]
 
-    # enumerate all solutions up to max_deg
-    solver = cp_model.CpSolver()
+        for row in H:
+            model.Add(sum(int(row[j])*p_vars[j] for j in range(H.shape[1]))>=1)
+        model.Add(sum(int(grading[j])*p_vars[j] for j in range(H.shape[1])) <=\
+                                                                        max_deg)
 
-    class SolutionPrinter(cp_model.CpSolverSolutionCallback):
-        def __init__(self, x_vars):
-            cp_model.CpSolverSolutionCallback.__init__(self)
-            self.x_vars = x_vars
-            self.points = []
+        # enumerate all solutions up to max_deg
+        solver = cp_model.CpSolver()
 
-        def on_solution_callback(self):
-            self.points.append([self.Value(v) for v in self.x_vars])
+        class SolutionPrinter(cp_model.CpSolverSolutionCallback):
+            def __init__(self, p_vars):
+                cp_model.CpSolverSolutionCallback.__init__(self)
+                self.p_vars = p_vars
+                self.points = []
 
-    printer = SolutionPrinter(x_vars)
+            def on_solution_callback(self):
+                self.points.append([self.Value(v) for v in self.p_vars])
 
-    solver.SearchForAllSolutions(model, printer)
+        printer = SolutionPrinter(p_vars)
 
-    # return
-    return printer.points
+        solver.SearchForAllSolutions(model, printer)
+
+        # return
+        return printer.points
+    else:
+        # import gurobi
+        import gurobipy as gp
+
+        # define the model
+        model = gp.Model("pFinder")
+        model.setParam('OutputFlag', False)
+
+        p = model.addMVar(
+            (H.shape[1],),
+            lb=-float('inf'), ub=float('inf'),
+            vtype=gp.GRB.INTEGER)
+        model.setMObjective(
+            Q=None,
+            c=grading,
+            constant=0,
+            xc=p,
+            sense=gp.GRB.MINIMIZE)
+        model.addMConstr(H, p, '>', np.full(len(H),0.5))
+
+        # optimize for N solutions
+        model.setParam('PoolSearchMode', 2)
+        model.setParam('PoolSolutions', min_pts)
+
+        model.optimize()
+
+        # read the solutions
+        sols = []
+        for i in range(model.SolCount):
+            model.setParam('SolutionNumber', i)
+
+            sols.append(np.rint(p.xn).astype(int))
+
+        return np.array(sols).tolist()
 
 # Zp helpers
 # ----------
-def allow_gcds(Ks, Ms, Qmax):
+def allow_gcds(Ks, Ms, Qmax, h11):
     """
     Introduce nontrivial GCDs into (K,M) pairs
     """
-    h11 = len(Ks[0])
+    num_input = len(Ks)
+    if num_input == 0:
+        return np.zeros((0,h11),dtype=int), np.zeros((0,h11),dtype=int)
 
     KMs_out = set()
     
@@ -121,16 +175,23 @@ def allow_gcds(Ks, Ms, Qmax):
         Ks.append(KM[:h11])
         Ms.append(KM[h11:])
 
-    return np.vstack(Ks), np.vstack(Ms)
+    if len(Ks):
+        return np.vstack(Ks), np.vstack(Ms)
+    else:
+        raise ValueError(f"#input = {num_input}")
+        return np.zeros((0,h11),dtype=int), np.zeros((0,h11),dtype=int)
 
-def all_coni_K0(Ks, Ms, Qmax, verbosity: int = 0):
+def all_coni_K0(Ks, Ms, Qmax, h11, verbosity: int = 0):
     """
     For Coni PFV, set K0 to all permissible values
     """
-    h11 = len(Ks[0])
+    num_input = len(Ks)
+    if num_input == 0:
+        return np.zeros((0,h11),dtype=int), np.zeros((0,h11),dtype=int)
+    Ms_input = Ms.copy()
 
     KMs_out = set()
-    
+
     for K,M in zip(Ks,Ms):
         if M[0] == 0:
             if verbosity >= 1:
@@ -158,7 +219,11 @@ def all_coni_K0(Ks, Ms, Qmax, verbosity: int = 0):
         Ks.append(KM[:h11])
         Ms.append(KM[h11:])
 
-    return np.vstack(Ks), np.vstack(Ms)
+    if len(Ks):
+        return np.vstack(Ks), np.vstack(Ms)
+    else:
+        print(f"#input = {num_input}, Ms={Ms_input}")
+        return np.zeros((0,h11),dtype=int), np.zeros((0,h11),dtype=int)
 
 # Zp
 # --
@@ -288,7 +353,7 @@ def ZpM(
         all_Ms = np.vstack([all_Ms, Ms])
 
     # return
-    return allow_gcds(all_Ks, all_Ms, Qmax)
+    return allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
 
 def ZpK(
     data: "cydata",
@@ -414,7 +479,7 @@ def ZpK(
         all_Ms = np.vstack([all_Ms, Ms])
 
     # return
-    return allow_gcds(all_Ks, all_Ms, Qmax)
+    return allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
 
 # Coni-Zp
 # -------
@@ -552,6 +617,6 @@ def coniZpM(
         all_Ms = np.vstack([all_Ms, Ms])
 
     # return
-    all_Ks, all_Ms = allow_gcds(all_Ks, all_Ms, Qmax)
-    all_Ks, all_Ms = all_coni_K0(all_Ks, all_Ms, Qmax)
+    all_Ks, all_Ms = allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
+    all_Ks, all_Ms = all_coni_K0(all_Ks, all_Ms, Qmax, data.h11)
     return all_Ks, all_Ms
