@@ -20,6 +20,9 @@
 # -----------------------------------------------------------------------------
 
 # external imports
+import flint
+import functools
+import math
 import numpy as np
 
 # local imports
@@ -41,6 +44,11 @@ class PFV():
 
         self._N      = None
         self._Ninv   = None
+
+        # coni-specific variables
+        if self.coni:
+            type(self).Kprime = property(lambda self: 
+                self.K[0] - self.M@(self._cydata.kappa_cob@self.p)[0] )
 
         # whether to print anything
         self.silent  = silent
@@ -81,7 +89,7 @@ class PFV():
     @property
     def Ninv(self):
         if self._Ninv is None:
-            self._Ninv = lattice.inv_scaled(self.N)
+            self._Ninv = lattice.inv_scaled(self.N, as_flint=True)
 
         return self._Ninv
 
@@ -110,13 +118,28 @@ class PFV():
             # (uses Ninv, which is inv(N), scaled to be integral)
             if self.coni:
                 self._pgrading = np.zeros(len(self.K), dtype=int)
-                self._pgrading[1:] = self.Ninv[0]@self.K[1:]
-            else:
-                self._pgrading = self.Ninv[0]@self.K
 
-            # remove the gcd of pgrading, save scaling
-            gcd = np.gcd.reduce(self._pgrading)
-            self._pgrading = self._pgrading//gcd
+                # the coni components of p
+                K_flint = flint.fmpz_mat(self.K[1:].reshape(-1,1).tolist())
+                tmp = self.Ninv[0]*K_flint
+
+                # remove the gcd
+                gcd = functools.reduce(math.gcd, tmp)
+                tmp = tmp/gcd
+                tmp = tmp.transpose()
+                tmp = np.array(tmp.tolist()).astype(int)
+                self._pgrading[1:] = tmp
+            else:
+                K_flint = flint.fmpz_mat(self.K.reshape(-1,1).tolist())
+                self._pgrading = self.Ninv[0]*K_flint
+
+                # remove the gcd
+                gcd = functools.reduce(math.gcd, self._pgrading)
+                self._pgrading = self._pgrading/gcd
+                self._pgrading = self._pgrading.transpose()
+                self._pgrading = np.array(self._pgrading.tolist()).astype(int)
+
+            # save scaling
             self._p_denom = self.Ninv[1]/gcd # NON INTEGRAL
 
             # save p
