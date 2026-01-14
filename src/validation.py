@@ -47,8 +47,10 @@ class PFV():
 
         # coni-specific variables
         if self.coni:
+            # Kprime computation/check (must be positive)
             type(self).Kprime = property(lambda self: 
                 self.K[0] - self.M@(self._cydata.kappa_cob@self.p)[0] )
+            type(self).check_Kprime(self) = lambda self: self.Kprime > 0
 
         # whether to print anything
         self.silent  = silent
