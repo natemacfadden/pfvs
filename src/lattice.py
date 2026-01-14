@@ -124,11 +124,12 @@ def dual_lattice(B: "ArrayLike") -> "ArrayLike":
 # integer 'inverse' of matrix (i.e., adjugate)
 def lcm(a, b):
     return abs(a*b) // math.gcd(a, b)
-def inv_scaled(A):
+def inv_scaled(A_in, as_flint: bool = False):
     """
     Return (B, s) such that B*A = s*I
     """
-    A = flint.fmpz_mat(A.tolist())
+    dim = A_in.shape[0]
+    A = flint.fmpz_mat(A_in.tolist())
     n = A.nrows()
 
     # Smith normal form diagonal
@@ -142,18 +143,32 @@ def inv_scaled(A):
     s = functools.reduce(lcm, diag, 1)
 
     # Build scaled inverse column-by-column
-    B = flint.fmpz_mat(n, n)
+    Ainv = flint.fmpz_mat(n, n)
     for i in range(n):
         rhs = flint.fmpz_mat(n, 1)
         rhs[i, 0] = s
         x = A.solve(rhs)   # exact integer solve
         for j, xj in enumerate(x):
-            B[j, i] = int(xj)
+            Ainv[j, i] = int(xj)
 
-    return (
-        np.array([[int(B[i, j]) for j in range(n)] for i in range(n)]),
-        s
-    )
+    # test the inverse
+    test = A*Ainv
+    for i in range(dim):
+        for j in range(dim):
+            if i==j:
+                assert test[i,j]==s
+            else:
+                assert test[i,j]==0
+
+    # return
+    if as_flint:
+        return Ainv, s
+    else:
+        # cast to numpy...
+        return (
+            np.array([[np.int64(Ainv[i, j]) for j in range(n)] for i in range(n)]),
+            s
+        )
 
 # lattice points in ellipsoid
 # ===========================
