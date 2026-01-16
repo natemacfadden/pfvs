@@ -24,6 +24,7 @@
 
 # external imports
 import math
+from numba import njit
 import numpy as np
 from ortools.sat.python import cp_model
 from tqdm.auto import tqdm
@@ -31,8 +32,8 @@ from tqdm.auto import tqdm
 # local imports
 from . import lattice
 
-# compute p-vectors
-# -----------------
+# p-vectors
+# =========
 def pvecs(
     data: "CYData",
     max_deg: int = None,
@@ -148,7 +149,9 @@ def pvecs(
         return np.array(sols).tolist()
 
 # Zp helpers
-# ----------
+# ==========
+# non-coni
+# --------
 def allow_gcds(Ks, Ms, Qmax, h11):
     """
     Introduce nontrivial GCDs into (K,M) pairs
@@ -180,59 +183,93 @@ def allow_gcds(Ks, Ms, Qmax, h11):
         raise ValueError(f"#input = {num_input}")
         return np.zeros((0,h11),dtype=int), np.zeros((0,h11),dtype=int)
 
-def all_coni_K0(Ks, Ms, Qmax, h11, verbosity: int = 0):
-    """
-    For Coni PFV, set K0 to all permissible values
-    """
-    num_input = len(Ks)
-    if num_input == 0:
-        return np.zeros((0,h11),dtype=int), np.zeros((0,h11),dtype=int)
-    Ms_input = Ms.copy()
+# coni
+# ----
+@njit
+def gcd_vec(vec):
+    g = abs(vec[0])
+    for i in range(1, len(vec)):
+        x = abs(vec[i])
+        while x != 0:
+            g, x = x, g % x
+    return g
 
-    KMs_out = set()
+@njit
+def set_coni_K0(Ks, Ms, h11, Qmin, Qmax, max_N_out: int = 1_000_000, verbosity: int = 0):
+    # check if empty
+    if len(Ks) == 0:
+        return np.empty((0,h11), dtype=np.int64), np.empty((0,h11), dtype=np.int64)
 
-    for K,M in zip(Ks,Ms):
-        if M[0] == 0:
-            if verbosity >= 1:
-                print(f"infinite # of PFVs K=[?,{K[1:].tolist()}], M={M.tolist()}")
+    # output objects
+    # --------------
+    Ks_out = np.empty((max_N_out, h11), dtype=np.int64)
+    Ms_out = np.empty((max_N_out, h11), dtype=np.int64)
+    N_out  = 0
+    N_skipped = 0
+    
+    # need to accommodate two things:
+    #    1) K0 is effectively unfixed
+    #    2) K->K/gcd(K) is allowed (introduces denominator to p-vec)
+    # observe:
+    #    Qmin <= (-K0*M0 - dot(Kperp, Mperp)) / gcd(K) <= Qmax
+    #    Qmin*gcd(K) <= -K0*M0 - dot(Kperp, Mperp) <= Qmax*gcd(K)
+    # also observe that 1 <= gcd(K) <= gcd(Kperp) so we can rewrite
+    #    Qmin <= -K0*M0 - dot(Kperp, Mperp) <= Qmax*gcd(Kperp)
+    # not all such K0 will be valid, but any valid K0 will satisfy this inequality
+    # such a K0 can be found simply - rewrte:
+    #    Qmin + dot(Kperp, Mperp) <= -K0*M0 <= Qmax*gcd(Kperp) + dot(Kperp, Mperp)
+    # so the bounds on K0 are (which one is upper vs. lower depends on sign of M0)
+    #    -(Qmin + dot(Kperp, Mperp))/M0
+    # and
+    #    -(Qmax*gcd(Kperp) + dot(Kperp, Mperp))/M0
+    Ktest = np.empty(h11, dtype=np.int64)
+    for i,(K,M) in enumerate(zip(Ks,Ms)):
+        # read info from K,M
+        M0 = M[0]
+        if M0 == 0:
+            N_skipped += 1
             continue
+        Mperp = M[1:]
+        Kperp = K[1:]
 
-        Qtmp  = -np.dot(K[1:],M[1:])
+        # derive some quantities
+        Qperp = -sum([Ki*Mi for Ki,Mi in zip(Kperp,Mperp)])
+        Kperp_gcd = gcd_vec(Kperp)
 
-        # compute the ranges such that (K,M) are under tadpole
-        # simple to derive:
-        #     0         <= -M[0]*K[0] + Qtmp <= Qmax
-        #     -Qtmp     <= -M[0]*K[0]        <= Qmax-Qtmp
-        #     Qtmp/M[0] ?= K[0]              ?= (Qtmp-Qmax)/M[0]
-        # where ?= is either >= or <= depending on whether M[0]>0 or M[0]<0
-        K0min, K0max = Qtmp/M[0], (Qtmp-Qmax)/M[0]
-        if K0min > K0max:
-            K0min, K0max = K0max, K0min
+        # bounds on K0
+        lo = -(Qmax*Kperp_gcd - Qperp)/M0
+        up = -(Qmin - Qperp)/M0
+        if up<lo:
+            lo,up = up,lo
 
-        Ktmp = K[1:].tolist()
-        Mtmp = M.tolist()
-        for K0 in range(math.floor(K0min), math.ceil(K0max)+1):
-            Q = Qtmp - K0*M[0]
-            if (Q < 0) or (Q > Qmax):
-                continue
+        # try all values of K0
+        for K0 in range(math.floor(lo),math.ceil(up)+1):
+            Ktest[0] = K0
+            Ktest[1:] = Kperp
+            #Ktest = Ktest//gcd_vec(Ktest)
 
-            KMs_out.add(tuple([K0]+Ktmp+Mtmp))
+            # compute the dot product
+            Qtest = 0
+            for j in range(h11):
+                Qtest -= Ktest[j] * M[j]
 
-    # split back into K and M arrays
-    Ks, Ms = [], []
-    for KM in KMs_out:
-        Ks.append(KM[:h11])
-        Ms.append(KM[h11:])
+            # save if this is in the permissible range
+            if (Qmin<=Qtest) and (Qtest<=Qmax):
+                Ks_out[N_out] = Ktest
+                Ms_out[N_out] = M
+                N_out += 1
+                if N_out >= max_N_out:
+                    print('saturated maximum allowed outputs')
+                    if verbosity >= 0:
+                        print(f'{N_skipped} M-vectors were skipped because M0=0...')
+                    return Ks_out, Ms_out
 
-    if len(Ks):
-        return np.vstack(Ks), np.vstack(Ms)
-    else:
-        print(f"#input = {num_input}, Ms={Ms_input}")
-        return np.zeros((0,h11),dtype=int), np.zeros((0,h11),dtype=int)
+    if verbosity >= 0:
+        print(f'{N_skipped} M-vectors were skipped because M0=0...')
+    return Ks_out[:N_out], Ms_out[:N_out]
 
-# Zp
-# --
-# ZpM
+# non-coni Zp
+# ===========
 def ZpM(
     data: "cydata",
     ps: "ArrayLike",
@@ -304,12 +341,20 @@ def ZpM(
             mat = np.rint(mat).astype(int)
 
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
-        lattice_points = lattice.fp_ellipsoid(
-            mat,
-            ellipsoid_dilation*Qmax,
-            Q_lower=Qmin,
-            max_N_out=max_N_pfvs,
-            verbosity=verbosity-1)
+        try:
+            lattice_points = lattice.fp_ellipsoid(
+                mat,
+                ellipsoid_dilation*Qmax,
+                Q_lower=Qmin,
+                max_N_out=max_N_pfvs,
+                verbosity=verbosity-1)
+        except Exception as e:
+            print("ERROR!!!")
+            print(f"LIKELY mat={mat.tolist()} ISN'T POSITIVE DEFINITE...")
+            print(f"vertices = {self.polytope().vertices().tolist()}")
+            print(f"heights  = {self.triangulation().heights().tolist()}")
+            print(f"p        = {np.array(p).tolist()}")
+            raise e
 
         # only keep primitive lattice points (can reclaim other PFVs easily)
         primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
@@ -343,7 +388,7 @@ def ZpM(
                 chunk = Ms[i:i+batch_size]
 
                 Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
-                Ns = Ns.transpose(2,0,1)
+                Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
                 sign, logdet = np.linalg.slogdet(Ns)
                 is_zero = (sign == 0) | (logdet <= -1e-4)
@@ -430,12 +475,20 @@ def ZpK(
             mat = np.rint(mat).astype(int)
 
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
-        lattice_points = lattice.fp_ellipsoid(
-            mat,
-            ellipsoid_dilation*Qmax,
-            Q_lower=Qmin,
-            max_N_out=max_N_pfvs,
-            verbosity=verbosity-1)
+        try:
+            lattice_points = lattice.fp_ellipsoid(
+                mat,
+                ellipsoid_dilation*Qmax,
+                Q_lower=Qmin,
+                max_N_out=max_N_pfvs,
+                verbosity=verbosity-1)
+        except Exception as e:
+            print("ERROR!!!")
+            print(f"LIKELY mat={mat.tolist()} ISN'T POSITIVE DEFINITE...")
+            print(f"vertices = {self.polytope().vertices().tolist()}")
+            print(f"heights  = {self.triangulation().heights().tolist()}")
+            print(f"p        = {np.array(p).tolist()}")
+            raise e
 
         # only keep primitive lattice points (can reclaim other PFVs easily)
         primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
@@ -474,7 +527,7 @@ def ZpK(
                 chunk = Ms[i:i+batch_size]
 
                 Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
-                Ns = Ns.transpose(2,0,1)
+                Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
                 sign, logdet = np.linalg.slogdet(Ns)
                 is_zero = (sign == 0) | (logdet <= -1e-4)
@@ -500,8 +553,8 @@ def ZpK(
     # return
     return allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
 
-# Coni-Zp
-# -------
+# coni Zp
+# =======
 def coniZpM(
     data: "cydata",
     ps: "ArrayLike",
@@ -509,6 +562,7 @@ def coniZpM(
     Qmin: int = 0,
     M0min: int = -float('inf'),
     M0max: int = float('inf'),
+    max_Kperp_gcd: int = 4,
     ellipsoid_dilation: float = 1, # typically want >=1
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
@@ -579,39 +633,45 @@ def coniZpM(
             mat = np.rint(mat).astype(int)
 
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
-        lattice_points = lattice.fp_ellipsoid(
-            mat,
-            ellipsoid_dilation*Qmax,
-            Q_lower=Qmin,
-            max_N_out=max_N_pfvs,
-            verbosity=verbosity-1)
+        try:
+            lattice_points = lattice.fp_ellipsoid(
+                mat,
+                ellipsoid_dilation*Qmax,
+                Q_lower=0,
+                max_N_out=max_N_pfvs,
+                verbosity=verbosity-1)
+        except Exception as e:
+            print("ERROR!!!")
+            print(f"LIKELY mat={mat.tolist()} ISN'T POSITIVE DEFINITE...")
+            print(f"vertices = {self.polytope().vertices().tolist()}")
+            print(f"heights  = {self.triangulation().heights().tolist()}")
+            print(f"p        = {np.array(p).tolist()}")
+            raise e
 
+        # only keep primitive lattice points (can reclaim other PFVs easily)
         if False:
-            filter_tadpole = False
-
-            # compute Ms, cut on M_0
-            Ms = Binter@lattice_points.T # as columns
-            Ms = Ms[:, (M0min<=Ms[0]) & (Ms[0]<=M0max)]
-
-            # compute Ks
-            Ks = Z@Ms
-        else:
-            filter_tadpole = True
-
-            # only keep primitive lattice points (can reclaim other PFVs easily)
             primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
             lattice_points = lattice_points[primitiveQ]
 
-            # compute Ms, Ks
-            Ms = Binter@lattice_points.T # as columns
-            Ks = Z@Ms
+        # compute Ms
+        Ms = Binter@lattice_points.T # as columns
+
+        # trim Ms on M0min and M0max
+        flags = (Ms[0] >= M0min) & (Ms[0] <= M0max)
+        Ms = Ms[:,flags]
+
+        # compute Ks
+        Ks = Z@Ms
+
+        # trim the K_0 entry... it is free
+        Ks[0] = 0
 
         #if reduce_gcds:
         #K_gcds = gcd_row(Ks.T)
         K_gcds = np.gcd.reduce(Ks, axis=0)
         Ks = Ks//K_gcds
 
-        if filter_tadpole:
+        if False:#filter_tadpole:
             Qs = -np.sum(Ks*Ms,axis=0)
             in_tadpole = (Qs>Qmin) & (Qs<Qmax)
             if verbosity >= 2:
@@ -630,7 +690,7 @@ def coniZpM(
                 chunk = Ms[i:i+batch_size]
 
                 Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
-                Ns = Ns.transpose(2,0,1)
+                Ns = Ns.transpose(2,0,1) # (N,h11,h11)
                 Ns = Ns[:,1:,1:]
 
                 sign, logdet = np.linalg.slogdet(Ns)
@@ -648,13 +708,49 @@ def coniZpM(
             Ms = Ms[:,~singular]
 
         # transpose to row-wise
-        Ks, Ms = Ks.T, Ms.T
+        bare_Ks, bare_Ms = Ks.T, Ms.T
+    
+        # set K0s
+        Ks = np.zeros((0,data.h11), dtype=int)
+        Ms = np.zeros((0,data.h11), dtype=int)
+        for Kperp_gcd in range(1,max_Kperp_gcd+1):
+            #print(f"Studying Kperp with gcd={Kperp_gcd}...")
+            new_Ks, new_Ms = set_coni_K0(
+                Ks=Kperp_gcd*bare_Ks,
+                Ms=bare_Ms,
+                h11=data.h11,
+                Qmin=Qmin,
+                Qmax=Qmax,
+                max_N_out=max_N_pfvs,
+                verbosity=verbosity-1)
+            Ks = np.vstack([Ks, new_Ks])
+            Ms = np.vstack([Ms, new_Ms])
+
+        # filter by K'
+        if True:
+            # recompute 'expanded' Ns (bit wasteful...)
+            # 'expanded' => don't trim axes
+            Ns = np.tensordot(kappa, Ms.T, axes=([2], [0]))
+            Ns = Ns.transpose(2,0,1) # (N,h11,h11)
+
+            # compute p-denominator
+            Kperps_scaled = Ns[:,1:,1:]@p
+            Kperps_norm2  = np.sum(Ks[:,1:]*Ks[:,1:], axis=1)
+            pdenoms       = np.sum(Kperps_scaled*Ks[:,1:],axis=1)/Kperps_norm2
+
+            # compute K's
+            Kprimes = -Ks[:,0] + (Ns@_0p)[:,0]/pdenoms
+
+            # cut
+            flags = Kprimes > 0
+            Ks = Ks[flags]
+            Ms = Ms[flags]
 
         # save to data structures
-        all_Ks = np.vstack([all_Ks, Ks])
-        all_Ms = np.vstack([all_Ms, Ms])
+        all_Ks        = np.vstack([all_Ks, Ks])
+        all_Ms        = np.vstack([all_Ms, Ms])
+
+    #all_Ks, all_Ms = allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
 
     # return
-    all_Ks, all_Ms = allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
-    #all_Ks, all_Ms = all_coni_K0(all_Ks, all_Ms, Qmax, data.h11)
     return all_Ks, all_Ms
