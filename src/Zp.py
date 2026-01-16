@@ -284,6 +284,7 @@ def ZpM(
     Qmax: int = None,
     Qmin: int = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
+    fp_recursive: bool = False,
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
     ) -> tuple["ArrayLike", "ArrayLike"]:
@@ -356,6 +357,7 @@ def ZpM(
                 ellipsoid_dilation*Qmax,
                 Q_lower=Qmin,
                 max_N_out=max_N_pfvs,
+                recursive=fp_recursive,
                 verbosity=verbosity-1)
         except Exception as e:
             print("ERROR!!!")
@@ -429,6 +431,7 @@ def ZpK(
     Qmax: int = None,
     Qmin: int = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
+    fp_recursive: bool = False,
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
     ) -> tuple["ArrayLike", "ArrayLike"]:
@@ -491,6 +494,7 @@ def ZpK(
                 ellipsoid_dilation*Qmax,
                 Q_lower=Qmin,
                 max_N_out=max_N_pfvs,
+                recursive=fp_recursive,
                 verbosity=verbosity-1)
         except Exception as e:
             print("ERROR!!!")
@@ -574,6 +578,7 @@ def coniZpM(
     M0max: int = float('inf'),
     max_Kperp_gcd: int = 4,
     ellipsoid_dilation: float = 1, # typically want >=1
+    fp_recursive: bool = False,
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
     ) -> tuple["ArrayLike", "ArrayLike"]:
@@ -650,6 +655,7 @@ def coniZpM(
                 ellipsoid_dilation*Qmax,
                 Q_lower=0,
                 max_N_out=max_N_pfvs,
+                recursive=fp_recursive,
                 verbosity=verbosity-1)
         except Exception as e:
             print("ERROR!!!")
