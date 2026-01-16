@@ -82,7 +82,7 @@ def orthogonal_lattice(p: "ArrayLike") -> "ArrayLike":
     - `p`: The orthogonal vector. Assumed to be integral
 
     **Returns:**
-    A basis of the lattice orthogonal to p.
+    A basis of the lattice orthogonal to p, as column vectors.
     """
     n = len(p)
 
