@@ -37,7 +37,7 @@ from . import lattice
 def pvecs(
     data: "CYData",
     max_deg: int = None,
-    min_pts: int = None,
+    requested_N_pts: int = None,
     backend: str = "cpsat") -> "ArrayLike":
     """
     **Description:**
@@ -55,18 +55,22 @@ def pvecs(
     facet of the Kahler cone defined by coni_normal.
 
     **Arguments:**
-    - `data`:    The CYData describing the CY.
-    - `max_deg`: The maximum degree to compute points to.
-    - `backend`: THe backend to use. Either
+    - `data`:            The CYData describing the CY.
+    - `max_deg`:         The maximum degree to compute points to.
+    - `requested_N_pts`: The number of points to request. Might get fewer due
+                         to non-trivial GCDs
+    - `backend`:         The backend to use. Either
 
     **Returns:**
     Possible p-vectors.
     """
+    ps = []
+
     # check inputs
-    if (max_deg is None) ^ (min_pts is None):
+    if (max_deg is None) ^ (requested_N_pts is None):
         pass
     else:
-        raise ValueError("Either `max_deg` or `min_pts` must be set...")
+        raise ValueError("Either `max_deg` or `requested_N_pts` must be set...")
 
     # read hyperplanes
     if data.coni:
@@ -112,7 +116,7 @@ def pvecs(
         solver.SearchForAllSolutions(model, printer)
 
         # return
-        return printer.points
+        ps = np.array(printer.points)
     else:
         # import gurobi
         import gurobipy as gp
@@ -135,7 +139,7 @@ def pvecs(
 
         # optimize for N solutions
         model.setParam('PoolSearchMode', 2)
-        model.setParam('PoolSolutions', min_pts)
+        model.setParam('PoolSolutions', requested_N_pts)
 
         model.optimize()
 
@@ -146,7 +150,11 @@ def pvecs(
 
             sols.append(np.rint(p.xn).astype(int))
 
-        return np.array(sols).tolist()
+        ps = np.array(sols).tolist()
+
+    # reduce by GCD
+    ps = ps//np.gcd.reduce(ps,axis=1)
+    return ps.tolist()
 
 # Zp helpers
 # ==========
@@ -246,7 +254,6 @@ def set_coni_K0(Ks, Ms, h11, Qmin, Qmax, max_N_out: int = 1_000_000, verbosity: 
         for K0 in range(math.floor(lo),math.ceil(up)+1):
             Ktest[0] = K0
             Ktest[1:] = Kperp
-            #Ktest = Ktest//gcd_vec(Ktest)
 
             # compute the dot product
             Qtest = 0
@@ -313,9 +320,6 @@ def ZpM(
     else:
         iterator = ps
     for _i, p in enumerate(iterator):
-        if verbosity > 0:
-            print(f"progress={_i}/{len(ps)-1}", end='\r')
-
         # helper variable (K = Z@M)
         Z = kappa@p
         
@@ -453,9 +457,6 @@ def ZpK(
     else:
         iterator = ps
     for _i, p in enumerate(iterator):
-        if verbosity > 0:
-            print(f"progress={_i}/{len(ps)-1}", end='\r')
-
         # helper variables
         A = kappa@p@Mbasis
         try:
@@ -601,9 +602,6 @@ def coniZpM(
     else:
         iterator = ps
     for _i, p in enumerate(iterator):
-        if verbosity > 0:
-            print(f"progress={_i}/{len(ps)-1}", end='\r')
-
         _0p = np.concatenate([[0],p])
 
         # helper variable (K[1:] = (Z@M)[1:])
@@ -648,73 +646,65 @@ def coniZpM(
             print(f"p        = {np.array(p).tolist()}")
             raise e
 
-        # only keep primitive lattice points (can reclaim other PFVs easily)
-        if False:
-            primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
-            lattice_points = lattice_points[primitiveQ]
-
         # compute Ms
+        # ----------
         Ms = Binter@lattice_points.T # as columns
 
-        # trim Ms on M0min and M0max
+        # (don't trim non-primitive... instead, trim on M0min<=M[0]<=M0max)
         flags = (Ms[0] >= M0min) & (Ms[0] <= M0max)
         Ms = Ms[:,flags]
 
         # compute Ks
+        # ----------
         Ks = Z@Ms
 
-        # trim the K_0 entry... it is free
+        # OPTIONAL: override the K[0] entry for clarity
+        # only constraints on K[0] are
+        #    - tadpole Qmin<=-dot(K,M)<=Qmax
+        #    - K' > 0
+        # we later set K[0] to all values obeying tadpole and then rejection
+        # sample on K'>0
         Ks[0] = 0
 
-        #if reduce_gcds:
-        #K_gcds = gcd_row(Ks.T)
-        K_gcds = np.gcd.reduce(Ks, axis=0)
+        # remove GCDs (we later scan over GCDs...)
+        K_gcds = np.gcd.reduce(Ks[1:,:], axis=0)
         Ks = Ks//K_gcds
 
-        if False:#filter_tadpole:
-            Qs = -np.sum(Ks*Ms,axis=0)
-            in_tadpole = (Qs>Qmin) & (Qs<Qmax)
-            if verbosity >= 2:
-                if not only_positive_news:
-                    print(f"{len(in_tadpole)-sum(in_tadpole)}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
-                if sum(in_tadpole):
-                    print(f"but {sum(in_tadpole)} in tadpole!!!")
-            Ks = Ks[:,in_tadpole]
-            Ms = Ms[:,in_tadpole]
-
         # filter by N invertibility
-        if True:#filter_Ninvertible:
-            batch_size = 5000
-            singular = []
-            for i in range(0, len(Ms), batch_size):
-                chunk = Ms[i:i+batch_size]
+        # -------------------------
+        batch_size = 5000
+        singular = []
+        for i in range(0, len(Ms), batch_size):
+            chunk = Ms[i:i+batch_size]
 
-                Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
-                Ns = Ns.transpose(2,0,1) # (N,h11,h11)
-                Ns = Ns[:,1:,1:]
+            Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
+            Ns = Ns.transpose(2,0,1) # (N,h11,h11)
+            Ns = Ns[:,1:,1:]
 
-                sign, logdet = np.linalg.slogdet(Ns)
-                is_zero = (sign == 0) | (logdet <= -1e-4)
+            sign, logdet = np.linalg.slogdet(Ns)
+            is_zero = (sign == 0) | (logdet <= -1e-4)
 
-                singular.append(is_zero)
+            singular.append(is_zero)
 
-            singular = np.concatenate(singular)
+        singular = np.concatenate(singular)
 
-            if verbosity >= 2:
-                if not only_positive_news:
-                    print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
+        if verbosity >= 2:
+            if not only_positive_news:
+                print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
 
-            Ks = Ks[:,~singular]
-            Ms = Ms[:,~singular]
+        Ks = Ks[:,~singular]
+        Ms = Ms[:,~singular]
 
         # transpose to row-wise
+        # ---------------------
         bare_Ks, bare_Ms = Ks.T, Ms.T
     
         # set K0s
+        # -------
+        # (set to obey tadpole ranges)
         Ks = np.zeros((0,data.h11), dtype=int)
         Ms = np.zeros((0,data.h11), dtype=int)
         for Kperp_gcd in range(1,max_Kperp_gcd+1):
-            #print(f"Studying Kperp with gcd={Kperp_gcd}...")
             new_Ks, new_Ms = set_coni_K0(
                 Ks=Kperp_gcd*bare_Ks,
                 Ms=bare_Ms,
@@ -726,7 +716,8 @@ def coniZpM(
             Ks = np.vstack([Ks, new_Ks])
             Ms = np.vstack([Ms, new_Ms])
 
-        # filter by K'
+        # rejection sample on K' > 0
+        # --------------------------
         if True:
             # recompute 'expanded' Ns (bit wasteful...)
             # 'expanded' => don't trim axes
@@ -749,8 +740,6 @@ def coniZpM(
         # save to data structures
         all_Ks        = np.vstack([all_Ks, Ks])
         all_Ms        = np.vstack([all_Ms, Ms])
-
-    #all_Ks, all_Ms = allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
 
     # return
     return all_Ks, all_Ms
