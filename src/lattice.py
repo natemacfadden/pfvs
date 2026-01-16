@@ -178,7 +178,7 @@ def fp_ellipsoid(
     Q_lower: float = 0,
     max_N_out: int = 1_000_000_000,
     eps: float = 1e-4,
-    recursive: bool = True,
+    recursive: bool = False,
     verbosity: int = 0) -> "ArrayLike":
     """
     **Description:**
@@ -391,7 +391,12 @@ def fp_recurse(
                 eps=eps)
 
 @njit
-def fp_iterative(L, Q_upper, Q_lower, max_N_out, eps):
+def fp_iterative(
+        L: "ArrayLike",
+        Q_upper: float,
+        Q_lower: float,
+        max_N_out: int,
+        eps: float) -> None:
     """
     Iterative DFS implementation of the Fincke-Pohst algorithm
     """
