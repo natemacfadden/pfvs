@@ -150,10 +150,11 @@ def pvecs(
 
             sols.append(np.rint(p.xn).astype(int))
 
-        ps = np.array(sols).tolist()
+        ps = np.array(sols)
 
     # reduce by GCD
-    ps = ps//np.gcd.reduce(ps,axis=1)
+    gcds = np.gcd.reduce(ps,axis=1)
+    ps = ps[gcds==1]
     return ps.tolist()
 
 # Zp helpers
@@ -231,7 +232,7 @@ def set_coni_K0(Ks, Ms, h11, Qmin, Qmax, max_N_out: int = 1_000_000, verbosity: 
     # and
     #    -(Qmax*gcd(Kperp) + dot(Kperp, Mperp))/M0
     Ktest = np.empty(h11, dtype=np.int64)
-    for i,(K,M) in enumerate(zip(Ks,Ms)):
+    for K,M in zip(Ks,Ms):
         # read info from K,M
         M0 = M[0]
         if M0 == 0:
@@ -337,6 +338,10 @@ def ZpM(
         # (the output will be lattice generators of such cs... we'll want
         #  lattice generators of valid Ms so we multiply on left by Mbasis)
         Binter = Mbasis@lattice.orthogonal_lattice(p=T.T@Mbasis)
+
+        # lll-reduce Binter
+        # (doesn't seem to have a huge effect...)
+        Binter = lattice.lll_reduce(Binter)
         
         # find lattice points in tadpole
         mat = -(Binter).T@(Z@Binter)
@@ -468,6 +473,10 @@ def ZpK(
         # -------------------------
         # (need K^T@p = 0)
         B = lattice.orthogonal_lattice(p=p)
+
+        # lll-reduce B
+        # (doesn't seem to have a huge effect...)
+        B = lattice.lll_reduce(B)
         
         # find lattice points in tadpole
         mat = -B.T@np.linalg.inv(kappa@p)@B
@@ -623,6 +632,10 @@ def coniZpM(
         # (the output will be lattice generators of such cs... we'll want
         #  lattice generators of valid Ms so we multiply on left by Mbasis)
         Binter = Mbasis@lattice.orthogonal_lattice(p=T.T@Mbasis)
+
+        # lll-reduce Binter
+        # (doesn't seem to have a huge effect...)
+        Binter = lattice.lll_reduce(Binter)
 
         # find lattice points in tadpole
         mat = -(Binter).T@(Z@Binter)
