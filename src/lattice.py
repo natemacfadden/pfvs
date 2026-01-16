@@ -430,6 +430,10 @@ def fp_iterative(
     stack_val_len= np.zeros(MAX_DEPTH, np.int32)  # number of veci candidates
     stack_vals   = np.empty((MAX_DEPTH, 128), np.int32) # veci candidates
 
+    # offsets for ci
+    # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
+    ci_offsets = np.zeros(dim, dtype=np.float64)
+
     # initialize stack
     # ----------------
     stack_i[sp]    = dim-1
@@ -467,17 +471,12 @@ def fp_iterative(
         if pos == stack_val_len[sp]:
             # kill node
             sp -= 1
+            for k in range(i):
+                ci_offsets[k] -= L[i,k] * vec[i]
             continue
 
         # current depth incomplete...
         # ---------------------------
-        # compute the offset
-        # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
-        ci_offset = 0.0
-        for j in range(i+1, dim):
-            ci_offset += L[j, i] * vec[j]
-
-
         # set candidate values of vec[i] if first time to depth
         if stack_val_len[sp] == -1:
             # feasible integer bounds for vec[i]
@@ -486,8 +485,8 @@ def fp_iterative(
             # (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
             # where we used that the diagonal is positive
             R = np.sqrt(max(0.0, remQ))
-            lo = int(np.ceil((-R - ci_offset)/L[i,i] - eps))
-            hi = int(np.floor(( R - ci_offset)/L[i,i] + eps))
+            lo = int(np.ceil((-R - ci_offsets[i])/L[i,i] - eps))
+            hi = int(np.floor(( R - ci_offsets[i])/L[i,i] + eps))
 
             # values of veci to iterate over
             k = 0
@@ -507,13 +506,23 @@ def fp_iterative(
             stack_val_len[sp] = k
             stack_pos[sp] = 0
             pos = 0
+        else:
+            # remove contribution to ci_offsets from previous vec[i]
+            for k in range(i):
+                ci_offsets[k] -= L[i,k] * vec[i]
 
         # pick candidate veci
+        # -------------------
         veci = stack_vals[sp, pos]
         stack_pos[sp] += 1  # advance pos for next iteration
         vec[i] = veci
 
-        ci = L[i,i]*veci + ci_offset
+        # update ci_offsets for descendents
+        for k in range(i):
+            ci_offsets[k] += L[i,k] * veci
+
+        # get ci, the new amount of remaining Q
+        ci = L[i,i]*veci + ci_offsets[i]
         new_rem = remQ - ci*ci
 
         if new_rem >= Q_lower - eps:
