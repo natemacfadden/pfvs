@@ -260,11 +260,11 @@ def set_coni_K0(Ks, Ms, h11, Qmin, Qmax, max_N_out: int = 1_000_000, verbosity: 
                 N_out += 1
                 if N_out >= max_N_out:
                     print('saturated maximum allowed outputs')
-                    if verbosity >= 0:
+                    if (verbosity >= 0) and (N_skipped > 0):
                         print(f'{N_skipped} M-vectors were skipped because M0=0...')
                     return Ks_out, Ms_out
 
-    if verbosity >= 0:
+    if (verbosity >= 0) and (N_skipped > 0):
         print(f'{N_skipped} M-vectors were skipped because M0=0...')
     return Ks_out[:N_out], Ms_out[:N_out]
 
@@ -397,7 +397,7 @@ def ZpM(
 
             singular = np.concatenate(singular)
 
-            if verbosity >= 1:
+            if verbosity >= 2:
                 if not only_positive_news:
                     print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
 
@@ -700,7 +700,7 @@ def coniZpM(
 
             singular = np.concatenate(singular)
 
-            if verbosity >= 1:
+            if verbosity >= 2:
                 if not only_positive_news:
                     print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
 
