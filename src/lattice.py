@@ -402,12 +402,22 @@ def fp_iterative(
     """
     dim = L.shape[0]
 
-    # preallocated output
-    vec = np.zeros(dim, dtype=np.int32)
+    # output object
+    # -------------
     out = np.empty((max_N_out, dim), dtype=np.int32)
-    op = 0  # output pointer
+    
+    # output pointer
+    op  = 0
 
-    # max depth
+    # internal vector that gets built/written to output
+    vec = np.zeros(dim, dtype=np.int32)
+    
+    # stack variables
+    # ---------------
+    # stack pointer
+    sp = 0
+
+    # max stack depth
     MAX_DEPTH = dim + 1
 
     # stack arrays: i, pos, remaining_Q, nonzero, candidate values
@@ -415,44 +425,61 @@ def fp_iterative(
     stack_pos    = np.empty(MAX_DEPTH, np.int32)
     stack_remQ   = np.empty(MAX_DEPTH, np.float64)
     stack_nz     = np.zeros(MAX_DEPTH, np.uint8)  # bool not njit-friendly
+    
     # candidate arrays per depth (preallocate maximum possible size)
-    stack_vals   = np.empty((MAX_DEPTH, 128), np.int32)
-    stack_val_len= np.zeros(MAX_DEPTH, np.int32)  # number of candidates at each depth
+    stack_val_len= np.zeros(MAX_DEPTH, np.int32)  # number of veci candidates
+    stack_vals   = np.empty((MAX_DEPTH, 128), np.int32) # veci candidates
 
     # initialize stack
-    sp = 0
-    stack_i[sp]       = dim-1
-    stack_pos[sp]     = 0
-    stack_remQ[sp]    = Q_upper
-    stack_nz[sp]      = 0
-    stack_val_len[sp] = 0  # will fill below
+    # ----------------
+    stack_i[sp]    = dim-1
+    stack_pos[sp]  = 0
+    stack_remQ[sp] = Q_upper
+    stack_nz[sp]   = 0
 
+    stack_val_len[sp] = -1  # will fill below
+    #stack_vals unset here
+
+    # process stack until empty
+    # -------------------------
     while sp >= 0:
-
         # read values
         i    = stack_i[sp]
         pos  = stack_pos[sp]
         remQ = stack_remQ[sp]
         nz   = stack_nz[sp] != 0
 
-        # check if done
+        # check if node is completed
+        # --------------------------
+        # if i==-1, then we have fully written vec
         if i == -1:
             if nz:
                 out[op, :] = vec
                 op += 1
                 if op >= max_N_out:
                     break
+            # kill node
             sp -= 1
             continue
 
-        # if first visit to this depth, compute candidates
-        if stack_val_len[sp] == 0:
-            # compute the offset
-            # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
-            ci_offset = 0.0
-            for j in range(i+1, vec.size):
-                ci_offset += L[j, i] * vec[j]
+        # check if current depth is completed
+        # -----------------------------------
+        if pos == stack_val_len[sp]:
+            # kill node
+            sp -= 1
+            continue
 
+        # current depth incomplete...
+        # ---------------------------
+        # compute the offset
+        # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
+        ci_offset = 0.0
+        for j in range(i+1, dim):
+            ci_offset += L[j, i] * vec[j]
+
+
+        # set candidate values of vec[i] if first time to depth
+        if stack_val_len[sp] == -1:
             # feasible integer bounds for vec[i]
             # -R                      <= c[i]          <= R
             # -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
@@ -462,54 +489,30 @@ def fp_iterative(
             lo = int(np.ceil((-R - ci_offset)/L[i,i] - eps))
             hi = int(np.floor(( R - ci_offset)/L[i,i] + eps))
 
-            # define the range to iterate in increasing L1 norm
-            # (the same as veci_values = range(lo,hi+1) but just ordered)
+            # values of veci to iterate over
+            k = 0
+            for v in range(lo,hi+1):
+                stack_vals[sp,k] = v
+                k += 1
 
-            # split by case
-            if lo >= 0:
-                # 0 <= lo (<= hi)
-                k = 0
-                for v in range(lo,hi+1):
-                    stack_vals[sp,k] = v
-                    k += 1
-            elif hi <= 0:
-                # (lo <=) hi <= 0
-                k = 0
-                for v in range(hi,lo-1,-1):
-                    stack_vals[sp,k] = v
-                    k += 1
-            else:
-                # lo < 0 < hi
-                stack_vals[sp,0] = 0
-                k = 1
+            # kill node if no valid veci values
+            if k == 0:
+                sp -= 1
+                continue
+            # kill execution if there are too many values
+            elif k>128:
+                raise ValueError(f"Assumed |hi-lo| <= 128, but got {k}")
 
-                # positive/negative pairs in increasing abs value
-                for v in range(1, max(-lo, hi) + 1):
-                    if v <= hi:
-                        stack_vals[sp,k] = v
-                        k += 1
-                    if -v >= lo:
-                        stack_vals[sp,k] = -v
-                        k += 1
-
+            # yes valid veci values
             stack_val_len[sp] = k
             stack_pos[sp] = 0
             pos = 0
 
-        # check if we exhausted writing vec[i]
-        if pos == stack_val_len[sp]:
-            # kill node
-            sp -= 1
-            continue
-
-        # pick candidate
+        # pick candidate veci
         veci = stack_vals[sp, pos]
         stack_pos[sp] += 1  # advance pos for next iteration
         vec[i] = veci
 
-        ci_offset = 0.0
-        for j in range(i+1, dim):
-            ci_offset += L[j,i]*vec[j]
         ci = L[i,i]*veci + ci_offset
         new_rem = remQ - ci*ci
 
@@ -520,7 +523,7 @@ def fp_iterative(
             stack_pos[sp]    = 0
             stack_remQ[sp]   = new_rem
             stack_nz[sp]     = nz or (veci != 0)
-            stack_val_len[sp] = 0  # will fill when we visit
+            stack_val_len[sp] = -1  # will fill when we visit
             # candidate array for this depth is stack_vals[sp,:]
         # else do not push (prune)
 
