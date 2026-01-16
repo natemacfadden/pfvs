@@ -49,8 +49,8 @@ class PFV():
         if self.coni:
             # Kprime computation/check (must be positive)
             type(self).Kprime = property(lambda self: 
-                self.K[0] - self.M@(self._cydata.kappa_cob@self.p)[0] )
-            type(self).check_Kprime(self) = lambda self: self.Kprime > 0
+                -self.K[0] + (self.M@self._cydata.kappa_cob@self.p)[0] )
+            type(self).check_Kprime = lambda self: self.Kprime > 0
 
         # whether to print anything
         self.silent  = silent
@@ -147,8 +147,9 @@ class PFV():
             # save p
             self._p = self._pgrading/self._p_denom
 
-        except:
-            raise ValueError("N likely isn't invertible...")
+        except Exception as e:
+            print('Error when computing p..')
+            raise e
 
     # checkers
     # ========
