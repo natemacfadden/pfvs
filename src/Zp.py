@@ -785,35 +785,36 @@ def coniZpM(
         # (set to obey tadpole ranges)
         Ks = np.zeros((0,data.h11), dtype=int)
         Ms = np.zeros((0,data.h11), dtype=int)
-        for Kperp_gcd in range(1,max_Kperp_gcd+1):
-            if True:
-                Qperps = Kperp_gcd*bare_Qs
-                lo = -(Qmax*Kperp_gcd - Qperps)/bare_Ms[:,0]
-                up = -(Qmin - Qperps)/bare_Ms[:,0]
-                if lo[0] > up[0]:
-                    lo,up = up,lo
+        if len(bare_Ks):
+            for Kperp_gcd in range(1,max_Kperp_gcd+1):
+                if True:
+                    Qperps = Kperp_gcd*bare_Qs
+                    lo = -(Qmax*Kperp_gcd - Qperps)/bare_Ms[:,0]
+                    up = -(Qmin - Qperps)/bare_Ms[:,0]
+                    if lo[0] > up[0]:
+                        lo,up = up,lo
 
-                new_Ks, new_Ms = try_coni_K0(
-                    Qperps=Qperps,
-                    Kperps=Kperp_gcd*bare_Ks[:,1:],
-                    Ms=bare_Ms,
-                    h11=data.h11,
-                    lo=lo, up=up,
-                    Qmin=Qmin,
-                    Qmax=Qmax)
-            else:
-                new_Ks, new_Ms = set_coni_K0(
-                    Ks=Kperp_gcd*bare_Ks,
-                    Ms=bare_Ms,
-                    Kperp_gcd=Kperp_gcd,
-                    h11=data.h11,
-                    Qmin=Qmin,
-                    Qmax=Qmax,
-                    #Qperps=Kperp_gcd*bare_Qs,
-                    max_N_out=max_N_pfvs,
-                    verbosity=verbosity-1)
-            Ks = np.vstack([Ks, new_Ks])
-            Ms = np.vstack([Ms, new_Ms])
+                    new_Ks, new_Ms = try_coni_K0(
+                        Qperps=Qperps,
+                        Kperps=Kperp_gcd*bare_Ks[:,1:],
+                        Ms=bare_Ms,
+                        h11=data.h11,
+                        lo=lo, up=up,
+                        Qmin=Qmin,
+                        Qmax=Qmax)
+                else:
+                    new_Ks, new_Ms = set_coni_K0(
+                        Ks=Kperp_gcd*bare_Ks,
+                        Ms=bare_Ms,
+                        Kperp_gcd=Kperp_gcd,
+                        h11=data.h11,
+                        Qmin=Qmin,
+                        Qmax=Qmax,
+                        #Qperps=Kperp_gcd*bare_Qs,
+                        max_N_out=max_N_pfvs,
+                        verbosity=verbosity-1)
+                Ks = np.vstack([Ks, new_Ks])
+                Ms = np.vstack([Ms, new_Ms])
 
         # rejection sample on K' > 0
         # --------------------------
