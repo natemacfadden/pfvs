@@ -24,7 +24,7 @@
 
 # external imports
 import math
-from numba import njit
+import numba
 import numpy as np
 from ortools.sat.python import cp_model
 from tqdm.auto import tqdm
@@ -159,6 +159,18 @@ def pvecs(
 
 # Zp helpers
 # ==========
+# generic
+# -------
+@numba.njit(parallel=True)
+def check_singular(Ns, tol=1e-4):
+    n = Ns.shape[0]
+    singular = np.zeros(n, dtype=np.bool_)
+    for i in numba.prange(n):
+        s, ld = np.linalg.slogdet(Ns[i])
+        if s == 0.0 or ld <= -tol:
+            singular[i] = True
+    return singular
+
 # non-coni
 # --------
 def allow_gcds(Ks, Ms, Qmax, h11):
@@ -194,7 +206,7 @@ def allow_gcds(Ks, Ms, Qmax, h11):
 
 # coni
 # ----
-#@njit
+#@numba.njit
 #def gcd_vec(vec):
 #    g = abs(vec[0])
 #    for i in range(1, len(vec)):
@@ -203,7 +215,7 @@ def allow_gcds(Ks, Ms, Qmax, h11):
 #            g, x = x, g % x
 #    return g
 
-@njit
+@numba.njit
 def try_coni_K0(Qperps, Kperps, Ms, h11, lo, up, Qmin, Qmax, max_N_out: int = 1_000_000):
     # check if empty
     num_pfvs = len(Ms)
@@ -233,7 +245,7 @@ def try_coni_K0(Qperps, Kperps, Ms, h11, lo, up, Qmin, Qmax, max_N_out: int = 1_
 
     return Ks_out[:op], Ms_out[:op]
 
-@njit
+@numba.njit
 def set_coni_K0(Ks, Ms, Kperp_gcd, h11, Qmin, Qmax,
     #Qperps=None,
     max_N_out: int = 1_000_000, verbosity: int = 0):
@@ -406,8 +418,38 @@ def ZpM(
         primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
         lattice_points = lattice_points[primitiveQ]
         
-        # compute Ms, Ks, and reduced by GCD
+        # compute Ms
+        # ----------
         Ms = Binter@lattice_points.T # as columns
+
+        # filter by N invertibility
+        # -------------------------
+        if True:#filter_Ninvertible:
+            batch_size = 5000
+            singular = []
+            for i in range(0, len(Ms), batch_size):
+                chunk = Ms[i:i+batch_size]
+
+                #Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
+                Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
+                Ns = Ns.transpose(2,0,1) # (N,h11,h11)
+
+                #sign, logdet = np.linalg.slogdet(Ns)
+                #is_zero = (sign == 0) | (logdet <= -1e-4)
+                #singular.append(is_zero)
+                singular.append(check_singular(Ns.astype(float)))
+
+            singular = np.concatenate(singular)
+
+            if verbosity >= 2:
+                if not only_positive_news:
+                    print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
+
+            Ks = Ks[:,~singular]
+            Ms = Ms[:,~singular]
+
+        # compute Ks, reduce by GCDs
+        # --------------------------
         Ks = Z@Ms
 
         #if reduce_gcds:
@@ -425,30 +467,6 @@ def ZpM(
                     print(f"but {sum(in_tadpole)} in tadpole!!!")
             Ks = Ks[:,in_tadpole]
             Ms = Ms[:,in_tadpole]
-
-        # filter by N invertibility
-        if True:#filter_Ninvertible:
-            batch_size = 5000
-            singular = []
-            for i in range(0, len(Ms), batch_size):
-                chunk = Ms[i:i+batch_size]
-
-                Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
-                Ns = Ns.transpose(2,0,1) # (N,h11,h11)
-
-                sign, logdet = np.linalg.slogdet(Ns)
-                is_zero = (sign == 0) | (logdet <= -1e-4)
-
-                singular.append(is_zero)
-
-            singular = np.concatenate(singular)
-
-            if verbosity >= 2:
-                if not only_positive_news:
-                    print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
-
-            Ks = Ks[:,~singular]
-            Ms = Ms[:,~singular]
 
         # transpose to row-wise
         Ks, Ms = Ks.T, Ms.T
@@ -575,13 +593,14 @@ def ZpK(
             for i in range(0, len(Ms), batch_size):
                 chunk = Ms[i:i+batch_size]
 
-                Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
+                #Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
+                Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
                 Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
-                sign, logdet = np.linalg.slogdet(Ns)
-                is_zero = (sign == 0) | (logdet <= -1e-4)
-
-                singular.append(is_zero)
+                #sign, logdet = np.linalg.slogdet(Ns)
+                #is_zero = (sign == 0) | (logdet <= -1e-4)
+                #singular.append(is_zero)
+                singular.append(check_singular(Ns.astype(float)))
 
             singular = np.concatenate(singular)
 
@@ -715,6 +734,31 @@ def coniZpM(
         flags = (Ms[0] >= M0min) & (Ms[0] <= M0max)
         Ms = Ms[:,flags]
 
+        # filter by N invertibility
+        # -------------------------
+        batch_size = 5000
+        singular = []
+        for i in range(0, len(Ms), batch_size):
+            chunk = Ms[i:i+batch_size]
+
+            #Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
+            Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
+            Ns = Ns.transpose(2,0,1) # (N,h11,h11)
+            Ns = Ns[:,1:,1:]
+
+            #sign, logdet = np.linalg.slogdet(Ns)
+            #is_zero = (sign == 0) | (logdet <= -1e-4)
+            #singular.append(is_zero)
+            singular.append(check_singular(Ns.astype(float)))
+
+        singular = np.concatenate(singular)
+
+        if verbosity >= 2:
+            if not only_positive_news:
+                print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
+
+        Ms = Ms[:,~singular]
+
         # compute Ks
         # ----------
         Ks = Z@Ms
@@ -730,31 +774,6 @@ def coniZpM(
         # remove GCDs (we later scan over GCDs...)
         K_gcds = np.gcd.reduce(Ks[1:,:], axis=0)
         Ks = Ks//K_gcds
-
-        # filter by N invertibility
-        # -------------------------
-        batch_size = 5000
-        singular = []
-        for i in range(0, len(Ms), batch_size):
-            chunk = Ms[i:i+batch_size]
-
-            Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
-            Ns = Ns.transpose(2,0,1) # (N,h11,h11)
-            Ns = Ns[:,1:,1:]
-
-            sign, logdet = np.linalg.slogdet(Ns)
-            is_zero = (sign == 0) | (logdet <= -1e-4)
-
-            singular.append(is_zero)
-
-        singular = np.concatenate(singular)
-
-        if verbosity >= 2:
-            if not only_positive_news:
-                print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
-
-        Ks = Ks[:,~singular]
-        Ms = Ms[:,~singular]
 
         # transpose to row-wise
         # ---------------------
@@ -801,7 +820,8 @@ def coniZpM(
         if True:
             # recompute 'expanded' Ns (bit wasteful...)
             # 'expanded' => don't trim axes
-            Ns = np.tensordot(kappa, Ms.T, axes=([2], [0]))
+            #Ns = np.tensordot(kappa, Ms.T, axes=([2], [0]))
+            Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms.T).reshape(data.h11,data.h11,-1)
             Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
             # compute p-denominator
