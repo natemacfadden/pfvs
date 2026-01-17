@@ -426,7 +426,7 @@ def fp_iterative(
     stack_i      = np.empty(MAX_DEPTH, np.int32)
     stack_pos    = np.empty(MAX_DEPTH, np.int32)
     stack_remQ   = np.empty(MAX_DEPTH, np.float64)
-    stack_nz     = np.zeros(MAX_DEPTH, np.uint8)  # bool not njit-friendly
+    stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
     
     # candidate arrays per depth (preallocate maximum possible size)
     stack_val_len= np.zeros(MAX_DEPTH, np.int32)  # number of veci candidates
@@ -441,7 +441,7 @@ def fp_iterative(
     stack_i[sp]    = dim-1
     stack_pos[sp]  = 0
     stack_remQ[sp] = Q_upper
-    stack_nz[sp]   = 0
+    stack_nz[sp]   = False
 
     stack_val_len[sp] = -1  # will fill below
     #stack_vals unset here
@@ -453,7 +453,7 @@ def fp_iterative(
         i    = stack_i[sp]
         pos  = stack_pos[sp]
         remQ = stack_remQ[sp]
-        nz   = stack_nz[sp] != 0
+        nz   = stack_nz[sp]
 
         # check if node is completed
         # --------------------------
