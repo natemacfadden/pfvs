@@ -623,12 +623,50 @@ def ZpK(
 
 # coni Zp
 # =======
+def coniMellipsoid(p, data):
+    kappa  = data.kappa_cob
+    Mbasis = data.M_lattice()
+
+    # helper variable (K[1:] = (Z@M)[1:])
+    Z = kappa@p
+
+    # define the lattices for M
+    # -------------------------
+    # need K.p = 0
+    #
+    # note that K[1:] = (kappa@M@p)[1:]
+    # (it can get K[0] wrong but that's OK since p[0]=0)
+    #
+    # thus need dot(p, kappa@M@p) = 0
+    # equivalently, dot(kappa@p@p, M) = 0
+    T = kappa@p@p
+
+    # need T.T @ Mbasis@c = 0
+    # thus just need c in the orthogonal lattice to Mbasis.T @ T
+    # (the output will be lattice generators of such cs... we'll want
+    #  lattice generators of valid Ms so we multiply on left by Mbasis)
+    Binter = Mbasis@lattice.orthogonal_lattice(p=T.T@Mbasis)
+
+    # lll-reduce Binter
+    # (doesn't seem to have a huge effect...)
+    Binter = lattice.lll_reduce(Binter)
+
+    # find lattice points in tadpole
+    # ------------------------------
+    mat = -(Binter).T@(Z@Binter)
+
+    if np.allclose(mat, np.round(mat)):
+        mat = np.rint(mat).astype(int)
+
+    return mat, Z, Binter
+
+
 def coniZpM(
     data: "cydata",
     ps: "ArrayLike",
     Qmax: int = None,
     Qmin: int = 0,
-    M0min: int = -float('inf'),
+    M0min: int = 13,
     M0max: int = float('inf'),
     max_Kperp_gcd: int = 4,
     ellipsoid_dilation: float = 1, # typically want >=1
@@ -655,7 +693,6 @@ def coniZpM(
 
     # read data
     kappa  = data.kappa_cob
-    Mbasis = data.M_lattice()
 
     if Qmax is None:
         Qmax = (data.h11+data.h21+2) + 2
@@ -673,35 +710,8 @@ def coniZpM(
     for _i, p in enumerate(iterator):
         _0p = np.concatenate([[0],p])
 
-        # helper variable (K[1:] = (Z@M)[1:])
-        Z = kappa@_0p
-
-        # define the lattices for M
-        # -------------------------
-        # need K.p = 0
-        #
-        # note that K[1:] = (kappa@M@p)[1:]
-        # (it can get K[0] wrong but that's OK since p[0]=0)
-        #
-        # thus need dot(p, kappa@M@p) = 0
-        # equivalently, dot(kappa@p@p, M) = 0
-        T = kappa@_0p@_0p
-
-        # need T.T @ Mbasis@c = 0
-        # thus just need c in the orthogonal lattice to Mbasis.T @ T
-        # (the output will be lattice generators of such cs... we'll want
-        #  lattice generators of valid Ms so we multiply on left by Mbasis)
-        Binter = Mbasis@lattice.orthogonal_lattice(p=T.T@Mbasis)
-
-        # lll-reduce Binter
-        # (doesn't seem to have a huge effect...)
-        Binter = lattice.lll_reduce(Binter)
-
-        # find lattice points in tadpole
-        mat = -(Binter).T@(Z@Binter)
-
-        if np.allclose(mat, np.round(mat)):
-            mat = np.rint(mat).astype(int)
+        # construct the quadratic form defining the ellipsoid
+        mat, Z, Binter = coniMellipsoid(_0p, data)
 
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
