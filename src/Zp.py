@@ -194,14 +194,44 @@ def allow_gcds(Ks, Ms, Qmax, h11):
 
 # coni
 # ----
+#@njit
+#def gcd_vec(vec):
+#    g = abs(vec[0])
+#    for i in range(1, len(vec)):
+#        x = abs(vec[i])
+#        while x != 0:
+#            g, x = x, g % x
+#    return g
+
 @njit
-def gcd_vec(vec):
-    g = abs(vec[0])
-    for i in range(1, len(vec)):
-        x = abs(vec[i])
-        while x != 0:
-            g, x = x, g % x
-    return g
+def try_coni_K0(Qperps, Kperps, Ms, h11, lo, up, Qmin, Qmax, max_N_out: int = 1_000_000):
+    # check if empty
+    num_pfvs = len(Ms)
+    if num_pfvs == 0:
+        return np.empty((0,h11), dtype=np.int64), np.empty((0,h11), dtype=np.int64)
+
+    # make the output objects
+    Ks_out = np.empty((max_N_out, h11), dtype=np.int64)
+    Ms_out = np.empty((max_N_out, h11), dtype=np.int64)
+    op = 0
+
+    # fill them
+    for i in range(num_pfvs):
+        for K0 in range(lo[i], up[i]+1):
+            Qtest = Qperps[i] - K0*Ms[i,0]
+
+            # save if this is in the permissible range
+            if (Qmin<=Qtest) and (Qtest<=Qmax):
+                if op >= max_N_out:
+                    print('saturated maximum allowed outputs')
+                    return Ks_out, Ms_out
+
+                Ks_out[op,0]  = K0
+                Ks_out[op,1:] = Kperps[i]
+                Ms_out[op]    = Ms[i]
+                op += 1
+
+    return Ks_out[:op], Ms_out[:op]
 
 @njit
 def set_coni_K0(Ks, Ms, Kperp_gcd, h11, Qmin, Qmax,
@@ -214,7 +244,7 @@ def set_coni_K0(Ks, Ms, Kperp_gcd, h11, Qmin, Qmax,
         raise ValueError("needs M0!=0")
 
     # check if empty
-    num_pfvs = len(Ks)
+    num_pfvs = len(Ms)
     if num_pfvs == 0:
         return np.empty((0,h11), dtype=np.int64), np.empty((0,h11), dtype=np.int64)
 
@@ -729,7 +759,7 @@ def coniZpM(
         # transpose to row-wise
         # ---------------------
         bare_Ks, bare_Ms = Ks.T, Ms.T
-        #bare_Qs = -np.sum(bare_Ks*bare_Ms, axis=1)
+        bare_Qs = -np.sum(bare_Ks*bare_Ms, axis=1)
     
         # set K0s
         # -------
@@ -737,16 +767,32 @@ def coniZpM(
         Ks = np.zeros((0,data.h11), dtype=int)
         Ms = np.zeros((0,data.h11), dtype=int)
         for Kperp_gcd in range(1,max_Kperp_gcd+1):
-            new_Ks, new_Ms = set_coni_K0(
-                Ks=Kperp_gcd*bare_Ks,
-                Ms=bare_Ms,
-                Kperp_gcd=Kperp_gcd,
-                h11=data.h11,
-                Qmin=Qmin,
-                Qmax=Qmax,
-                #Qperps=Kperp_gcd*bare_Qs,
-                max_N_out=max_N_pfvs,
-                verbosity=verbosity-1)
+            if True:
+                Qperps = Kperp_gcd*bare_Qs
+                lo = -(Qmax*Kperp_gcd - Qperps)/bare_Ms[:,0]
+                up = -(Qmin - Qperps)/bare_Ms[:,0]
+                if lo[0] > up[0]:
+                    lo,up = up,lo
+
+                new_Ks, new_Ms = try_coni_K0(
+                    Qperps=Qperps,
+                    Kperps=Kperp_gcd*bare_Ks[:,1:],
+                    Ms=bare_Ms,
+                    h11=data.h11,
+                    lo=lo, up=up,
+                    Qmin=Qmin,
+                    Qmax=Qmax)
+            else:
+                new_Ks, new_Ms = set_coni_K0(
+                    Ks=Kperp_gcd*bare_Ks,
+                    Ms=bare_Ms,
+                    Kperp_gcd=Kperp_gcd,
+                    h11=data.h11,
+                    Qmin=Qmin,
+                    Qmax=Qmax,
+                    #Qperps=Kperp_gcd*bare_Qs,
+                    max_N_out=max_N_pfvs,
+                    verbosity=verbosity-1)
             Ks = np.vstack([Ks, new_Ks])
             Ms = np.vstack([Ms, new_Ms])
 
