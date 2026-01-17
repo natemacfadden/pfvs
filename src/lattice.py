@@ -400,7 +400,8 @@ def fp_iterative(
     """
     Iterative DFS implementation of the Fincke-Pohst algorithm
     """
-    dim = L.shape[0]
+    dim        = L.shape[0]
+    L_diag_inv = 1.0 / np.diag(L)
 
     # output object
     # -------------
@@ -485,8 +486,8 @@ def fp_iterative(
             # (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
             # where we used that the diagonal is positive
             R = np.sqrt(max(0.0, remQ))
-            lo = int(np.ceil((-R - ci_offsets[i])/L[i,i] - eps))
-            hi = int(np.floor(( R - ci_offsets[i])/L[i,i] + eps))
+            lo = int(np.ceil((-R - ci_offsets[i]) * L_diag_inv[i] - eps))
+            hi = int(np.floor(( R - ci_offsets[i]) * L_diag_inv[i] + eps))
 
             # values of veci to iterate over
             k = 0
