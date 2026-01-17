@@ -263,7 +263,6 @@ def set_coni_K0(Ks, Ms, h11, Qmin, Qmax, max_N_out: int = 1_000_000, verbosity: 
 
             # save if this is in the permissible range
             if (Qmin<=Qtest) and (Qtest<=Qmax):
-                Ks_out[N_out] = Ktest
                 Ms_out[N_out] = M
                 N_out += 1
                 if N_out >= max_N_out:
