@@ -148,7 +148,7 @@ class PFV():
             self._p = self._pgrading/self._p_denom
 
         except Exception as e:
-            print('Error when computing p..')
+            #print('Error when computing p...')
             raise e
 
     # checkers
