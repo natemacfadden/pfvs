@@ -486,7 +486,7 @@ def fp_iterative(
             # (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
             # where we used that the diagonal is positive
             R = np.sqrt(max(0.0, remQ))
-            lo = int(np.ceil((-R - ci_offsets[i]) * L_diag_inv[i] - eps))
+            lo = int(np.ceil(( -R - ci_offsets[i]) * L_diag_inv[i] - eps))
             hi = int(np.floor(( R - ci_offsets[i]) * L_diag_inv[i] + eps))
 
             # values of veci to iterate over
@@ -513,9 +513,11 @@ def fp_iterative(
 
         # pick candidate veci
         # -------------------
-        veci = stack_vals[sp, pos]
-        stack_pos[sp] += 1  # advance pos for next iteration
+        veci   = stack_vals[sp, pos]
         vec[i] = veci
+
+        # advance pos for next iteration
+        stack_pos[sp] += 1
 
         # update ci_offsets for descendents
         for k in range(i):
@@ -528,10 +530,10 @@ def fp_iterative(
         if new_rem >= Q_lower - eps:
             # push next depth
             sp += 1
-            stack_i[sp]      = i-1
-            stack_pos[sp]    = 0
-            stack_remQ[sp]   = new_rem
-            stack_nz[sp]     = nz or (veci != 0)
+            stack_i[sp]       = i-1
+            stack_pos[sp]     = 0
+            stack_remQ[sp]    = new_rem
+            stack_nz[sp]      = nz or (veci != 0)
             stack_val_len[sp] = -1  # will fill when we visit
             # candidate array for this depth is stack_vals[sp,:]
         # else do not push (prune)
