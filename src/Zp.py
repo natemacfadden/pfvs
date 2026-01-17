@@ -204,16 +204,25 @@ def gcd_vec(vec):
     return g
 
 @njit
-def set_coni_K0(Ks, Ms, h11, Qmin, Qmax, max_N_out: int = 1_000_000, verbosity: int = 0):
+def set_coni_K0(Ks, Ms, Kperp_gcd, h11, Qmin, Qmax,
+    #Qperps=None,
+    max_N_out: int = 1_000_000, verbosity: int = 0):
+    """
+    asdas
+    """
+    if np.any(Ms[:,0]==0):
+        raise ValueError("needs M0!=0")
+
     # check if empty
-    if len(Ks) == 0:
+    num_pfvs = len(Ks)
+    if num_pfvs == 0:
         return np.empty((0,h11), dtype=np.int64), np.empty((0,h11), dtype=np.int64)
 
     # output objects
     # --------------
     Ks_out = np.empty((max_N_out, h11), dtype=np.int64)
     Ms_out = np.empty((max_N_out, h11), dtype=np.int64)
-    N_out  = 0
+    op = 0
     N_skipped = 0
     
     # need to accommodate two things:
@@ -231,21 +240,21 @@ def set_coni_K0(Ks, Ms, h11, Qmin, Qmax, max_N_out: int = 1_000_000, verbosity: 
     #    -(Qmin + dot(Kperp, Mperp))/M0
     # and
     #    -(Qmax*gcd(Kperp) + dot(Kperp, Mperp))/M0
+    #if Qperps is None:
+    #    Qperps = -np.sum(Ks[:,1:]*Ms[:,1:],axis=1)
     Ktest = np.empty(h11, dtype=np.int64)
-    for K,M in zip(Ks,Ms):
+    for i in range(num_pfvs):
         # read info from K,M
-        M0 = M[0]
-        if M0 == 0:
-            N_skipped += 1
-            continue
-        Mperp = M[1:]
-        Kperp = K[1:]
-
-        # derive some quantities
-        Qperp = -sum([Ki*Mi for Ki,Mi in zip(Kperp,Mperp)])
-        Kperp_gcd = gcd_vec(Kperp)
+        M0    = Ms[i,0]
+        Mperp = Ms[i,1:]
+        Kperp = Ks[i,1:]
+        #Qperp = Qperps[i]
+        Qperp = 0
+        for i in range(h11-1):
+            Qperp -= Kperp[i]*Mperp[i]
 
         # bounds on K0
+        #Kperp_gcd = gcd_vec(Kperp)
         lo = -(Qmax*Kperp_gcd - Qperp)/M0
         up = -(Qmin - Qperp)/M0
         if up<lo:
@@ -257,23 +266,20 @@ def set_coni_K0(Ks, Ms, h11, Qmin, Qmax, max_N_out: int = 1_000_000, verbosity: 
             Ktest[1:] = Kperp
 
             # compute the dot product
-            Qtest = 0
-            for j in range(h11):
-                Qtest -= Ktest[j] * M[j]
+            Qtest = -K0*M0 + Qperp
 
             # save if this is in the permissible range
             if (Qmin<=Qtest) and (Qtest<=Qmax):
-                Ms_out[N_out] = M
-                N_out += 1
-                if N_out >= max_N_out:
+                if op >= max_N_out:
                     print('saturated maximum allowed outputs')
-                    if (verbosity >= 0) and (N_skipped > 0):
-                        print(f'{N_skipped} M-vectors were skipped because M0=0...')
                     return Ks_out, Ms_out
 
-    if (verbosity >= 0) and (N_skipped > 0):
-        print(f'{N_skipped} M-vectors were skipped because M0=0...')
-    return Ks_out[:N_out], Ms_out[:N_out]
+                Ks_out[op]    = Ktest
+                Ms_out[op,0]  = M0
+                Ms_out[op,1:] = Mperp
+                op += 1
+
+    return Ks_out[:op], Ms_out[:op]
 
 # non-coni Zp
 # ===========
@@ -361,8 +367,8 @@ def ZpM(
         except Exception as e:
             print("ERROR!!!")
             print(f"LIKELY mat={mat.tolist()} ISN'T POSITIVE DEFINITE...")
-            print(f"vertices = {self.polytope().vertices().tolist()}")
-            print(f"heights  = {self.triangulation().heights().tolist()}")
+            #print(f"vertices = {self.polytope().vertices().tolist()}")
+            #print(f"heights  = {self.triangulation().heights().tolist()}")
             print(f"p        = {np.array(p).tolist()}")
             raise e
 
@@ -498,8 +504,8 @@ def ZpK(
         except Exception as e:
             print("ERROR!!!")
             print(f"LIKELY mat={mat.tolist()} ISN'T POSITIVE DEFINITE...")
-            print(f"vertices = {self.polytope().vertices().tolist()}")
-            print(f"heights  = {self.triangulation().heights().tolist()}")
+            #print(f"vertices = {self.polytope().vertices().tolist()}")
+            #print(f"heights  = {self.triangulation().heights().tolist()}")
             print(f"p        = {np.array(p).tolist()}")
             raise e
 
@@ -577,6 +583,7 @@ def coniZpM(
     M0max: int = float('inf'),
     max_Kperp_gcd: int = 4,
     ellipsoid_dilation: float = 1, # typically want >=1
+    use_box: bool = False,
     fp_recursive: bool = False,
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
@@ -649,18 +656,24 @@ def coniZpM(
 
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
-            lattice_points = lattice.fp_ellipsoid(
-                mat,
-                ellipsoid_dilation*Qmax,
-                Q_lower=0,
-                max_N_out=max_N_pfvs,
-                recursive=fp_recursive,
-                verbosity=verbosity-1)
+            if not use_box:
+                lattice_points = lattice.fp_ellipsoid(
+                    mat,
+                    ellipsoid_dilation*Qmax,
+                    Q_lower=0,
+                    max_N_out=max_N_pfvs,
+                    recursive=fp_recursive,
+                    verbosity=verbosity-1)
+            else:
+                lattice_points = lattice.boundingbox_enumerate(
+                    mat,
+                    ellipsoid_dilation*Qmax,
+                    max_N_out=max_N_pfvs)
         except Exception as e:
             print("ERROR!!!")
             print(f"LIKELY mat={mat.tolist()} ISN'T POSITIVE DEFINITE...")
-            print(f"vertices = {self.polytope().vertices().tolist()}")
-            print(f"heights  = {self.triangulation().heights().tolist()}")
+            #print(f"vertices = {self.polytope().vertices().tolist()}")
+            #print(f"heights  = {self.triangulation().heights().tolist()}")
             print(f"p        = {np.array(p).tolist()}")
             raise e
 
@@ -716,6 +729,7 @@ def coniZpM(
         # transpose to row-wise
         # ---------------------
         bare_Ks, bare_Ms = Ks.T, Ms.T
+        #bare_Qs = -np.sum(bare_Ks*bare_Ms, axis=1)
     
         # set K0s
         # -------
@@ -726,9 +740,11 @@ def coniZpM(
             new_Ks, new_Ms = set_coni_K0(
                 Ks=Kperp_gcd*bare_Ks,
                 Ms=bare_Ms,
+                Kperp_gcd=Kperp_gcd,
                 h11=data.h11,
                 Qmin=Qmin,
                 Qmax=Qmax,
+                #Qperps=Kperp_gcd*bare_Qs,
                 max_N_out=max_N_pfvs,
                 verbosity=verbosity-1)
             Ks = np.vstack([Ks, new_Ks])
