@@ -172,6 +172,7 @@ def inv_scaled(A_in, as_flint: bool = False):
 
 # lattice points in ellipsoid
 # ===========================
+# Fincke-Pohst
 def fp_ellipsoid(
     mat: "ArrayLike",
     Q: float,
@@ -539,3 +540,87 @@ def fp_iterative(
         # else do not push (prune)
 
     return out[:op, :]
+
+# box approximations
+# ------------------
+def boundingbox_enumerate(
+    mat: "ArrayLike",
+    Q: float,
+    use_np: bool=False,
+    max_N_out: int = 1_000_000_000):
+    bounds = np.floor(boundingbox_bounds(mat, Q)).astype(int)
+
+    # simple (but slow) computation using numpy
+    if use_np:
+        return np.indices(bounds*2+1).reshape(len(bounds),-1).T-bounds
+    else:
+        return enumerate_box_njit(bounds, max_N_out)
+
+def boundingbox_bounds(mat: "ArrayLike", Q: float):
+    mat = np.asarray(mat)
+    dim = mat.shape[0]
+
+    # inflate Q to accomodate floating-point mat
+    if not np.isdtype(mat.dtype, 'integral'):
+        Q = 1.1*Q
+
+    # derive bounds for the bounding box: (e[i] be ith unit vector)
+    # x[i]  = e[i].T @ x = e[i].T @ M^{-1} @ M @ x = <M^{-1}@e[i], x>_M
+    # so
+    # |x[i]|^2 = |<M^{-1}@e[i], x>_M|^2
+    #         <= <M^{-1}@e[i], M^{-1}@e[i]>_M * <x,x>_M
+    #          = e[i]^T M^{-1} e[i]           * <x,x>_M
+    #          = diag(M^{-1})                 * <x,x>_M
+    #         <= diag(M^{-1})                 * Q
+    bounds = np.sqrt(Q*np.diag(np.linalg.inv(mat)))
+    return bounds
+
+@njit
+def enumerate_box_njit(bounds: "ArrayLike", max_N_out: int):
+    dim = len(bounds)
+    
+    # output array
+    out = np.empty((max_N_out, dim), dtype=np.int32)
+    op = 0  # output pointer
+    
+    # iterative stack
+    vec = np.zeros(dim, dtype=np.int32)
+    stack_i = 0
+    stack_pos = np.zeros(dim, dtype=np.int32)
+    stack_len = np.zeros(dim, dtype=np.int32)
+    
+    # allowed values per dimension
+    candidates = np.empty((dim, 2*bounds.max()+1), dtype=np.int32)
+
+    for i in range(dim):
+        k = 0
+        for v in range(-bounds[i], bounds[i]+1):
+            candidates[i,k] = v
+            k += 1
+        stack_len[i] = k
+    
+    # iterate in a ~DFS manner
+    stack_pos[:] = 0
+    
+    while stack_i >= 0:        
+        if stack_pos[stack_i] == stack_len[stack_i]:
+            stack_i -= 1
+            if stack_i >= 0:
+                stack_pos[stack_i] += 1
+            continue
+        
+        vec[stack_i] = candidates[stack_i, stack_pos[stack_i]]
+        
+        if stack_i == dim-1:
+            # leaf node
+            out[op,:] = vec
+            op += 1
+            if op > max_N_out:
+                raise ValueError("Too many outputs...")
+
+            stack_pos[stack_i] += 1
+        else:
+            stack_i += 1
+            stack_pos[stack_i] = 0
+    
+    return out[:op,:]
