@@ -460,10 +460,10 @@ def fp_iterative(
         # if i==-1, then we have fully written vec
         if i == -1:
             if nz:
-                out[op, :] = vec
-                op += 1
                 if op >= max_N_out:
                     break
+                out[op, :] = vec
+                op += 1
             # kill node
             sp -= 1
             continue
@@ -613,10 +613,10 @@ def enumerate_box_njit(bounds: "ArrayLike", max_N_out: int):
         
         if stack_i == dim-1:
             # leaf node
+            if op >= max_N_out:
+                raise ValueError("Too many outputs...")
             out[op,:] = vec
             op += 1
-            if op > max_N_out:
-                raise ValueError("Too many outputs...")
 
             stack_pos[stack_i] += 1
         else:
