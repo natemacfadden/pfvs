@@ -506,10 +506,9 @@ def fp_iterative(
             stack_val_len[sp] = k
             stack_pos[sp] = 0
             pos = 0
-        else:
-            # remove contribution to ci_offsets from previous vec[i]
+
             for k in range(i):
-                ci_offsets[k] -= L[i,k] * vec[i]
+                ci_offsets[k] += L[i,k] * (stack_vals[sp, pos]-1)
 
         # pick candidate veci
         # -------------------
@@ -519,7 +518,7 @@ def fp_iterative(
 
         # update ci_offsets for descendents
         for k in range(i):
-            ci_offsets[k] += L[i,k] * veci
+            ci_offsets[k] += L[i,k]# * 1
 
         # get ci, the new amount of remaining Q
         ci = L[i,i]*veci + ci_offsets[i]
