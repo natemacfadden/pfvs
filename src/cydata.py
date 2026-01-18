@@ -50,7 +50,9 @@ class CYData:
         c2: "ArrayLike",
         H: "ArrayLike",
         coni_curve: "ArrayLike" = None,
-        coni_cob: "ArrayLike" = None):
+        coni_cob: "ArrayLike" = None,
+        vertices: "ArrayLike" = "unknown (set when constructing CYData)",
+        heights: "ArrayLike" = "unknown (set when constructing CYData)"):
         """
         **Description:**
         Initializes an instance of a simple class to hold the relevant data of
@@ -70,6 +72,9 @@ class CYData:
         self._c2    = np.array(c2)
         self._H     = np.array(H)
         self._coni  = (coni_curve is not None)
+
+        self._vertices = vertices
+        self._heights  = heights
 
         # variables for the M-lattice
         self._a     = None
@@ -166,7 +171,9 @@ class CYData:
             c2=c2,
             H=H,
             coni_curve=coni_curve,
-            coni_cob=coni_cob)
+            coni_cob=coni_cob,
+            vertices=cy.polytope().vertices().tolist(),
+            heights=cy.triangulation().heights().tolist())
 
     # standard class methods
     # ----------------------
@@ -185,6 +192,14 @@ class CYData:
 
     # getters
     # -------
+    @property
+    def vertices(self):
+        return self._vertices
+
+    @property
+    def heights(self):
+        return self._heights
+
     @property
     def kappa(self):
         return self._kappa.copy()

@@ -33,13 +33,13 @@ class PFV():
     Class to stores/verifies (Coni-)PFVs.
 
     **Arguments:**
-    - `data`: A CYData object defining the CY.
+    - `cy`: A CYData object defining the CY.
     - `K`: K flux vector. Must be integral.
     - `M`: M flux vector. Must be integral.
     - `silent`: Whether to suppress messages.
     """
     def __init__(self,
-        data: "cydata",
+        cy: "CYData",
         K: "ArrayLike",
         M: "ArrayLike",
         silent: bool = False):
@@ -47,16 +47,16 @@ class PFV():
         Class to stores/verifies (Coni-)PFVs.
 
         **Arguments:**
-        - `data`: A CYData object defining the CY.
+        - `cy`: A CYData object defining the CY.
         - `K`: K flux vector. Must be integral.
         - `M`: M flux vector. Must be integral.
         - `silent`: Whether to suppress messages.
         """
         # read inputs
-        self._cydata = data
-        self._K      = np.array(K)
-        self._M      = np.array(M)
-        self.silent  = silent
+        self._cy    = cy
+        self._K     = np.array(K)
+        self._M     = np.array(M)
+        self.silent = silent
 
         # initialize other variables
         self._p        = None
@@ -70,17 +70,53 @@ class PFV():
         if self.coni:
             # Kprime computation/check (must be positive)
             type(self).Kprime = property(lambda self: 
-                -self.K[0] + (self.M@self._cydata.kappa_cob@self.p)[0] )
+                -self.K[0] + (self.M@self._cy.kappa_cob@self.p)[0] )
             type(self).check_Kprime = lambda self: self.Kprime > 0
 
+    # basic
+    # =====
+    def __repr__(self):
+        verts   = self._cy.vertices
+        heights = self._cy.heights
+
+        msg =  f"### An (h11,h21)={self.h11, self.h21} "
+        msg += f"{'coni-' if self.coni else ''} PFV defined via\n"
+        msg += f"verts   = {verts}\n"
+        msg += f"heights = {heights}\n"
+        if isinstance(verts, str) or isinstance(heights, str):
+           pass
+        else:
+            #msg += f"    cy      = Polytope({verts}).triangulate(heights={heights}).cy()\n"
+            msg += f"cy      = Polytope(verts).triangulate(heights=heights).cy()\n"
+        if self.coni:
+            msg +=  "### using basis defined by change-of-basis\n"
+            msg += f"cob = {self._cy.cob.tolist()}\n"
+        msg +=  "### with fluxes\n"
+        msg += f"K       = {self.K.tolist()}\n"
+        msg += f"M       = {self.M.tolist()}\n"
+        msg += f"p       = {self.p.tolist()}\n"
+
+        return msg
+
+    def __str__(self):
+        return self.__repr__()
+
     # getters
-    # -------
+    # =======
+    @property
+    def h11(self):
+        return self._cy.h11
+
+    @property
+    def h21(self):
+        return self._cy.h21
+
     @property
     def coni(self):
         """
         Whether this object describes a coni PFV.
         """
-        return self._cydata.coni
+        return self._cy.coni
 
     # basic fluxes
     @property
@@ -97,6 +133,30 @@ class PFV():
         """
         return self._M.copy()
 
+    @property
+    def kappa(self):
+        """
+        The intersection numbers
+        """
+        if self.coni:
+            return self._cy.kappa_cob
+        else:
+            return self._cy.kappa
+
+    @property
+    def a(self):
+        """
+        The a-matrix
+        """
+        return self._cy.a
+
+    @property
+    def b(self):
+        """
+        The b-vector
+        """
+        return self._cy.b
+
     # N-matrix and its inverse
     # ------------------------
     @property
@@ -105,11 +165,10 @@ class PFV():
         # defined as kappa @ M
         # for coni, the 0th row and column are trimmed
         if self._N is None:
+            self._N = self.kappa @ self._M
+
             if self.coni:
-                self._N = self._cydata._kappa_cob @ self._M
                 self._N = self._N[1:,1:]
-            else:
-                self._N = self._cydata._kappa @ self._M
 
         return self._N.copy()
 
@@ -137,51 +196,60 @@ class PFV():
 
     @property
     def pgrading(self):
+        """
+        The 'pgrading'-vector.
+
+        This is just the primitive vector along the ray defined by p.
+        I.e., the unique `pgrading = r*p` for r>0 such that `gcd(r*p) == 1`.
+        """
         if self._pgrading is None:
             self._calc_p()
             
         return self._pgrading
 
     def _calc_p(self):
+        """
+        Compute the p-vector and pgrading.
+        """
         # this computation only makes sense if N is invertible
         if not self.check_Ninvertible():
+            self._pgrading = np.empty(len(self.K), dtype=int)
+            self._p        = np.empty(len(self.K), dtype=float)
+            self._pgrading[:] = np.nan
+            self._p[:]        = np.nan
             return
+        # N is invertible! the following should work...
+        
+        # calc pgrading
+        # (uses Ninv, which is inv(N), scaled to be integral)
+        if self.coni:
+            self._pgrading = np.zeros(len(self.K), dtype=int)
 
-        try:
-            # calc pgrading
-            # (uses Ninv, which is inv(N), scaled to be integral)
-            if self.coni:
-                self._pgrading = np.zeros(len(self.K), dtype=int)
+            # the coni components of p
+            K_flint = flint.fmpz_mat(self.K[1:].reshape(-1,1).tolist())
+            tmp = self.Ninv[0]*K_flint
 
-                # the coni components of p
-                K_flint = flint.fmpz_mat(self.K[1:].reshape(-1,1).tolist())
-                tmp = self.Ninv[0]*K_flint
+            # remove the gcd
+            gcd = functools.reduce(math.gcd, tmp)
+            tmp = tmp/gcd
+            tmp = tmp.transpose()
+            tmp = np.array(tmp.tolist()).astype(int)
+            self._pgrading[1:] = tmp
+        else:
+            K_flint = flint.fmpz_mat(self.K.reshape(-1,1).tolist())
+            self._pgrading = self.Ninv[0]*K_flint
 
-                # remove the gcd
-                gcd = functools.reduce(math.gcd, tmp)
-                tmp = tmp/gcd
-                tmp = tmp.transpose()
-                tmp = np.array(tmp.tolist()).astype(int)
-                self._pgrading[1:] = tmp
-            else:
-                K_flint = flint.fmpz_mat(self.K.reshape(-1,1).tolist())
-                self._pgrading = self.Ninv[0]*K_flint
+            # remove the gcd
+            gcd = functools.reduce(math.gcd, self._pgrading)
+            self._pgrading = self._pgrading/gcd
+            self._pgrading = self._pgrading.transpose()
+            self._pgrading = np.array(self._pgrading.tolist()).astype(int)
 
-                # remove the gcd
-                gcd = functools.reduce(math.gcd, self._pgrading)
-                self._pgrading = self._pgrading/gcd
-                self._pgrading = self._pgrading.transpose()
-                self._pgrading = np.array(self._pgrading.tolist()).astype(int)
+        # save scaling
+        self._p_denom = self.Ninv[1]/gcd # NON INTEGRAL
 
-            # save scaling
-            self._p_denom = self.Ninv[1]/gcd # NON INTEGRAL
-
-            # save p
-            self._p = self._pgrading/self._p_denom
-
-        except Exception as e:
-            #print('Error when computing p...')
-            raise e
+        # save p
+        self._p = self._pgrading/self._p_denom
 
     # checkers
     # ========
@@ -227,17 +295,17 @@ class PFV():
 
     def check_a(self):
         # check that a@M is even
-        tmp = self._cydata.a@self.M
+        tmp = self.a@self.M
 
         return (tmp%2 == 0).all()
     
     def check_b(self):
         # check that b.M is a multiple of 24
-        return np.dot(self._cydata.b, self.M)%24 == 0
+        return np.dot(self.b, self.M)%24 == 0
 
     def check_tadpole(self):
         # check tadpole bound
-        upper = (self._cydata.h11+self._cydata.h21+2) + 2*self.coni
+        upper = (self.h11+self.h21+2) + 2*self.coni
         return 0 <= -np.dot(self.M,self.K) <= upper
 
     def check_Knonzero(self):
@@ -255,9 +323,9 @@ class PFV():
         # check that p is *strictly* contained in Kcup (the union of 2-face
         # equivalent kahler cones)
         if self.coni:
-            return min(self._cydata._H_cob@self.pgrading[1:])>0.5
+            return min(self._cy._H_cob@self.pgrading[1:])>0.5
         else:
-            return min(self._cydata._H@self.p)>0.5
+            return min(self._cy._H@self.p)>0.5
     
     def check_NpK(self, tol=1e-4):
         # check that N@p=K
@@ -274,4 +342,7 @@ class PFV():
                    (np.dot(self.pgrading[1:], self.K[1:]) == 0)
         else:
             return np.dot(self.pgrading, self.K) == 0
+
+    # auxiliary
+    # =========
     
