@@ -29,21 +29,42 @@ import numpy as np
 from . import lattice
 
 class PFV():
+    """
+    Class to stores/verifies (Coni-)PFVs.
+
+    **Arguments:**
+    - `data`: A CYData object defining the CY.
+    - `K`: K flux vector. Must be integral.
+    - `M`: M flux vector. Must be integral.
+    - `silent`: Whether to suppress messages.
+    """
     def __init__(self,
         data: "cydata",
         K: "ArrayLike",
         M: "ArrayLike",
         silent: bool = False):
+        """
+        Class to stores/verifies (Coni-)PFVs.
+
+        **Arguments:**
+        - `data`: A CYData object defining the CY.
+        - `K`: K flux vector. Must be integral.
+        - `M`: M flux vector. Must be integral.
+        - `silent`: Whether to suppress messages.
+        """
+        # read inputs
         self._cydata = data
         self._K      = np.array(K)
         self._M      = np.array(M)
+        self.silent  = silent
 
         # initialize other variables
-        self._p      = None
+        self._p        = None
         self._pgrading = None
 
-        self._N      = None
-        self._Ninv   = None
+        self._N           = None
+        self._Ninvertible = None
+        self._Ninv        = None
 
         # coni-specific variables
         if self.coni:
@@ -52,24 +73,28 @@ class PFV():
                 -self.K[0] + (self.M@self._cydata.kappa_cob@self.p)[0] )
             type(self).check_Kprime = lambda self: self.Kprime > 0
 
-        # whether to print anything
-        self.silent  = silent
-
     # getters
     # -------
     @property
     def coni(self):
+        """
+        Whether this object describes a coni PFV.
+        """
         return self._cydata.coni
 
     # basic fluxes
     @property
     def K(self):
-        # the K-vector
+        """
+        The K-vector
+        """
         return self._K.copy()
 
     @property
     def M(self):
-        # the M-vector
+        """
+        The M-vector
+        """
         return self._M.copy()
 
     # N-matrix and its inverse
@@ -99,9 +124,12 @@ class PFV():
     # --------
     @property
     def p(self):
-        # the p-vector
-        # for non-coni, this is defined as `N.inv() @ K`
-        # for coni, this is defined as `concatenate([[0], N.inv() @ K[1:]])`
+        """
+        The p-vector
+
+        For non-coni PFVs, this is defined as `N.inv() @ K`
+        For     coni PFVs, this is defined as `concatenate([[0], N.inv() @ K[1:]])`
+        """
         if self._p is None:
             self._calc_p()
             
@@ -115,6 +143,10 @@ class PFV():
         return self._pgrading
 
     def _calc_p(self):
+        # this computation only makes sense if N is invertible
+        if not self.check_Ninvertible():
+            return
+
         try:
             # calc pgrading
             # (uses Ninv, which is inv(N), scaled to be integral)
@@ -215,7 +247,9 @@ class PFV():
     def check_Ninvertible(self, tol=0.5):
         # check that N is full rank
         # use determinant
-        return np.abs(np.linalg.det(self.N))>tol
+        if self._Ninvertible == None:
+            self._Ninvertible = np.abs(np.linalg.det(self.N))>tol
+        return self._Ninvertible
 
     def check_pcontainment(self):
         # check that p is *strictly* contained in Kcup (the union of 2-face
