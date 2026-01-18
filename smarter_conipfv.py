@@ -2,16 +2,18 @@ import gurobipy as gp
 import math
 import numpy as np
 
-def coniMan(Binter, Z, Qmin, Qmax, M0min,
+def coniMan(pgrading, Binter, Z, Qmin, Qmax, M0min,
             M0max=None,
             K0min=None, K0max=None,
-            Kscalebounds = 100,
+            Kbounds = 1000,
+            Mbounds = 1000,
+            pbounds = 1000,
+            pdenommax = 100,
             cbounds = 100,
             alphabounds = 1000,
             Nsol: int = 1000,
             timelimit: float=None,
             verbosity: int = 0):
-    
     # helper variables
     h11 = Binter.shape[0]
     assert Binter.shape[1] == h11-1
@@ -26,12 +28,9 @@ def coniMan(Binter, Z, Qmin, Qmax, M0min,
     # =========
     # physically relevant variables
     # -----------------------------
-    Mbounds = float('inf')
-    Kbounds = float('inf')
-    M       = [model.addVar(lb=-Mbounds, ub=Mbounds, vtype=gp.GRB.INTEGER) for i in range(h11)]
     K       = [model.addVar(lb=-Kbounds, ub=Kbounds, vtype=gp.GRB.INTEGER) for i in range(h11)]
-    # see K constraints...
-    K_scale = model.addVar(lb=1, ub=float('inf'), vtype=gp.GRB.INTEGER)
+    M       = [model.addVar(lb=-Mbounds, ub=Mbounds, vtype=gp.GRB.INTEGER) for i in range(h11)]
+    pdenom  = model.addVar(lb=1, ub=pdenommax, vtype=gp.GRB.INTEGER)
 
     # internal variables
     # ------------------
@@ -54,8 +53,8 @@ def coniMan(Binter, Z, Qmin, Qmax, M0min,
     
     # K constraints
     # -------------
-    # enforce K == (Z@Binter@c + alpha*e0) / Kscale
-    # (equiv: K*K_scale - alpha*e0 = Z@Binter@c)
+    # enforce K == (Z@Binter@c + alpha*e0) / pdenom
+    # (equiv: K*pdenom - alpha*e0 = Z@Binter@c)
     for i in range(h11):
         if i == 0:
             alphaterm = alpha
@@ -63,7 +62,7 @@ def coniMan(Binter, Z, Qmin, Qmax, M0min,
             alphaterm = 0
     
         model.addQConstr(
-            K[i]*K_scale - alphaterm,
+            K[i]*pdenom - alphaterm,
             gp.GRB.EQUAL,
             gp.quicksum([(Z@Binter)[i,j] * c[j] for j in range(h11-1)])
         )
@@ -76,6 +75,18 @@ def coniMan(Binter, Z, Qmin, Qmax, M0min,
     # -------------------
     model.addQConstr(-gp.quicksum([K[i]*M[i] for i in range(h11)]) >= Qmin)
     model.addQConstr(-gp.quicksum([K[i]*M[i] for i in range(h11)]) <= Qmax)
+
+    # Kprime constraints
+    # ------------------
+    # Kprime = -K0 + (M @ kappa@p)[0] > 0
+    # (equiv: -K[0] + (M @ Z/pdenom)[0] > 0 )
+    # (equiv: K[0] < sum(M[i]*Z[i,0]/pdenom for i in range(h11)) )
+    # (equiv: pdenom * K[0] < sum(M[i]*Z[i,0] for i in range(h11)) )
+    model.addQConstr(
+        pdenom*K[0],
+        gp.GRB.LESS_EQUAL,
+        gp.quicksum(M[i] * Z[i,0] for i in range(h11))
+    )
 
     # optimize for all solutions
     # ==========================
@@ -96,4 +107,8 @@ def coniMan(Binter, Z, Qmin, Qmax, M0min,
         Ks.append(np.rint(Kval).astype(int))
         Ms.append(np.rint(Mval).astype(int))
 
-    return np.vstack(Ks), np.vstack(Ms)
+    # return
+    if len(Ks):
+        return np.vstack(Ks), np.vstack(Ms)
+    else:
+        return np.zeros((0,h11), dtype=int), np.zeros((0,h11), dtype=int)
