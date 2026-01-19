@@ -217,20 +217,23 @@ def allow_gcds(Ks, Ms, Qmax, h11):
 
 @numba.njit
 def try_coni_K0(Qperps, Kperps, Ms, h11, lo, up, Qmin, Qmax, max_N_out: int = 1_000_000):
+    """
+    columnwise
+    """
     # check if empty
-    num_pfvs = len(Ms)
+    num_pfvs = Ms.shape[1]
     if num_pfvs == 0:
-        return np.empty((0,h11), dtype=np.int64), np.empty((0,h11), dtype=np.int64)
+        return np.empty((h11,0), dtype=np.int64), np.empty((h11,0), dtype=np.int64)
 
     # make the output objects
-    Ks_out = np.empty((max_N_out, h11), dtype=np.int64)
-    Ms_out = np.empty((max_N_out, h11), dtype=np.int64)
+    Ks_out = np.empty((h11, max_N_out), dtype=np.int64)
+    Ms_out = np.empty((h11, max_N_out), dtype=np.int64)
     op = 0
 
     # fill them
     for i in range(num_pfvs):
         for K0 in range(lo[i], up[i]+1):
-            Qtest = Qperps[i] - K0*Ms[i,0]
+            Qtest = Qperps[i] - K0*Ms[0,i]
 
             # save if this is in the permissible range
             if (Qmin<=Qtest) and (Qtest<=Qmax):
@@ -238,32 +241,32 @@ def try_coni_K0(Qperps, Kperps, Ms, h11, lo, up, Qmin, Qmax, max_N_out: int = 1_
                     print('saturated maximum allowed outputs')
                     return Ks_out, Ms_out
 
-                Ks_out[op,0]  = K0
-                Ks_out[op,1:] = Kperps[i]
-                Ms_out[op]    = Ms[i]
+                Ks_out[0,op]  = K0
+                Ks_out[1:,op] = Kperps[:,i]
+                Ms_out[:,op]  = Ms[:,i]
                 op += 1
 
-    return Ks_out[:op], Ms_out[:op]
+    return Ks_out[:,:op], Ms_out[:,:op]
 
 @numba.njit
 def set_coni_K0(Ks, Ms, Kperp_gcd, h11, Qmin, Qmax,
     #Qperps=None,
     max_N_out: int = 1_000_000, verbosity: int = 0):
     """
-    asdas
+    columnwise
     """
-    if np.any(Ms[:,0]==0):
+    if np.any(Ms[0]==0):
         raise ValueError("needs M0!=0")
 
     # check if empty
     num_pfvs = len(Ms)
     if num_pfvs == 0:
-        return np.empty((0,h11), dtype=np.int64), np.empty((0,h11), dtype=np.int64)
+        return np.empty((h11,0), dtype=np.int64), np.empty((h11,0), dtype=np.int64)
 
     # output objects
     # --------------
-    Ks_out = np.empty((max_N_out, h11), dtype=np.int64)
-    Ms_out = np.empty((max_N_out, h11), dtype=np.int64)
+    Ks_out = np.empty((h11, max_N_out), dtype=np.int64)
+    Ms_out = np.empty((h11, max_N_out), dtype=np.int64)
     op = 0
     N_skipped = 0
     
@@ -287,9 +290,9 @@ def set_coni_K0(Ks, Ms, Kperp_gcd, h11, Qmin, Qmax,
     Ktest = np.empty(h11, dtype=np.int64)
     for i in range(num_pfvs):
         # read info from K,M
-        M0    = Ms[i,0]
-        Mperp = Ms[i,1:]
-        Kperp = Ks[i,1:]
+        M0    = Ms[0,i]
+        Mperp = Ms[1:,i]
+        Kperp = Ks[1:,i]
         #Qperp = Qperps[i]
         Qperp = 0
         for i in range(h11-1):
@@ -304,7 +307,7 @@ def set_coni_K0(Ks, Ms, Kperp_gcd, h11, Qmin, Qmax,
 
         # try all values of K0
         for K0 in range(math.floor(lo),math.ceil(up)+1):
-            Ktest[0] = K0
+            Ktest[0]  = K0
             Ktest[1:] = Kperp
 
             # compute the dot product
@@ -316,12 +319,12 @@ def set_coni_K0(Ks, Ms, Kperp_gcd, h11, Qmin, Qmax,
                     print('saturated maximum allowed outputs')
                     return Ks_out, Ms_out
 
-                Ks_out[op]    = Ktest
-                Ms_out[op,0]  = M0
-                Ms_out[op,1:] = Mperp
+                Ks_out[:,op]  = Ktest
+                Ms_out[0,op]  = M0
+                Ms_out[1:,op] = Mperp
                 op += 1
 
-    return Ks_out[:op], Ms_out[:op]
+    return Ks_out[:,:op], Ms_out[:,:op]
 
 # non-coni Zp
 # ===========
@@ -736,6 +739,9 @@ def coniZpM(
             print(f"p        = {np.array(p).tolist()}")
             raise e
 
+        if verbosity >= 2:
+            print(f'# lattice_points = {lattice_points.shape[0]}')
+
         # compute Ms
         # ----------
         Ms = Binter@lattice_points.T # as columns
@@ -743,6 +749,9 @@ def coniZpM(
         # (don't trim non-primitive... instead, trim on M0min<=M[0]<=M0max)
         flags = (Ms[0] >= M0min) & (Ms[0] <= M0max)
         Ms = Ms[:,flags]
+
+        if verbosity >= 2:
+            print(f'# good M0s = {Ms.shape[1]}')
 
         # filter by N invertibility
         # -------------------------
@@ -769,6 +778,9 @@ def coniZpM(
 
         Ms = Ms[:,~singular]
 
+        if verbosity >= 2:
+            print(f'# invertible = {Ms.shape[1]}')
+
         # compute Ks
         # ----------
         Ks = Z@Ms
@@ -787,26 +799,27 @@ def coniZpM(
 
         # transpose to row-wise
         # ---------------------
-        bare_Ks, bare_Ms = Ks.T, Ms.T
-        bare_Qs = -np.sum(bare_Ks*bare_Ms, axis=1)
+        bare_Ks = Ks
+        bare_Ms = Ms
+        bare_Qs = -np.sum(bare_Ks*bare_Ms, axis=0)
     
         # set K0s
         # -------
         # (set to obey tadpole ranges)
-        Ks = np.zeros((0,data.h11), dtype=int)
-        Ms = np.zeros((0,data.h11), dtype=int)
-        if len(bare_Ks):
+        Ks = np.zeros((data.h11,0), dtype=int)
+        Ms = np.zeros((data.h11,0), dtype=int)
+        if bare_Ks.shape[1]:
             for Kperp_gcd in range(1,max_Kperp_gcd+1):
                 if True:
                     Qperps = Kperp_gcd*bare_Qs
-                    lo = -(Qmax*Kperp_gcd - Qperps)/bare_Ms[:,0]
-                    up = -(Qmin - Qperps)/bare_Ms[:,0]
+                    lo = -(Qmax*Kperp_gcd - Qperps)/bare_Ms[0]
+                    up = -(Qmin - Qperps)/bare_Ms[0]
                     if lo[0] > up[0]:
                         lo,up = up,lo
 
                     new_Ks, new_Ms = try_coni_K0(
                         Qperps=Qperps,
-                        Kperps=Kperp_gcd*bare_Ks[:,1:],
+                        Kperps=Kperp_gcd*bare_Ks[1:],
                         Ms=bare_Ms,
                         h11=data.h11,
                         lo=lo, up=up,
@@ -823,8 +836,11 @@ def coniZpM(
                         #Qperps=Kperp_gcd*bare_Qs,
                         max_N_out=max_N_pfvs,
                         verbosity=verbosity-1)
-                Ks = np.vstack([Ks, new_Ks])
-                Ms = np.vstack([Ms, new_Ms])
+                Ks = np.hstack([Ks, new_Ks])
+                Ms = np.hstack([Ms, new_Ms])
+
+        if verbosity >= 2:
+            print(f'# post K0s = {Ms.shape[1]}')
 
         # rejection sample on K' > 0
         # --------------------------
@@ -832,25 +848,31 @@ def coniZpM(
             # recompute 'expanded' Ns (bit wasteful...)
             # 'expanded' => don't trim axes
             #Ns = np.tensordot(kappa, Ms.T, axes=([2], [0]))
-            Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms.T).reshape(data.h11,data.h11,-1)
+            Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
             Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
             # compute p-denominator
-            Kperps_scaled = Ns[:,1:,1:]@p
-            Kperps_norm2  = np.sum(Ks[:,1:]*Ks[:,1:], axis=1)
-            pdenoms       = np.sum(Kperps_scaled*Ks[:,1:],axis=1)/Kperps_norm2
+            Kperps_scaled = (Ns[:,1:,1:]@p).T
+            Kperps_norm2  = np.sum(Ks[1:]*Ks[1:], axis=0)
+            pdenoms       = np.sum(Kperps_scaled*Ks[1:],axis=0)/Kperps_norm2
 
             # compute K's
-            Kprimes = -Ks[:,0] + (Ns@_0p)[:,0]/pdenoms
+            Kprimes = -Ks[0] + (Ns@_0p)[:,0]/pdenoms
 
             # cut
             flags = Kprimes > 0
-            Ks = Ks[flags]
-            Ms = Ms[flags]
+            Ks = Ks[:,flags]
+            Ms = Ms[:,flags]
+
+        # transpose to row-wise
+        Ks, Ms = Ks.T, Ms.T
 
         # save to data structures
         all_Ks        = np.vstack([all_Ks, Ks])
         all_Ms        = np.vstack([all_Ms, Ms])
+
+        if verbosity >= 2:
+            print(f"# post K' = {Ms.shape[0]}")
 
     # return
     return all_Ks, all_Ms
