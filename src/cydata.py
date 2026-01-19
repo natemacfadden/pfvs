@@ -312,7 +312,7 @@ class CYData:
 
     # basis for M-vectors
     # -------------------
-    def M_lattice(self, verify: bool = True)-> "ArrayLike":
+    def M_lattice(self, other_mat=None, other_mod=None, verify: bool = True)-> "ArrayLike":
         """
         **Description:**
         Computes a basis of the sublattice of all vectors, M, such that
@@ -342,10 +342,27 @@ class CYData:
         # compute from scratch
         h11 = self.kappa.shape[0]
 
-        # construct the primal lattice
-        to_stack = [self.b,
-                    12*self.a,
-                    24*np.identity(h11,dtype=int)]
+        # define the constraints
+        # ----------------------
+        if other_mat is None:
+            multiplier = 24
+
+            # construct the primal lattice
+            to_stack = [self.b,
+                        12*self.a,
+                        24*np.identity(h11,dtype=int)]
+        else:
+            # adding in extra constraint `(other_mat@M) % other_mod == 0`
+            assert other_mod is not None
+            multiplier = np.lcm(24, other_mod)
+
+            other_mat = np.array(other_mat).reshape(-1,h11)
+
+            # construct the primal lattice
+            to_stack = [(multiplier//24)*self.b,
+                        (multiplier//2)*self.a,
+                        multiplier*np.identity(h11,dtype=int),
+                        (multiplier//other_mod)*other_mat]
         _primal = np.vstack(to_stack, dtype=int).T
 
         # LLL-reduce
@@ -354,8 +371,8 @@ class CYData:
         
         # construct the dual lattice
         dual, denom = lattice.dual_lattice(primal)
-        assert 24%denom == 0 # the dual lattice should be integral
-        out = dual * (24//denom)
+        assert multiplier%denom == 0 # the dual lattice should be integral
+        out = dual * (multiplier//denom)
         
         # LLL-reduce the dual to be extra nice
         out = lattice.lll_reduce(out)
