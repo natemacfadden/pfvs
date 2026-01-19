@@ -795,6 +795,7 @@ def coniZpM(
         #    - K' > 0
         # we later set K[0] to all values obeying tadpole and then rejection
         # sample on K'>0
+        natural_K0s = Ks[0].copy()
         Ks[0] = 0
 
         # remove GCDs (we later scan over GCDs...)
@@ -814,37 +815,62 @@ def coniZpM(
         Ms = np.zeros((data.h11,0), dtype=int)
         if bare_Ks.shape[1]:
             for Kperp_gcd in range(1,max_Kperp_gcd+1):
-                if True:
-                    Qperps = Kperp_gcd*bare_Qs
-                    # Qperp = Kperp_gcd*bare_Qs
-                    # Q     = Qperp - M[0]*K[0]
-                    # Qmin <= Qperp - M[0]*K[0] <= Qmax
-                    # Qmin - Qperp <= -M[0]*K[0] <= Qmax - Qperp
-                    # (Qmin - Qperp)/(-M[0]) >= K[0] <= (Qmax - Qperp)/(-M[0])
-                    lo = -(Qmax*Kperp_gcd - Qperps)/bare_Ms[0]
-                    up = -(Qmin - Qperps)/bare_Ms[0]
-                    if lo[0] > up[0]:
-                        lo,up = up,lo
-
-                    new_Ks, new_Ms = try_coni_K0(
-                        Qperps=Qperps,
-                        Kperps=Kperp_gcd*bare_Ks[1:],
-                        Ms=bare_Ms,
-                        h11=data.h11,
-                        lo=lo, up=up,
-                        Qmin=Qmin,
-                        Qmax=Qmax)
+                # ranges for K0 to exactly hit tadpole
+                # ------------------------------------
+                Qperps = Kperp_gcd*bare_Qs
+                # Q             = Qperp - M[0]*K[0]
+                # Qmin         <= Qperp - M[0]*K[0] <= Qmax
+                # Qmin - Qperp <=       - M[0]*K[0] <= Qmax - Qperp
+                # if M[0] > 0:
+                #    (Qperp - Qmax)/M[0] <= K[0] <= (Qperp - Qmin)/M[0]
+                if M0min > 0:
+                    # want to round toward 0
+                    lo = -((Qmax-Qperps)//bare_Ms[0]) # round lo bound up
+                    up = (Qperps-Qmin)//bare_Ms[0]    # round up bound down
                 else:
-                    new_Ks, new_Ms = set_coni_K0(
-                        Ks=Kperp_gcd*bare_Ks,
-                        Ms=bare_Ms,
-                        Kperp_gcd=Kperp_gcd,
-                        h11=data.h11,
-                        Qmin=Qmin,
-                        Qmax=Qmax,
-                        #Qperps=Kperp_gcd*bare_Qs,
-                        max_N_out=max_N_pfvs,
-                        verbosity=verbosity-1)
+                    raise ValueError
+
+                # ranges for K0 to give K'>0
+                # --------------------------
+                # Kperp  = (natural Kperp) * Kperp_gcd/K_gcds
+                # K'     = -K[0] + (natural K)[0] * Kperp_gcd/K_gcds
+                # K' > 0 => K[0] < (natural K)[0] * Kperp_gcd/K_gcds
+                # (subtract 1e-4 to enforce K'>0, not K'>=0)
+                tmp = (natural_K0s*Kperp_gcd-1e-4)//K_gcds
+                up  = np.minimum(up, tmp.astype(int))
+
+                # compute the PFVs
+                # (any lo<=K0<=up should work...)
+                # ===============================
+                # get a mask for the (Kperp, M) pairs that have PFVs
+                num_K0s_perM  = up - lo + 1
+                mask          = num_K0s_perM > 0
+
+                # compute the number of PFVs
+                num_K0s_perM  = num_K0s_perM[mask]  # trim the 0s...
+                num_pfvs      = np.sum(num_K0s_perM)
+
+                # fill K0 ranges
+                # --------------
+                # (think: K0s = lo + range(up))
+
+                # set K0s = lo
+                K0s  = np.repeat(lo[mask], num_K0s_perM)
+
+                # add range(up)
+                K0s += np.arange(num_pfvs)
+                K0s -= np.repeat(np.cumsum(num_K0s_perM) - num_K0s_perM, num_K0s_perM)
+
+                # prepend the K0s to the Ks
+                # -------------------------
+                new_Ks = np.repeat(bare_Ks[1:,mask], num_K0s_perM, axis=1)
+                new_Ks = np.vstack([K0s, new_Ks])
+
+                # get the Ms
+                new_Ms = np.repeat(bare_Ms[:,mask], num_K0s_perM, axis=1)
+
+                # save
+                # ====
                 Ks = np.hstack([Ks, new_Ks])
                 Ms = np.hstack([Ms, new_Ms])
 
@@ -853,7 +879,7 @@ def coniZpM(
 
         # rejection sample on K' > 0
         # --------------------------
-        if True:
+        if False:
             # recompute 'expanded' Ns (bit wasteful...)
             # 'expanded' => don't trim axes
             #Ns = np.tensordot(kappa, Ms.T, axes=([2], [0]))
@@ -870,8 +896,16 @@ def coniZpM(
 
             # cut
             flags = Kprimes > 0
+            if not np.all(flags):
+                print('K',Ks[:,~flags].T.tolist())
+                print('M',Ms[:,~flags].T.tolist())
+                print("K'",Kprimes[~flags])
+
             Ks = Ks[:,flags]
             Ms = Ms[:,flags]
+
+            if verbosity >= 2:
+                print(f"# post K' = {Ms.shape[1]}")
 
         # transpose to row-wise
         Ks, Ms = Ks.T, Ms.T
@@ -879,9 +913,6 @@ def coniZpM(
         # save to data structures
         all_Ks        = np.vstack([all_Ks, Ks])
         all_Ms        = np.vstack([all_Ms, Ms])
-
-        if verbosity >= 2:
-            print(f"# post K' = {Ms.shape[0]}")
 
     # return
     return all_Ks, all_Ms
