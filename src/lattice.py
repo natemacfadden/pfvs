@@ -177,6 +177,9 @@ def fp_ellipsoid(
     mat: "ArrayLike",
     Q: float,
     Q_lower: float = 0,
+    linvec: "ArrayLike" = None,
+    lindot_min: int = None,
+    lindot_max: int = None,
     max_N_out: int = 1_000_000_000,
     eps: float = 1e-4,
     recursive: bool = False,
@@ -254,11 +257,22 @@ def fp_ellipsoid(
         out = out[:out_count[0], :]
     else:
         # iterative
-        out = fp_iterative(
-            L=L,
-            Q_upper=Q, Q_lower=Q_lower,
-            max_N_out=max_N_out,
-            eps=eps)
+        if linvec is None:
+            out = fp_iterative(
+                L=L,
+                Q_upper=Q, Q_lower=Q_lower,
+                max_N_out=max_N_out,
+                eps=eps)
+        else:
+            assert lindot_min is not None
+            assert lindot_max is not None
+            out = fp_iterative_linear(
+                L=L,
+                Q_upper=Q, Q_lower=Q_lower,
+                linvec = linvec, lindot_min=lindot_min, lindot_max=lindot_max,
+                max_N_out=max_N_out,
+                eps=eps)
+        
         if out.shape[0] == max_N_out:
             print("SATURATED MAXIMUM ALLOWED OUTPUTS")
 
@@ -537,6 +551,184 @@ def fp_iterative(
             stack_nz[sp]      = nz or (veci != 0)
             stack_val_len[sp] = -1  # will fill when we visit
             # candidate array for this depth is stack_vals[sp,:]
+        # else do not push (prune)
+
+    return out[:op, :]
+
+@njit
+def fp_iterative_linear(
+        L: "ArrayLike",
+        Q_upper: float,
+        Q_lower: float,
+        linvec: "ArrayLike",
+        lindot_min: int,
+        lindot_max: int,
+        max_N_out: int,
+        eps: float) -> None:
+    """
+    Iterative DFS implementation of the Fincke-Pohst algorithm
+
+    include linear constraint bc_min <= np.dot(b,c) <= bc_max
+    """
+    dim        = L.shape[0]
+    L_diag_inv = 1.0 / np.diag(L)
+
+    # linear constraint
+    num_zeros = 0
+    zeros = True
+    for i in range(dim):
+        if linvec[i] == 0:
+            if zeros == False:
+                raise ValueError("linear vec is not sorted so 0s are first...")
+            num_zeros += 1
+        else:
+            zeros = False
+
+    # output object
+    # -------------
+    out = np.empty((max_N_out, dim), dtype=np.int32)
+    
+    # output pointer
+    op  = 0
+
+    # internal vector that gets built/written to output
+    vec = np.zeros(dim, dtype=np.int32)
+
+    # stack variables
+    # ---------------
+    # stack pointer
+    sp = 0
+
+    # max stack depth
+    MAX_DEPTH = dim + 1
+
+    # stack arrays: i, pos, remaining_Q, nonzero, candidate values
+    stack_i      = np.empty(MAX_DEPTH, np.int32)
+    stack_pos    = np.empty(MAX_DEPTH, np.int32)
+    stack_remQ   = np.empty(MAX_DEPTH, np.float64)
+    stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
+    
+    # candidate arrays per depth (preallocate maximum possible size)
+    stack_val_len= np.zeros(MAX_DEPTH, np.int32)  # number of veci candidates
+    stack_vals   = np.empty((MAX_DEPTH, 128), np.int32) # veci candidates
+
+    # offsets for ci
+    # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
+    ci_offsets = np.zeros(dim, dtype=np.float64)
+
+    # initialize stack
+    # ----------------
+    stack_i[sp]    = dim-1
+    stack_pos[sp]  = 0
+    stack_remQ[sp] = Q_upper
+    stack_nz[sp]   = False
+
+    stack_val_len[sp] = -1  # will fill below
+    #stack_vals unset here
+
+    # process stack until empty
+    # -------------------------
+    while sp >= 0:
+        # read values
+        i    = stack_i[sp]
+        pos  = stack_pos[sp]
+        remQ = stack_remQ[sp]
+        nz   = stack_nz[sp]
+
+        # check if node is completed
+        # --------------------------
+        # if i==-1, then we have fully written vec
+        if i == -1:
+            if nz:
+                if op >= max_N_out:
+                    break
+                out[op, :] = vec
+                op += 1
+            # kill node
+            sp -= 1
+            continue
+
+        # check if current depth is completed
+        # -----------------------------------
+        if pos == stack_val_len[sp]:
+            # kill node
+            sp -= 1
+            for k in range(i):
+                ci_offsets[k] -= L[i,k] * vec[i]
+            continue
+
+        # current depth incomplete...
+        # ---------------------------
+        # set candidate values of vec[i] if first time to depth
+        if stack_val_len[sp] == -1:
+            # feasible integer bounds for vec[i]
+            # -R                      <= c[i]          <= R
+            # -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
+            # (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
+            # where we used that the diagonal is positive
+            R = np.sqrt(max(0.0, remQ))
+            lo = int(np.ceil(( -R - ci_offsets[i]) * L_diag_inv[i] - eps))
+            hi = int(np.floor(( R - ci_offsets[i]) * L_diag_inv[i] + eps))
+
+            # values of veci to iterate over
+            k = 0
+            for v in range(lo,hi+1):
+                stack_vals[sp,k] = v
+                k += 1
+
+            # kill node if no valid veci values
+            if k == 0:
+                sp -= 1
+                continue
+            # kill execution if there are too many values
+            elif k>128:
+                raise ValueError(f"Assumed |hi-lo| <= 128, but got {k}")
+
+            # yes valid veci values
+            stack_val_len[sp] = k
+            stack_pos[sp] = 0
+            pos = 0
+
+            for k in range(i):
+                ci_offsets[k] += L[i,k] * (stack_vals[sp, pos]-1)
+
+        # pick candidate veci
+        # -------------------
+        veci   = stack_vals[sp, pos]
+        vec[i] = veci
+
+        # advance pos for next iteration
+        stack_pos[sp] += 1
+
+        # update ci_offsets for descendents
+        for k in range(i):
+            ci_offsets[k] += L[i,k]# * 1
+
+        # get ci, the new amount of remaining Q
+        ci = L[i,i]*veci + ci_offsets[i]
+        new_rem = remQ - ci*ci
+
+        # cut of no more Q left...
+        if new_rem < Q_lower - eps:
+            continue
+
+        # cut if dot product is wrong...
+        if i == num_zeros:
+            linear_eval = 0
+            for j in range(i,dim):
+                linear_eval += linvec[j]*vec[j]
+
+            if (linear_eval < lindot_min) or (linear_eval > lindot_max):
+                continue
+
+        # passes cuts -> push next depth :)
+        sp += 1
+        stack_i[sp]       = i-1
+        stack_pos[sp]     = 0
+        stack_remQ[sp]    = new_rem
+        stack_nz[sp]      = nz or (veci != 0)
+        stack_val_len[sp] = -1  # will fill when we visit
+        # candidate array for this depth is stack_vals[sp,:]
         # else do not push (prune)
 
     return out[:op, :]
