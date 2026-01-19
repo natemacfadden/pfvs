@@ -23,6 +23,7 @@
 # -----------------------------------------------------------------------------
 
 # external imports
+import flint
 import math
 import numba
 import numpy as np
@@ -654,6 +655,16 @@ def coniMellipsoid(p, data):
     # (doesn't seem to have a huge effect...)
     Binter = lattice.lll_reduce(Binter)
 
+    # enforce a maximal number of 0s in the 0th row
+    """
+    Bflint = flint.fmpz_mat(Binter.tolist()).transpose()
+    Binter = Bflint.hnf(transform=False).transpose().tolist()
+    Binter = np.array(Binter).astype(int)
+    """
+
+    # sort Binter so columns which don't affect M0 come first
+    Binter = Binter[:,np.argsort(Binter[0]!=0)]
+
     # find lattice points in tadpole
     # ------------------------------
     mat = -(Binter).T@(Z@Binter)
@@ -722,12 +733,16 @@ def coniZpM(
         try:
             if not use_box:
                 lattice_points = lattice.fp_ellipsoid(
-                    mat,
-                    ellipsoid_dilation*Qmax,
+                    mat=mat,
+                    Q=ellipsoid_dilation*Qmax,
                     Q_lower=0,
+                    linvec = Binter[0],
+                    lindot_min = M0min,
+                    lindot_max = M0max,
                     max_N_out=max_N_pfvs,
                     recursive=fp_recursive,
-                    verbosity=verbosity-1)
+                    verbosity=verbosity-1
+                )
             else:
                 lattice_points = lattice.boundingbox_enumerate(
                     mat,
@@ -746,6 +761,7 @@ def coniZpM(
 
         # compute/cut Ms
         # ==============
+        """
         # first compute M0s and cut on them
         M0s  = Binter[0]@lattice_points.T
         mask = (M0s >= M0min) & (M0s <= M0max)
@@ -754,6 +770,8 @@ def coniZpM(
         # compute Mperps, combine with M0s
         Mperps = Binter[1:]@lattice_points[mask].T
         Ms = np.vstack([M0s, Mperps])
+        """
+        Ms = Binter@lattice_points.T
 
         if verbosity >= 2:
             print(f'# M0s in [M0min, M0max] = {Ms.shape[1]}')
