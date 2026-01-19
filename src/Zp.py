@@ -716,6 +716,8 @@ def coniZpM(
         # construct the quadratic form defining the ellipsoid
         mat, Z, Binter = coniMellipsoid(_0p, data)
 
+        # solve for lattice points maybe in tadpole
+        # =========================================
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
             if not use_box:
@@ -742,51 +744,23 @@ def coniZpM(
         if verbosity >= 2:
             print(f'# lattice_points = {lattice_points.shape[0]}')
 
-        # compute Ms
-        # ----------
+        # compute/cut Ms
+        # ==============
         if verbosity >= 2:
             print(f'computing Ms...')
         Ms = Binter@lattice_points.T # as columns
         if verbosity >= 2:
             print(f'done computing Ms...')
 
-        # (don't trim non-primitive... instead, trim on M0min<=M[0]<=M0max)
+        # (trim on M0min<=M[0]<=M0max)
         flags = (Ms[0] >= M0min) & (Ms[0] <= M0max)
         Ms = Ms[:,flags]
 
         if verbosity >= 2:
             print(f'# M0s in [M0min, M0max] = {Ms.shape[1]}')
 
-        # filter by N invertibility
-        # -------------------------
-        batch_size = 5000
-        singular = []
-        for i in range(0, len(Ms), batch_size):
-            chunk = Ms[i:i+batch_size]
-
-            #Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
-            Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
-            Ns = Ns.transpose(2,0,1) # (N,h11,h11)
-            Ns = Ns[:,1:,1:]
-
-            #sign, logdet = np.linalg.slogdet(Ns)
-            #is_zero = (sign == 0) | (logdet <= -1e-4)
-            #singular.append(is_zero)
-            singular.append(check_singular(Ns.astype(float)))
-
-        singular = np.concatenate(singular)
-
-        if verbosity >= 2:
-            if not only_positive_news:
-                print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
-
-        Ms = Ms[:,~singular]
-
-        if verbosity >= 2:
-            print(f'# invertible = {Ms.shape[1]}')
-
         # compute Ks
-        # ----------
+        # ==========
         Ks = Z@Ms
 
         # OPTIONAL: override the K[0] entry for clarity
@@ -800,17 +774,15 @@ def coniZpM(
 
         # remove GCDs (we later scan over GCDs...)
         K_gcds = np.gcd.reduce(Ks[1:,:], axis=0)
-        Ks = Ks//K_gcds
-
-        # transpose to row-wise
-        # ---------------------
+        Ks = Ks//K_gcds   
+    
+        # set K0s
+        # (set to obey tadpole ranges)
+        # ============================
         bare_Ks = Ks
         bare_Ms = Ms
         bare_Qs = -np.sum(bare_Ks*bare_Ms, axis=0)
-    
-        # set K0s
-        # -------
-        # (set to obey tadpole ranges)
+        
         Ks = np.zeros((data.h11,0), dtype=int)
         Ms = np.zeros((data.h11,0), dtype=int)
         if bare_Ks.shape[1]:
@@ -876,6 +848,35 @@ def coniZpM(
 
         if verbosity >= 2:
             print(f'# post K0s = {Ms.shape[1]}')
+
+        # filter by N invertibility
+        # -------------------------
+        batch_size = 5000
+        singular = []
+        for i in range(0, len(Ms), batch_size):
+            chunk = Ms[i:i+batch_size]
+
+            #Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
+            Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
+            Ns = Ns.transpose(2,0,1) # (N,h11,h11)
+            Ns = Ns[:,1:,1:]
+
+            #sign, logdet = np.linalg.slogdet(Ns)
+            #is_zero = (sign == 0) | (logdet <= -1e-4)
+            #singular.append(is_zero)
+            singular.append(check_singular(Ns.astype(float)))
+
+        singular = np.concatenate(singular)
+
+        if verbosity >= 2:
+            if not only_positive_news:
+                print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
+
+        Ms = Ms[:,~singular]
+        Ks = Ks[:,~singular]
+
+        if verbosity >= 2:
+            print(f'# invertible = {Ms.shape[1]}')
 
         # rejection sample on K' > 0
         # --------------------------
