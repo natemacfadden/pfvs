@@ -746,15 +746,14 @@ def coniZpM(
 
         # compute/cut Ms
         # ==============
-        if verbosity >= 2:
-            print(f'computing Ms...')
-        Ms = Binter@lattice_points.T # as columns
-        if verbosity >= 2:
-            print(f'done computing Ms...')
+        # first compute M0s and cut on them
+        M0s  = Binter[0]@lattice_points.T
+        mask = (M0s >= M0min) & (M0s <= M0max)
+        M0s  = M0s[mask]
 
-        # (trim on M0min<=M[0]<=M0max)
-        flags = (Ms[0] >= M0min) & (Ms[0] <= M0max)
-        Ms = Ms[:,flags]
+        # compute Mperps, combine with M0s
+        Mperps = Binter[1:]@lattice_points[mask].T
+        Ms = np.vstack([M0s, Mperps])
 
         if verbosity >= 2:
             print(f'# M0s in [M0min, M0max] = {Ms.shape[1]}')
@@ -778,7 +777,7 @@ def coniZpM(
     
         # set K0s
         # (set to obey tadpole ranges)
-        # ============================
+        # ----------------------------
         bare_Ks = Ks
         bare_Ms = Ms
         bare_Qs = -np.sum(bare_Ks*bare_Ms, axis=0)
