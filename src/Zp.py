@@ -216,7 +216,7 @@ def allow_gcds(Ks, Ms, Qmax, h11):
 #    return g
 
 @numba.njit
-def try_coni_K0(Qperps, Kperps, Ms, h11, lo, up, Qmin, Qmax, max_N_out: int = 1_000_000):
+def try_coni_K0(Qperps, Kperps, Ms, h11, lo, up, Qmin, Qmax, max_N_out: int = 100_000_000):
     """
     columnwise
     """
@@ -744,14 +744,18 @@ def coniZpM(
 
         # compute Ms
         # ----------
+        if verbosity >= 2:
+            print(f'computing Ms...')
         Ms = Binter@lattice_points.T # as columns
+        if verbosity >= 2:
+            print(f'done computing Ms...')
 
         # (don't trim non-primitive... instead, trim on M0min<=M[0]<=M0max)
         flags = (Ms[0] >= M0min) & (Ms[0] <= M0max)
         Ms = Ms[:,flags]
 
         if verbosity >= 2:
-            print(f'# good M0s = {Ms.shape[1]}')
+            print(f'# M0s in [M0min, M0max] = {Ms.shape[1]}')
 
         # filter by N invertibility
         # -------------------------
@@ -812,6 +816,11 @@ def coniZpM(
             for Kperp_gcd in range(1,max_Kperp_gcd+1):
                 if True:
                     Qperps = Kperp_gcd*bare_Qs
+                    # Qperp = Kperp_gcd*bare_Qs
+                    # Q     = Qperp - M[0]*K[0]
+                    # Qmin <= Qperp - M[0]*K[0] <= Qmax
+                    # Qmin - Qperp <= -M[0]*K[0] <= Qmax - Qperp
+                    # (Qmin - Qperp)/(-M[0]) >= K[0] <= (Qmax - Qperp)/(-M[0])
                     lo = -(Qmax*Kperp_gcd - Qperps)/bare_Ms[0]
                     up = -(Qmin - Qperps)/bare_Ms[0]
                     if lo[0] > up[0]:
