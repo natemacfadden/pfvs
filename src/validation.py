@@ -98,7 +98,7 @@ class PFV():
         msg +=  "### with fluxes\n"
         msg += f"K = {self.K.tolist()}\n"
         msg += f"M = {self.M.tolist()}\n"
-        msg += f"p = {(self.pgrading/self._p_denom).tolist()}\n"
+        msg += f"p = {self.pgrading.tolist()}/{self._p_denom}\n"
         Q = -np.dot(self.K,self.M)
         msg += f"Q = {Q} = h11 + h21 + {Q-self.h11-self.h21}"
 
