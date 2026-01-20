@@ -66,6 +66,8 @@ class PFV():
         self._Ninvertible = None
         self._Ninv        = None
 
+        self._gvs         = None
+
         # coni-specific variables
         if self.coni:
             # Kprime computation/check (must be positive)
@@ -89,12 +91,16 @@ class PFV():
             #msg += f"    cy      = Polytope({verts}).triangulate(heights={heights}).cy()\n"
             msg += f"cy      = Polytope(verts).triangulate(heights=heights).cy()\n"
         if self.coni:
+            msg +=  "### for (original-basis) conifold curve\n"
+            msg += f"q = {self._cy.coni_curve.tolist()}\n"
             msg +=  "### using basis defined by change-of-basis\n"
             msg += f"cob = {self._cy.cob.tolist()}\n"
         msg +=  "### with fluxes\n"
-        msg += f"K       = {self.K.tolist()}\n"
-        msg += f"M       = {self.M.tolist()}\n"
-        msg += f"p       = {self.p.tolist()}\n"
+        msg += f"K = {self.K.tolist()}\n"
+        msg += f"M = {self.M.tolist()}\n"
+        msg += f"p = {(self.pgrading/self._p_denom).tolist()}\n"
+        Q = -np.dot(self.K,self.M)
+        msg += f"Q = {Q} = h11 + h21 + {Q-self.h11-self.h21}"
 
         return msg
 
@@ -156,6 +162,66 @@ class PFV():
         The b-vector
         """
         return self._cy.b
+
+    @property
+    def gvs(self):
+        if self._gvs is not None:
+            return self._gvs.copy()
+
+    # setters
+    # =======
+    @gvs.setter
+    def gvs(self, val):
+        """
+        in coo format
+        """
+        # set GVs
+
+        # if using p as the grading vector, set it
+        if p_grading:
+            grading_vec = self.pgrading
+        else:
+            grading_vec = None
+
+        # check if we need to (re)compute GVs
+        bad_GVs = False
+        if not hasattr(self.cy,'_gvs'):
+            bad_GVs = True
+        else:
+            if self.cy._gvs.cutoff != max_deg:
+                bad_GVs = True
+            elif not hasattr(self.cy._gvs,'_pgraded') or\
+                    self.cy._gvs._pgraded != p_grading:
+                bad_GVs = True
+        
+        # (re)compute GVs, if needed
+        if bad_GVs:
+            if (not self.silent) and (verbosity>0):
+                msg = "(Computing GVs "
+                if p_grading:
+                    msg += "with "
+                else:
+                    msg += "without "
+                msg += f"p-grading; max degree={max_deg}... might take time..."
+                print(msg,end=' ')
+
+            self.cy._gvs = self.cy.compute_gvs(grading_vec=grading_vec,
+                                               max_deg=max_deg,
+                                               basis=(self.cob if self.coni else None))
+            self.cy._gvs._pgraded = p_grading
+
+            # reset dependent variables
+            self._tau0 = None
+            self._log10W0 = None
+            self._gs = None
+            self._series = None
+            self._series_gen = None
+
+            if (not self.silent) and (verbosity>0):
+                print('done!)\n')
+
+        # return the gvs
+        return self.cy._gvs
 
     # N-matrix and its inverse
     # ------------------------
