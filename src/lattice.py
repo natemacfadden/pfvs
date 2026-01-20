@@ -456,7 +456,7 @@ def fp_iterative(
     
     # candidate arrays per depth (preallocate maximum possible size)
     stack_val_len= np.zeros(MAX_DEPTH, np.int32)  # number of veci candidates
-    stack_vals   = np.empty((MAX_DEPTH, 128), np.int32) # veci candidates
+    stack_vals   = np.empty((MAX_DEPTH, 256), np.int32) # veci candidates
 
     # offsets for ci
     # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
@@ -527,8 +527,8 @@ def fp_iterative(
                 sp -= 1
                 continue
             # kill execution if there are too many values
-            elif k>128:
-                raise ValueError(f"Assumed |hi-lo| <= 128, but got {k}")
+            elif k>256:
+                raise ValueError(f"Assumed |hi-lo| <= 256, but got {k}")
 
             # yes valid veci values
             stack_val_len[sp] = k
