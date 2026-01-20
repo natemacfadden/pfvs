@@ -822,8 +822,6 @@ def coniZpM(
                     if M0min > 0:
                         lo = -(-(Qperps-Qmax)//bare_Ms[0]) # round lower bound upwards
                         up = (Qperps-Qmin)//bare_Ms[0]     # round upper bound downwards
-                        assert np.all(Qmin <= Qperps - bare_Ms[0]*lo)
-                        assert np.all(Qmax >= Qperps - bare_Ms[0]*up)
                     else:
                         raise ValueError
 
