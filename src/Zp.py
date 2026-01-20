@@ -118,7 +118,7 @@ def pvecs(
 
         # return
         ps = np.array(printer.points)
-    else:
+    elif backend == "gurobi":
         # import gurobi
         import gurobipy as gp
 
@@ -152,6 +152,8 @@ def pvecs(
             sols.append(np.rint(p.xn).astype(int))
 
         ps = np.array(sols)
+    else:
+        raise ValueError()
 
     # reduce by GCD
     gcds = np.gcd.reduce(ps,axis=1)
@@ -631,6 +633,10 @@ def coniMellipsoid(p, data):
     kappa  = data.kappa_cob
     Mbasis = data.M_lattice()
 
+    p = np.array(p).ravel()
+    if len(p) == data.h11-1:
+        p = np.concatenate([[0], p])
+
     # helper variable (K[1:] = (Z@M)[1:])
     Z = kappa@p
 
@@ -684,6 +690,7 @@ def coniZpM(
     M0max: int = float('inf'),
     max_Kperp_gcd: int = 4,
     ellipsoid_dilation: float = 1, # typically want >=1
+    cut_Kprime: bool = True,
     use_box: bool = False,
     fp_recursive: bool = False,
     max_N_pfvs: int = 1_000_000_000,
@@ -761,176 +768,151 @@ def coniZpM(
 
         # compute/cut Ms
         # ==============
-        """
-        # first compute M0s and cut on them
-        M0s  = Binter[0]@lattice_points.T
-        mask = (M0s >= M0min) & (M0s <= M0max)
-        M0s  = M0s[mask]
+        # (process in chunks)
+        chunk_size = 10_000_000
+        chunk_num  = 0
+        for chunk_start in range(0, lattice_points.shape[0], chunk_size):
+            if lattice_points.shape[0] > chunk_size:
+                print(f"Chunk #{chunk_num}..."); chunk_num += 1
 
-        # compute Mperps, combine with M0s
-        Mperps = Binter[1:]@lattice_points[mask].T
-        Ms = np.vstack([M0s, Mperps])
-        """
-        Ms = Binter@lattice_points.T
-
-        if verbosity >= 2:
-            print(f'# M0s in [M0min, M0max] = {Ms.shape[1]}')
-
-        # compute Ks
-        # ==========
-        Ks = Z@Ms
-
-        # OPTIONAL: override the K[0] entry for clarity
-        # only constraints on K[0] are
-        #    - tadpole Qmin<=-dot(K,M)<=Qmax
-        #    - K' > 0
-        # we later set K[0] to all values obeying tadpole and then rejection
-        # sample on K'>0
-        natural_K0s = Ks[0].copy()
-        Ks[0] = 0
-
-        # remove GCDs (we later scan over GCDs...)
-        K_gcds = np.gcd.reduce(Ks[1:,:], axis=0)
-        Ks = Ks//K_gcds   
-    
-        # set K0s
-        # (set to obey tadpole ranges)
-        # ----------------------------
-        bare_Ks = Ks
-        bare_Ms = Ms
-        bare_Qs = -np.sum(bare_Ks*bare_Ms, axis=0)
-        
-        Ks = np.zeros((data.h11,0), dtype=int)
-        Ms = np.zeros((data.h11,0), dtype=int)
-        if bare_Ks.shape[1]:
-            for Kperp_gcd in range(1,max_Kperp_gcd+1):
-                # ranges for K0 to exactly hit tadpole
-                # ------------------------------------
-                Qperps = Kperp_gcd*bare_Qs
-                # Q             = Qperp - M[0]*K[0]
-                # Qmin         <= Qperp - M[0]*K[0] <= Qmax
-                # Qmin - Qperp <=       - M[0]*K[0] <= Qmax - Qperp
-                # if M[0] > 0:
-                #    (Qperp - Qmax)/M[0] <= K[0] <= (Qperp - Qmin)/M[0]
-                if M0min > 0:
-                    # want to round toward 0
-                    lo = -((Qmax-Qperps)//bare_Ms[0]) # round lo bound up
-                    up = (Qperps-Qmin)//bare_Ms[0]    # round up bound down
-                else:
-                    raise ValueError
-
-                # ranges for K0 to give K'>0
-                # --------------------------
-                # Kperp  = (natural Kperp) * Kperp_gcd/K_gcds
-                # K'     = -K[0] + (natural K)[0] * Kperp_gcd/K_gcds
-                # K' > 0 => K[0] < (natural K)[0] * Kperp_gcd/K_gcds
-                # (subtract 1e-4 to enforce K'>0, not K'>=0)
-                tmp = (natural_K0s*Kperp_gcd-1e-4)//K_gcds
-                up  = np.minimum(up, tmp.astype(int))
-
-                # compute the PFVs
-                # (any lo<=K0<=up should work...)
-                # ===============================
-                # get a mask for the (Kperp, M) pairs that have PFVs
-                num_K0s_perM  = up - lo + 1
-                mask          = num_K0s_perM > 0
-
-                # compute the number of PFVs
-                num_K0s_perM  = num_K0s_perM[mask]  # trim the 0s...
-                num_pfvs      = np.sum(num_K0s_perM)
-
-                # fill K0 ranges
-                # --------------
-                # (think: K0s = lo + range(up))
-
-                # set K0s = lo
-                K0s  = np.repeat(lo[mask], num_K0s_perM)
-
-                # add range(up)
-                K0s += np.arange(num_pfvs)
-                K0s -= np.repeat(np.cumsum(num_K0s_perM) - num_K0s_perM, num_K0s_perM)
-
-                # prepend the K0s to the Ks
-                # -------------------------
-                new_Ks = np.repeat(bare_Ks[1:,mask], num_K0s_perM, axis=1)
-                new_Ks = np.vstack([K0s, new_Ks])
-
-                # get the Ms
-                new_Ms = np.repeat(bare_Ms[:,mask], num_K0s_perM, axis=1)
-
-                # save
-                # ====
-                Ks = np.hstack([Ks, new_Ks])
-                Ms = np.hstack([Ms, new_Ms])
-
-        if verbosity >= 2:
-            print(f'# post K0s = {Ms.shape[1]}')
-
-        # filter by N invertibility
-        # -------------------------
-        batch_size = 5000
-        singular = []
-        for i in range(0, len(Ms), batch_size):
-            chunk = Ms[i:i+batch_size]
-
-            #Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
-            Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
-            Ns = Ns.transpose(2,0,1) # (N,h11,h11)
-            Ns = Ns[:,1:,1:]
-
-            #sign, logdet = np.linalg.slogdet(Ns)
-            #is_zero = (sign == 0) | (logdet <= -1e-4)
-            #singular.append(is_zero)
-            singular.append(check_singular(Ns.astype(float)))
-
-        singular = np.concatenate(singular)
-
-        if verbosity >= 2:
-            if not only_positive_news:
-                print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
-
-        Ms = Ms[:,~singular]
-        Ks = Ks[:,~singular]
-
-        if verbosity >= 2:
-            print(f'# invertible = {Ms.shape[1]}')
-
-        # rejection sample on K' > 0
-        # --------------------------
-        if False:
-            # recompute 'expanded' Ns (bit wasteful...)
-            # 'expanded' => don't trim axes
-            #Ns = np.tensordot(kappa, Ms.T, axes=([2], [0]))
-            Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
-            Ns = Ns.transpose(2,0,1) # (N,h11,h11)
-
-            # compute p-denominator
-            Kperps_scaled = (Ns[:,1:,1:]@p).T
-            Kperps_norm2  = np.sum(Ks[1:]*Ks[1:], axis=0)
-            pdenoms       = np.sum(Kperps_scaled*Ks[1:],axis=0)/Kperps_norm2
-
-            # compute K's
-            Kprimes = -Ks[0] + (Ns@_0p)[:,0]/pdenoms
-
-            # cut
-            flags = Kprimes > 0
-            if not np.all(flags):
-                print('K',Ks[:,~flags].T.tolist())
-                print('M',Ms[:,~flags].T.tolist())
-                print("K'",Kprimes[~flags])
-
-            Ks = Ks[:,flags]
-            Ms = Ms[:,flags]
+            # compute Ms
+            # ==========
+            Ms = Binter @ lattice_points[chunk_start:chunk_start+chunk_size].T
 
             if verbosity >= 2:
-                print(f"# post K' = {Ms.shape[1]}")
+                print(f'# M0s in [M0min, M0max] = {Ms.shape[1]}')
 
-        # transpose to row-wise
-        Ks, Ms = Ks.T, Ms.T
+            # compute Ks
+            # ==========
+            Ks = Z@Ms
 
-        # save to data structures
-        all_Ks        = np.vstack([all_Ks, Ks])
-        all_Ms        = np.vstack([all_Ms, Ms])
+            # OPTIONAL: override the K[0] entry for clarity
+            # only constraints on K[0] are
+            #    - tadpole Qmin<=-dot(K,M)<=Qmax
+            #    - K' > 0
+            # we later set K[0] to all values obeying tadpole and then rejection
+            # sample on K'>0
+            natural_K0s = Ks[0].copy()
+            Ks[0] = 0
+
+            # remove GCDs (we later scan over GCDs...)
+            K_gcds = np.gcd.reduce(Ks[1:,:], axis=0)
+            Ks = Ks//K_gcds   
+        
+            # set K0s
+            # (set to obey tadpole ranges)
+            # ----------------------------
+            bare_Ks = Ks
+            bare_Ms = Ms
+            bare_Qs = -np.sum(bare_Ks*bare_Ms, axis=0)
+            
+            Ks = np.zeros((data.h11,0), dtype=int)
+            Ms = np.zeros((data.h11,0), dtype=int)
+            if bare_Ks.shape[1]:
+                for Kperp_gcd in range(1,max_Kperp_gcd+1):
+                    # ranges for K0 to exactly hit tadpole
+                    # ------------------------------------
+                    Qperps = Kperp_gcd*bare_Qs
+                    # Q             = Qperp - M[0]*K[0]
+                    # Qmin         <= Qperp - M[0]*K[0] <= Qmax
+                    # Qmin - Qperp <=       - M[0]*K[0] <= Qmax - Qperp
+                    # Qperp - Qmin >=         M[0]*K[0] >= Qperp - Qmax
+                    # if M[0] > 0:
+                    #    (Qperp - Qmax)/M[0] <= K[0] <= (Qperp - Qmin)/M[0]
+                    if M0min > 0:
+                        lo = -(-(Qperps-Qmax)//bare_Ms[0]) # round lower bound upwards
+                        up = (Qperps-Qmin)//bare_Ms[0]     # round upper bound downwards
+                        assert np.all(Qmin <= Qperps - bare_Ms[0]*lo)
+                        assert np.all(Qmax >= Qperps - bare_Ms[0]*up)
+                    else:
+                        raise ValueError
+
+                    # ranges for K0 to give K'>0
+                    # --------------------------
+                    # Kperp  = (natural Kperp) * Kperp_gcd/K_gcds
+                    # K'     = -K[0] + (natural K)[0] * Kperp_gcd/K_gcds
+                    # K' > 0 => K[0] < (natural K)[0] * Kperp_gcd/K_gcds
+                    # (subtract 1e-4 to enforce K'>0, not K'>=0)
+                    if cut_Kprime:
+                        tmp = (natural_K0s*Kperp_gcd-1e-4)//K_gcds
+                        up  = np.minimum(up, tmp.astype(int))
+
+                    # compute the PFVs
+                    # (any lo<=K0<=up should work...)
+                    # ===============================
+                    # get a mask for the (Kperp, M) pairs that have PFVs
+                    num_K0s_perM  = 1 + up - lo
+                    mask          = (num_K0s_perM > 0)
+
+                    # compute the number of PFVs
+                    num_K0s_perM  = num_K0s_perM[mask]  # trim the 0s...
+                    total_pfvs    = np.sum(num_K0s_perM)
+
+                    # fill K0 ranges
+                    # --------------
+                    # (think: K0s = lo + range(up))
+
+                    # set K0s = lo
+                    K0s  = np.repeat(lo[mask], num_K0s_perM)
+
+                    # add range(up)
+                    K0s += np.arange(total_pfvs)
+                    K0s -= np.repeat(np.cumsum(num_K0s_perM) - num_K0s_perM, num_K0s_perM)
+
+                    assert np.all(np.repeat(lo[mask], num_K0s_perM) <= K0s)
+                    assert np.all(np.repeat(up[mask], num_K0s_perM) >= K0s)
+
+                    # prepend the K0s to the Ks
+                    # -------------------------
+                    new_Ks = np.repeat(Kperp_gcd*bare_Ks[1:,mask], num_K0s_perM, axis=1)
+                    new_Ks = np.vstack([K0s, new_Ks])
+
+                    # get the Ms
+                    new_Ms = np.repeat(bare_Ms[:,mask], num_K0s_perM, axis=1)
+
+                    # save
+                    # ====
+                    Ks = np.hstack([Ks, new_Ks])
+                    Ms = np.hstack([Ms, new_Ms])
+
+            if verbosity >= 2:
+                print(f'# PFVs after setting K0s = {Ms.shape[1]}')
+
+            # filter by N invertibility
+            # -------------------------
+            batch_size = 5000
+            singular = []
+            for i in range(0, len(Ms), batch_size):
+                chunk = Ms[i:i+batch_size]
+
+                #Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
+                Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
+                Ns = Ns.transpose(2,0,1) # (N,h11,h11)
+                Ns = Ns[:,1:,1:]
+
+                #sign, logdet = np.linalg.slogdet(Ns)
+                #is_zero = (sign == 0) | (logdet <= -1e-4)
+                #singular.append(is_zero)
+                singular.append(check_singular(Ns.astype(float)))
+
+            singular = np.concatenate(singular)
+
+            if verbosity >= 2:
+                if not only_positive_news:
+                    print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
+
+            Ms = Ms[:,~singular]
+            Ks = Ks[:,~singular]
+
+            if verbosity >= 2:
+                print(f'# invertible = {Ms.shape[1]}')
+
+            # transpose to row-wise
+            Ks, Ms = Ks.T, Ms.T
+
+            # save to data structures
+            all_Ks        = np.vstack([all_Ks, Ks])
+            all_Ms        = np.vstack([all_Ms, Ms])
 
     # return
     return all_Ks, all_Ms
