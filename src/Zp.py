@@ -909,7 +909,6 @@ def coniZpM(
                 Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
                 Ns = Ns.transpose(2,0,1) # (N,h11,h11)
                 Ns = Ns[:,1:,1:]
-                return Ns
 
                 #sign, logdet = np.linalg.slogdet(Ns)
                 #is_zero = (sign == 0) | (logdet <= -1e-4)
