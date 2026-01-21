@@ -413,10 +413,6 @@ def ZpM(
 
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
-            print('Mbasis',Mbasis.tolist())
-            print('Binter',Binter.tolist())
-            print('T',T.tolist())
-            print('mat',mat.tolist())
             lattice_points, _ = lattice.fp_ellipsoid(
                 mat,
                 ellipsoid_dilation*Qmax,
