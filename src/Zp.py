@@ -234,11 +234,11 @@ def try_coni_K0(Qperps, Kperps, Ms, h11, lo, up, Qmin, Qmax, max_N_out: int = 10
     # check if empty
     num_pfvs = Ms.shape[1]
     if num_pfvs == 0:
-        return np.empty((h11,0), dtype=np.int64), np.empty((h11,0), dtype=np.int64)
+        return np.empty((h11,0), dtype=np.int32), np.empty((h11,0), dtype=np.int32)
 
     # make the output objects
-    Ks_out = np.empty((h11, max_N_out), dtype=np.int64)
-    Ms_out = np.empty((h11, max_N_out), dtype=np.int64)
+    Ks_out = np.empty((h11, max_N_out), dtype=np.int32)
+    Ms_out = np.empty((h11, max_N_out), dtype=np.int32)
     op = 0
 
     # fill them
@@ -272,12 +272,12 @@ def set_coni_K0(Ks, Ms, Kperp_gcd, h11, Qmin, Qmax,
     # check if empty
     num_pfvs = len(Ms)
     if num_pfvs == 0:
-        return np.empty((h11,0), dtype=np.int64), np.empty((h11,0), dtype=np.int64)
+        return np.empty((h11,0), dtype=np.int32), np.empty((h11,0), dtype=np.int32)
 
     # output objects
     # --------------
-    Ks_out = np.empty((h11, max_N_out), dtype=np.int64)
-    Ms_out = np.empty((h11, max_N_out), dtype=np.int64)
+    Ks_out = np.empty((h11, max_N_out), dtype=np.int32)
+    Ms_out = np.empty((h11, max_N_out), dtype=np.int32)
     op = 0
     N_skipped = 0
     
@@ -298,7 +298,7 @@ def set_coni_K0(Ks, Ms, Kperp_gcd, h11, Qmin, Qmax,
     #    -(Qmax*gcd(Kperp) + dot(Kperp, Mperp))/M0
     #if Qperps is None:
     #    Qperps = -np.sum(Ks[:,1:]*Ms[:,1:],axis=1)
-    Ktest = np.empty(h11, dtype=np.int64)
+    Ktest = np.empty(h11, dtype=np.int32)
     for i in range(num_pfvs):
         # read info from K,M
         M0    = Ms[0,i]
@@ -690,7 +690,7 @@ def coniMellipsoid(p, data):
         # DOESN'T WORK!!!
         # ---------------
         # matrix to project out 0th component
-        proj = np.eye(data.h11, dtype=int)[1:,:]
+        proj = np.eye(data.h11, dtype=np.int32)[1:,:]
         #       Mperp-term          Kperp-term
         mat = -(Binter.T @ proj.T) @ (proj @ (kappa@([0]+p)) )@Binter
 
@@ -738,8 +738,8 @@ def coniZpM(
 
     # the search
     # ----------
-    all_Ks = np.zeros((0,data.h11), dtype=int)
-    all_Ms = np.zeros((0,data.h11), dtype=int)
+    all_Ks = np.zeros((0,data.h11), dtype=np.int32)
+    all_Ms = np.zeros((0,data.h11), dtype=np.int32)
 
     # iterate over p-vectors
     if verbosity >= 1:
@@ -752,12 +752,15 @@ def coniZpM(
         # construct the quadratic form defining the ellipsoid
         mat, Z, Binter = coniMellipsoid(_0p, data)
 
+        ZBinter = np.ascontiguousarray(Z@Binter)
+        Binter  = np.ascontiguousarray(  Binter)
+
         # solve for lattice points maybe in tadpole
         # =========================================
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
             if not use_box:
-                lattice_points, _ = lattice.fp_ellipsoid(
+                lattice_points, rawQs = lattice.fp_ellipsoid(
                     mat=mat,
                     Q=ellipsoid_dilation*Qmax,
                     Q_lower=0,
@@ -768,6 +771,7 @@ def coniZpM(
                     recursive=fp_recursive,
                     verbosity=verbosity-1
                 )
+                rawQs = np.rint(rawQs).astype(int)
             else:
                 lattice_points = lattice.boundingbox_enumerate(
                     mat,
@@ -784,25 +788,33 @@ def coniZpM(
         if verbosity >= 2:
             print(f'# lattice_points = {lattice_points.shape[0]}')
 
+        lattice_points = np.ascontiguousarray(lattice_points.T)
+
         # compute/cut Ms
         # ==============
         # (process in chunks)
         chunk_size = 10_000_000
         chunk_num  = 0
-        for chunk_start in range(0, lattice_points.shape[0], chunk_size):
-            if lattice_points.shape[0] > chunk_size:
+        for chunk_start in range(0, lattice_points.shape[1], chunk_size):
+            if lattice_points.shape[1] > chunk_size:
                 print(f"Chunk #{chunk_num}..."); chunk_num += 1
 
-            # compute Ms
-            # ==========
-            Ms = Binter @ lattice_points[chunk_start:chunk_start+chunk_size].T
+            # compute Ms, Ks
+            # ==============
+            cs  = lattice_points[:,chunk_start:chunk_start+chunk_size]
+            #Ms  = Binter @ cs
+            M0s = Binter[0] @ cs
+
+            Qs  = rawQs[chunk_start:chunk_start+chunk_size]
 
             if verbosity >= 2:
-                print(f'# M0s in [M0min, M0max] = {Ms.shape[1]}')
+                print(f'# M0s in [M0min, M0max] = {len(M0s)}')
 
-            # compute Ks
-            # ==========
-            Ks = Z@Ms
+            Ks = ZBinter@cs
+
+            # K0/tadpole considerations
+            # =========================
+            natural_K0s = Ks[0].copy()
 
             # OPTIONAL: override the K[0] entry for clarity
             # only constraints on K[0] are
@@ -810,27 +822,26 @@ def coniZpM(
             #    - K' > 0
             # we later set K[0] to all values obeying tadpole and then rejection
             # sample on K'>0
-            natural_K0s = Ks[0].copy()
             Ks[0] = 0
+
+            rawQperps = Qs + M0s*natural_K0s
 
             # remove GCDs (we later scan over GCDs...)
             K_gcds = np.gcd.reduce(Ks[1:,:], axis=0)
-            Ks = Ks//K_gcds   
-        
+            Kperps = Ks//K_gcds  
+            rawQperps = rawQperps//K_gcds
+
             # set K0s
             # (set to obey tadpole ranges, K'>0)
             # ----------------------------------
-            bare_Ks = Ks
-            bare_Ms = Ms
-            bare_Qs = -np.sum(bare_Ks*bare_Ms, axis=0)
-            
-            Ks = np.zeros((data.h11,0), dtype=int)
-            Ms = np.zeros((data.h11,0), dtype=int)
-            if bare_Ks.shape[1]:
+            Ks = np.zeros((data.h11,0), dtype=np.int32)
+            Ms = np.zeros((data.h11,0), dtype=np.int32)
+
+            if Kperps.shape[1]:
                 for Kperp_gcd in range(1,max_Kperp_gcd+1):
                     # ranges for K0 to exactly hit tadpole
                     # ------------------------------------
-                    Qperps = Kperp_gcd*bare_Qs
+                    Qperps = Kperp_gcd*rawQperps
                     # Q             = Qperp - M[0]*K[0]
                     # Qmin         <= Qperp - M[0]*K[0] <= Qmax
                     # Qmin - Qperp <=       - M[0]*K[0] <= Qmax - Qperp
@@ -838,8 +849,8 @@ def coniZpM(
                     # if M[0] > 0:
                     #    (Qperp - Qmax)/M[0] <= K[0] <= (Qperp - Qmin)/M[0]
                     if M0min > 0:
-                        lo = -(-(Qperps-Qmax)//bare_Ms[0]) # round lower bound upwards
-                        up = (Qperps-Qmin)//bare_Ms[0]     # round upper bound downwards
+                        lo = -(-(Qperps-Qmax)//M0s) # round lower bound upwards
+                        up = (Qperps-Qmin)//M0s     # round upper bound downwards
                     else:
                         raise ValueError
 
@@ -875,16 +886,26 @@ def coniZpM(
                     K0s += np.arange(total_pfvs)
                     K0s -= np.repeat(np.cumsum(num_K0s_perM) - num_K0s_perM, num_K0s_perM)
 
-                    assert np.all(np.repeat(lo[mask], num_K0s_perM) <= K0s)
-                    assert np.all(np.repeat(up[mask], num_K0s_perM) >= K0s)
-
                     # prepend the K0s to the Ks
                     # -------------------------
-                    new_Ks = np.repeat(Kperp_gcd*bare_Ks[1:,mask], num_K0s_perM, axis=1)
+                    new_Ks = np.repeat(Kperp_gcd*Kperps[1:,mask], num_K0s_perM, axis=1)
                     new_Ks = np.vstack([K0s, new_Ks])
 
                     # get the Ms
-                    new_Ms = np.repeat(bare_Ms[:,mask], num_K0s_perM, axis=1)
+                    Mperps = Binter[1:]@cs[:,mask]
+                    new_M0s    = np.repeat(M0s[mask].reshape(1,-1), num_K0s_perM, axis=1)
+                    new_Mperps = np.repeat(Mperps, num_K0s_perM, axis=1)
+                    new_Ms = np.vstack([new_M0s, new_Mperps])
+
+                    if not all(-np.sum(new_Ks*new_Ms, axis=0) <= Qmax):
+                        inds = np.where(-np.sum(new_Ks*new_Ms, axis=0) > Qmax)
+                        i = inds[0]
+
+                        print(new_Ks[:,i].T.tolist(), new_Ms[:,i].T.tolist())
+                        print(-np.sum(new_Ks*new_Ms, axis=0)[i], Qmax)
+                        print(np.repeat(lo[mask], num_K0s_perM)[i])
+                        print(np.repeat(up[mask], num_K0s_perM)[i])
+                        raise ValueError()
 
                     # save
                     # ====
