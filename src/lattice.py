@@ -255,13 +255,14 @@ def fp_ellipsoid(
         if out_count[0] == max_N_out:
             print("SATURATED MAXIMUM ALLOWED OUTPUTS")
         out = out[:out_count[0], :]
+        Q   = np.empty((out_count[0]), dtype=np.int32)
     else:
         # iterative
         if linvec is not None:
             assert lindot_min is not None
             assert lindot_max is not None
         
-        out = fp_iterative(
+        out, Q = fp_iterative(
             L=L,
             Q_upper=Q, Q_lower=Q_lower,
             linvec = linvec, lindot_min=lindot_min, lindot_max=lindot_max,
@@ -274,7 +275,7 @@ def fp_ellipsoid(
     if verbosity >= 1:
         print(f"Actual number of lattice points is {out.shape[0]}")
 
-    return out
+    return out, Q
 
 @njit
 def fp_recurse(
@@ -437,6 +438,7 @@ def fp_iterative(
     # output object
     # -------------
     out = np.empty((max_N_out, dim), dtype=np.int32)
+    Q   = np.empty((max_N_out,), dtype=np.float32)
     
     # output pointer
     op  = 0
@@ -493,6 +495,7 @@ def fp_iterative(
                 if op >= max_N_out:
                     break
                 out[op, :] = vec
+                Q[op]      = Q_upper - remQ
                 op += 1
             # kill node
             sp -= 1
@@ -582,7 +585,7 @@ def fp_iterative(
         # candidate array for this depth is stack_vals[sp,:]
         # else do not push (prune)
 
-    return out[:op, :]
+    return out[:op, :], Q[:op]
 
 # box approximations
 # ------------------

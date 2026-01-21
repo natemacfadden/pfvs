@@ -417,7 +417,7 @@ def ZpM(
             print('Binter',Binter.tolist())
             print('T',T.tolist())
             print('mat',mat.tolist())
-            lattice_points = lattice.fp_ellipsoid(
+            lattice_points, _ = lattice.fp_ellipsoid(
                 mat,
                 ellipsoid_dilation*Qmax,
                 Q_lower=Qmin,
@@ -559,7 +559,7 @@ def ZpK(
 
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
-            lattice_points = lattice.fp_ellipsoid(
+            lattice_points, _ = lattice.fp_ellipsoid(
                 mat,
                 ellipsoid_dilation*Qmax,
                 Q_lower=Qmin,
@@ -761,7 +761,7 @@ def coniZpM(
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
             if not use_box:
-                lattice_points = lattice.fp_ellipsoid(
+                lattice_points, _ = lattice.fp_ellipsoid(
                     mat=mat,
                     Q=ellipsoid_dilation*Qmax,
                     Q_lower=0,
@@ -822,8 +822,8 @@ def coniZpM(
             Ks = Ks//K_gcds   
         
             # set K0s
-            # (set to obey tadpole ranges)
-            # ----------------------------
+            # (set to obey tadpole ranges, K'>0)
+            # ----------------------------------
             bare_Ks = Ks
             bare_Ms = Ms
             bare_Qs = -np.sum(bare_Ks*bare_Ms, axis=0)
