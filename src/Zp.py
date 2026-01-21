@@ -164,15 +164,23 @@ def pvecs(
 # ==========
 # generic
 # -------
-@numba.njit(parallel=True)
-def check_singular(Ns, tol=1e-4):
-    n = Ns.shape[0]
-    singular = np.zeros(n, dtype=np.bool_)
-    for i in numba.prange(n):
-        s, ld = np.linalg.slogdet(Ns[i])
-        if s == 0.0 or ld <= -tol:
-            singular[i] = True
-    return singular
+if False:
+    # NOT RELIABLE/STABLE
+    @numba.njit(parallel=True)
+    def check_singular(Ns, tol=1e-4):
+        n = Ns.shape[0]
+        singular = np.zeros(n, dtype=np.bool_)
+        for i in numba.prange(n):
+            s, ld = np.linalg.slogdet(Ns[i])
+            if s == 0.0 or ld <= -tol:
+                singular[i] = True
+        return singular
+else:
+    def check_singular(Ns, rtol=1e-12):
+        svals = np.linalg.svdvals(Ns)
+        singular = svals[:,-1] <= rtol * svals[:,0]
+
+        return singular
 
 # non-coni
 # --------
@@ -405,6 +413,10 @@ def ZpM(
 
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
+            print('Mbasis',Mbasis.tolist())
+            print('Binter',Binter.tolist())
+            print('T',T.tolist())
+            print('mat',mat.tolist())
             lattice_points = lattice.fp_ellipsoid(
                 mat,
                 ellipsoid_dilation*Qmax,
@@ -443,15 +455,14 @@ def ZpM(
                 #sign, logdet = np.linalg.slogdet(Ns)
                 #is_zero = (sign == 0) | (logdet <= -1e-4)
                 #singular.append(is_zero)
-                singular.append(check_singular(Ns.astype(float)))
+                singular.append(check_singular(Ns))
 
             singular = np.concatenate(singular)
 
             if verbosity >= 2:
-                if not only_positive_news:
+                if len(singular) and not only_positive_news:
                     print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
 
-            Ks = Ks[:,~singular]
             Ms = Ms[:,~singular]
 
         # compute Ks, reduce by GCDs
@@ -606,7 +617,7 @@ def ZpK(
                 #sign, logdet = np.linalg.slogdet(Ns)
                 #is_zero = (sign == 0) | (logdet <= -1e-4)
                 #singular.append(is_zero)
-                singular.append(check_singular(Ns.astype(float)))
+                singular.append(check_singular(Ns))
 
             singular = np.concatenate(singular)
 
@@ -673,13 +684,24 @@ def coniMellipsoid(p, data):
 
     # find lattice points in tadpole
     # ------------------------------
-    mat = -(Binter).T@(Z@Binter)
+    if True:
+        #       M-term     K-term
+        mat = -(Binter.T)@(Z@Binter)
+    else:
+        raise ValueError()
+        # try to just enforce Qperp <= Qmax
+        # ---------------
+        # DOESN'T WORK!!!
+        # ---------------
+        # matrix to project out 0th component
+        proj = np.eye(data.h11, dtype=int)[1:,:]
+        #       Mperp-term          Kperp-term
+        mat = -(Binter.T @ proj.T) @ (proj @ (kappa@([0]+p)) )@Binter
 
     if np.allclose(mat, np.round(mat)):
         mat = np.rint(mat).astype(int)
 
     return mat, Z, Binter
-
 
 def coniZpM(
     data: "cydata",
@@ -887,16 +909,17 @@ def coniZpM(
                 Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
                 Ns = Ns.transpose(2,0,1) # (N,h11,h11)
                 Ns = Ns[:,1:,1:]
+                return Ns
 
                 #sign, logdet = np.linalg.slogdet(Ns)
                 #is_zero = (sign == 0) | (logdet <= -1e-4)
                 #singular.append(is_zero)
-                singular.append(check_singular(Ns.astype(float)))
+                singular.append(check_singular(Ns))
 
             singular = np.concatenate(singular)
 
             if verbosity >= 2:
-                if not only_positive_news:
+                if len(singular) and not only_positive_news:
                     print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
 
             Ms = Ms[:,~singular]
