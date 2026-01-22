@@ -808,6 +808,24 @@ def coniZpM(
             
             # cut on feasibility of finding a K0 giving K'>0
             # ----------------------------------------------
+            # (A)
+            # K' = -K[0] * Knat[0]*K_scaling
+            # K' > 0  <=> K[0] < Knat[0]*K_scaling
+            #
+            # (B)
+            # Q = -K[0]*M[0] + Qperp*K_scaling
+            # K[0] = (Qperp*K_scaling) - Q)/M[0]
+            #
+            # (B into LHS of A)
+            # (Qperp*K_scaling) - Q)/M[0] < Knat[0]*K_scaling
+            # ...
+            # Qperp < M[0]*Knat[0] + Q/Kscaling
+            #
+            # (more obvious format)
+            # -M[1:]^T@Knat[1:] - M[0]*Knat[0] < Q/Kscaling
+            # -M.T @ Knat < Q/Kscaling
+            # -c.T @ Binter.T @ Z @ Binter @ c < Q/Kscaling
+            # DOH!... same matrix!
             Kperps = ZBinter[1:]@cs
             K_gcds = np.gcd.reduce(Kperps, axis=0)
             mask   = Qs/K_gcds < Qmax
