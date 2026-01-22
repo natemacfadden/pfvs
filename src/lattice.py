@@ -217,7 +217,7 @@ def fp_ellipsoid(
 
 
     **Returns:**
-    Nothing (fills the array out[:out_count])
+    The lattice vectors, as rows. Also their valuation of the quadratic form.
     """
     mat = np.asarray(mat)
     dim = mat.shape[0]
