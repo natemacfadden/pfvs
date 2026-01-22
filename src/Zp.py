@@ -414,8 +414,8 @@ def ZpM(
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
             lattice_points, _ = lattice.fp_ellipsoid(
-                mat,
-                ellipsoid_dilation*Qmax,
+                mat=mat,
+                Q=ellipsoid_dilation*Qmax,
                 Q_lower=Qmin,
                 max_N_out=max_N_pfvs,
                 recursive=fp_recursive,
@@ -699,6 +699,7 @@ def coniMellipsoid(p, data):
 
     return mat, Z, Binter
 
+print("IDK if K'>0 cut works for max_Kperp_gcd>1")
 def coniZpM(
     data: "cydata",
     ps: "ArrayLike",
@@ -725,8 +726,6 @@ def coniZpM(
 
     returns a list of Ks and Ms
     """
-    if max_Kperp_gcd>1:
-        print("IDK if K'>0 cut works for max_Kperp_gcd>1")
     assert data.coni
 
     # misc
