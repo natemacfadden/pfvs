@@ -788,7 +788,8 @@ def coniZpM(
         if verbosity >= 2:
             print(f'# lattice_points = {lattice_points.shape[0]}')
 
-        lattice_points = np.ascontiguousarray(lattice_points.T)
+        lattice_points = lattice_points.T
+        #lattice_points = np.ascontiguousarray(lattice_points)
 
         # compute/cut Ms
         # ==============
@@ -799,36 +800,37 @@ def coniZpM(
             if lattice_points.shape[1] > chunk_size:
                 print(f"Chunk #{chunk_num}..."); chunk_num += 1
 
-            # compute Ms, Ks
-            # ==============
+            # read data from fp_ellipsoid
+            # ---------------------------
             cs  = lattice_points[:,chunk_start:chunk_start+chunk_size]
+            Qs  = rawQs[chunk_start:chunk_start+chunk_size]
+            
+            # cut on feasibility of finding a K0 giving K'>0
+            # ----------------------------------------------
+            Ks     = ZBinter@cs
+            K_gcds = np.gcd.reduce(Ks[1:,:], axis=0)
+            mask   = Qs/K_gcds < Qmax
+
+            cs     = cs[:,mask]
+            Qs     = Qs[mask]
+            Ks     = Ks[:,mask]
+            K_gcds = K_gcds[mask]
+
+            # compute M0s
+            # -----------
             #Ms  = Binter @ cs
             M0s = Binter[0] @ cs
 
-            Qs  = rawQs[chunk_start:chunk_start+chunk_size]
-
-            if verbosity >= 2:
-                print(f'# M0s in [M0min, M0max] = {len(M0s)}')
-
-            Ks = ZBinter@cs
-
-            # K0/tadpole considerations
-            # =========================
+            # K variables
+            # -----------
             natural_K0s = Ks[0].copy()
+            Ks[0]       = 0 # K0 at this stage is meaningless
+            Kperps      = Ks//K_gcds
 
-            # OPTIONAL: override the K[0] entry for clarity
-            # only constraints on K[0] are
-            #    - tadpole Qmin<=-dot(K,M)<=Qmax
-            #    - K' > 0
-            # we later set K[0] to all values obeying tadpole and then rejection
-            # sample on K'>0
-            Ks[0] = 0
-
+            # Q considerations
+            # ----------------
+            # subtract the K[0]*M[0] contribution
             rawQperps = Qs + M0s*natural_K0s
-
-            # remove GCDs (we later scan over GCDs...)
-            K_gcds = np.gcd.reduce(Ks[1:,:], axis=0)
-            Kperps = Ks//K_gcds  
             rawQperps = rawQperps//K_gcds
 
             # set K0s
@@ -849,8 +851,10 @@ def coniZpM(
                     # if M[0] > 0:
                     #    (Qperp - Qmax)/M[0] <= K[0] <= (Qperp - Qmin)/M[0]
                     if M0min > 0:
-                        lo = -(-(Qperps-Qmax)//M0s) # round lower bound upwards
-                        up = (Qperps-Qmin)//M0s     # round upper bound downwards
+                        #lo = -(-(Qperps-Qmax)//M0s) # round lower bound upwards
+                        #up = (Qperps-Qmin)//M0s     # round upper bound downwards
+                        lo = np.ceil(( Qperps - Qmax)/M0s).astype(int)
+                        up = np.floor((Qperps - Qmax)/M0s).astype(int)
                     else:
                         raise ValueError
 
@@ -861,7 +865,8 @@ def coniZpM(
                     # K' > 0 => K[0] < (natural K)[0] * Kperp_gcd/K_gcds
                     # (subtract 1e-4 to enforce K'>0, not K'>=0)
                     if cut_Kprime:
-                        tmp = (natural_K0s*Kperp_gcd-1e-4)//K_gcds
+                        #tmp = (natural_K0s*Kperp_gcd-1e-4)//K_gcds
+                        tmp = np.floor((natural_K0s*Kperp_gcd-1e-4)/K_gcds).astype(int)
                         up  = np.minimum(up, tmp.astype(int))
 
                     # compute the PFVs
