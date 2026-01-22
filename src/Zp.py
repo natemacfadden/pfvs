@@ -725,6 +725,8 @@ def coniZpM(
 
     returns a list of Ks and Ms
     """
+    if max_Kperp_gcd>1:
+        print("IDK if K'>0 cut works for max_Kperp_gcd>1")
     assert data.coni
 
     # misc
