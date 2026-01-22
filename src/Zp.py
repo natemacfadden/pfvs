@@ -700,7 +700,7 @@ def coniMellipsoid(p, data):
     return mat, Z, Binter
 
 @numba.njit(parallel=True, fastmath=False)
-def gcd_of_matmul(A, C, out):
+def gcd_of_matmul(A, C):
     """
     Computes gcd(A@C, axis=0)
 
@@ -734,7 +734,8 @@ def coniZpM(
     use_box: bool = False,
     fp_recursive: bool = False,
     max_N_pfvs: int = 1_000_000_000,
-    verbosity: int = 0
+    verbosity: int = 0,
+    low_level_parallelism: bool = True,
     ) -> tuple["ArrayLike", "ArrayLike"]:
     """
     A Python "Zp" implementation that takes in p-vectors and outputs PFVs.
@@ -847,14 +848,21 @@ def coniZpM(
             # -M.T @ Knat < Q/Kscaling
             # -c.T @ Binter.T @ Z @ Binter @ c < Q/Kscaling
             # DOH!... same matrix!
-            Kperps = ZBinter[1:]@cs
-            K_gcds = np.gcd.reduce(Kperps, axis=0)
-            mask   = Qs/K_gcds < Qmax
+            if low_level_parallelism:
+                K_gcds = gcd_of_matmul(ZBinter[1:], cs)
+            else:
+                Kperps = ZBinter[1:]@cs
+                K_gcds = np.gcd.reduce(Kperps, axis=0)
 
+            mask   = Qs/K_gcds < Qmax
             cs     = cs[:,mask]
             Qs     = Qs[mask]
-            Kperps = Kperps[:,mask]
             K_gcds = K_gcds[mask]
+
+            if low_level_parallelism:
+                Kperps = ZBinter[1:]@cs
+            else:
+                Kperps = Kperps[:,mask]
 
             # compute Ks
             # ----------
