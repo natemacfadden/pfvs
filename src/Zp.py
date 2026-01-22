@@ -699,6 +699,27 @@ def coniMellipsoid(p, data):
 
     return mat, Z, Binter
 
+@numba.njit(parallel=True, fastmath=False)
+def gcd_of_matmul(A, C, out):
+    """
+    Computes gcd(A@C, axis=0)
+
+    Gives better performance than NumPy, but uses parallelism
+    (if you want to parallelize at a higher level, maybe not
+    the best idea...)
+    """
+    k, N = C.shape
+    out  = np.empty(N, dtype=np.int32)
+    for j in numba.prange(N):
+        g = 0
+        for i in range(k):
+            s = 0
+            for t in range(k):
+                s += A[i, t] * C[t, j]
+            g = math.gcd(g, s)
+        out[j] = g
+    return out
+
 print("IDK if K'>0 cut works for max_Kperp_gcd>1")
 def coniZpM(
     data: "cydata",
