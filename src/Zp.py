@@ -807,25 +807,28 @@ def coniZpM(
             
             # cut on feasibility of finding a K0 giving K'>0
             # ----------------------------------------------
-            Ks     = ZBinter@cs
-            K_gcds = np.gcd.reduce(Ks[1:,:], axis=0)
+            Kperps = ZBinter[1:]@cs
+            K_gcds = np.gcd.reduce(Kperps, axis=0)
             mask   = Qs/K_gcds < Qmax
 
             cs     = cs[:,mask]
             Qs     = Qs[mask]
-            Ks     = Ks[:,mask]
+            Kperps = Kperps[:,mask]
             K_gcds = K_gcds[mask]
+
+            # compute Ks
+            # ----------
+            natural_K0s = ZBinter[0]@cs
+            Ks          = np.vstack(
+                [np.zeros((1,Kperps.shape[1]),dtype=np.int32),
+                Kperps
+            ])
+            Kperps      = Ks//K_gcds
 
             # compute M0s
             # -----------
             #Ms  = Binter @ cs
             M0s = Binter[0] @ cs
-
-            # K variables
-            # -----------
-            natural_K0s = Ks[0].copy()
-            Ks[0]       = 0 # K0 at this stage is meaningless
-            Kperps      = Ks//K_gcds
 
             # Q considerations
             # ----------------
