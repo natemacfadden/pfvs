@@ -195,6 +195,7 @@ class CYData:
     @property
     def vertices(self):
         return self._vertices
+    verts = vertices
 
     @property
     def heights(self):
