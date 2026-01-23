@@ -82,6 +82,19 @@ class PFV():
                 -self.K[0] + (self.M@self._cy.kappa_cob@self.p)[0] )
             type(self).check_Kprime = lambda self: self.Kprime > 0
 
+            # other physics-y variables
+            self.ncf = 2
+
+            type(self).gsM = property(lambda self: self.gs*self.M[0])
+            type(self).Vtilde = property(lambda self: 
+                (((self.kappa@self.p)@self.p)@self.p/6.)*np.imag(self.tau0)**(3) )
+            type(self).zcf = property(lambda self:
+                np.exp(-2*np.pi*self.Kprime/(self.ncf*self.gsM))/(2.*np.pi) )
+
+            volProxy = (2*(2+self.h11+self.h21))**(3/2)
+            type(self).align = property(lambda self:
+                2*89.5643*(self.Vtilde**(1/3))*(volProxy**(2/3))*(self.zcf**(4/3))/(self.gsM*self.gsM*self.W0()*self.W0()) )
+
         # alternative constructor
     # -----------------------
     @classmethod
@@ -576,6 +589,7 @@ class PFV():
         else:
             return np.power(10,self._log10W0)
 
+    @property
     def gs(self):
         # check if PFV has valid leading coefficients
         if not self.valid_coeff_ratio():
@@ -666,7 +680,7 @@ class PFV():
         W0 = 10**logW0
 
         tau0 = self.tau0()
-        gs = self.gs()
+        gs = self.gs
         print( "Main diagnostics:")
         print( "-----------------")
         print(f"W0   = 10**({logW0})")
@@ -682,22 +696,12 @@ class PFV():
 
         # coni-diagonstics
         if self.coni:
-            ncf = 2
-
-            volProxy = (2*(2+self.h11+self.h21))**(3/2)
-            
-            gsM = gs*self.M[0]
-            Vtilde = (((self.kappa@self.p)@self.p)@self.p/6.)*np.imag(tau0)**(3)
-            kappa1aipi = (self.kappa@self.p)[0]
-            Kprime = self.K[0] - self.M@kappa1aipi
-
-            zcf = np.exp(2*np.pi*Kprime/(ncf*gsM))/(2.*np.pi)
-            align = 2*89.5643*(Vtilde**(1/3))*(volProxy**(2/3))*(zcf**(4/3))/(gsM*gsM*W0*W0)
-
             print("Coni:")
             print("-----")
-            print(f"zcf  = {zcf}")
-            print(f"align= {align}")
+            print(f"K'   = {self.Kprime}")
+            print(f"gsM  = {self.gsM}")
+            print(f"zcf  = {self.zcf}")
+            print(f"align= {self.align}")
             print()
 
         # degrees of leading terms in p-grading
