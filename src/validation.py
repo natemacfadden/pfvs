@@ -26,7 +26,7 @@ import math
 import numpy as np
 
 # local imports
-from . import lattice
+from . import lattice, cydata
 
 class PFV():
     """
@@ -74,6 +74,46 @@ class PFV():
             type(self).Kprime = property(lambda self: 
                 -self.K[0] + (self.M@self._cy.kappa_cob@self.p)[0] )
             type(self).check_Kprime = lambda self: self.Kprime > 0
+
+        # alternative constructor
+    # -----------------------
+    @classmethod
+    def from_str(cls, str) -> "PFV":
+        """
+        **Description:**
+        Initializes an instance of the PFV validation class
+
+        **Arguments:**
+        - `str`: The string format representing the PFV, in the format that.
+        """
+        try:
+            import cytools
+        except ImportError as e:
+            raise ImportError(
+                "cytools is required reading data from a string object..."
+            ) from e
+
+        ns = {}
+        exec(str, {'Polytope':cytools.Polytope}, ns)
+
+        # construct the CYData
+        # --------------------
+        if 'q' in ns:
+            # coni...
+            data = cydata.CYData.from_cy(
+                cy=ns['cy'],
+                coni_curve=ns['q'],
+                coni_cob=ns['cob']
+            )
+        else:
+            data = cydata.CYData.from_cy(ns['cy'])
+
+        # construct the PFV
+        # -----------------
+        return cls(
+            cy=data,
+            K=ns['K'],
+            M=ns['M'])
 
     # basic
     # =====
@@ -175,53 +215,14 @@ class PFV():
         """
         in coo format
         """
-        # set GVs
+        # input sanitization
+        val = np.array(val)
 
-        # if using p as the grading vector, set it
-        if p_grading:
-            grading_vec = self.pgrading
-        else:
-            grading_vec = None
-
-        # check if we need to (re)compute GVs
-        bad_GVs = False
-        if not hasattr(self.cy,'_gvs'):
-            bad_GVs = True
-        else:
-            if self.cy._gvs.cutoff != max_deg:
-                bad_GVs = True
-            elif not hasattr(self.cy._gvs,'_pgraded') or\
-                    self.cy._gvs._pgraded != p_grading:
-                bad_GVs = True
+        # change the basis
+        if self.coni:
+            val[:,:-1] = val[:,:-1] @ np.array(self._cy.cob).T
         
-        # (re)compute GVs, if needed
-        if bad_GVs:
-            if (not self.silent) and (verbosity>0):
-                msg = "(Computing GVs "
-                if p_grading:
-                    msg += "with "
-                else:
-                    msg += "without "
-                msg += f"p-grading; max degree={max_deg}... might take time..."
-                print(msg,end=' ')
-
-            self.cy._gvs = self.cy.compute_gvs(grading_vec=grading_vec,
-                                               max_deg=max_deg,
-                                               basis=(self.cob if self.coni else None))
-            self.cy._gvs._pgraded = p_grading
-
-            # reset dependent variables
-            self._tau0 = None
-            self._log10W0 = None
-            self._gs = None
-            self._series = None
-            self._series_gen = None
-
-            if (not self.silent) and (verbosity>0):
-                print('done!)\n')
-
-        # return the gvs
-        return self.cy._gvs
+        self._gvs  = val.copy()
 
     # N-matrix and its inverse
     # ------------------------
@@ -411,4 +412,22 @@ class PFV():
 
     # auxiliary
     # =========
+    def harvest(self, gvs=None, verbosity=0):
+        assert self.coni
+        import sys; sys.path.append('../../cornell-dev')
+        from lib.physics.vacua import PFV_search
+        from cytools import Polytope
+
+        cy = Polytope(self._cy.verts).triangulate(heights=self._cy.heights).cy()
+
+        if gvs is None:
+            gvs = cy.compute_gvs(max_deg=10).coo
+
+
+        out = PFV_search.harvestPFVs(cy, [[self.M,self.K,self.p]], gvs=gvs, max_deg=10, coni_LCS=True, basis_matrix=self._cy.cob, return_extra=True, output_format='dict', verbosity=verbosity)
+        
+        if 'Kprime' in out:
+            out['Kprime'] = [-Kp for Kp in out['Kprime']]
+
+        return out
     
