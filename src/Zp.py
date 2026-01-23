@@ -808,9 +808,6 @@ def coniZpM(
             print(f"p        = {np.array(p).tolist()}")
             raise e
 
-        if verbosity >= 2:
-            print(f'# lattice_points = {lattice_points.shape[0]}')
-
         lattice_points = lattice_points.T
         #lattice_points = np.ascontiguousarray(lattice_points)
 
