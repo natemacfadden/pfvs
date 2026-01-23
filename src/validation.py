@@ -221,7 +221,11 @@ class PFV():
         # change the basis
         if self.coni:
             val[:,:-1] = val[:,:-1] @ np.array(self._cy.cob).T
+
+        # sanity check: the p-vector should be in Kcup
+        assert np.all(val[:,:-1]@self.p >= 0)
         
+        # set the value :)
         self._gvs  = val.copy()
 
     # N-matrix and its inverse
