@@ -23,6 +23,7 @@
 import flint
 import functools
 import math
+import matplotlib.pyplot as plt
 import numpy as np
 
 # local imports
@@ -66,7 +67,13 @@ class PFV():
         self._Ninvertible = None
         self._Ninv        = None
 
+        # GVs/series info
         self._gvs         = None
+        self._series      = None
+        self._all_exps    = []
+        self._all_gvs     = []
+        self._all_charges = []
+        self._all_coeffs  = []
 
         # coni-specific variables
         if self.coni:
@@ -413,6 +420,372 @@ class PFV():
                    (np.dot(self.pgrading[1:], self.K[1:]) == 0)
         else:
             return np.dot(self.pgrading, self.K) == 0
+
+    # more sophisticated analyses
+    # ===========================
+    # main series method
+    # ------------------
+    def series_gen(self):
+        assert self._gvs is not None
+
+        # get the GVs, charges
+        gvs = self._gvs[:,-1]
+        Q = self._gvs[:,:-1]
+        N_charges = len(Q)
+
+        if N_charges==0:
+            raise ValueError("Found 0 GV invariants... increase the degree!")
+
+        # helpers
+        Qpgrading = Q@self.pgrading
+        QM        = Q@self.M
+
+        # compute the sorted, unique exponents
+        degs = np.unique(Qpgrading[Qpgrading>0])
+
+        # compute the coefficients
+        for deg in degs:
+            self._all_exps.append(deg/self._p_denom)
+            self._all_gvs.append([])
+            self._all_charges.append([])
+            self._all_coeffs.append([])
+
+            # calculate the coefficient for this exponent
+            coeff = 0
+            for i in range(N_charges):
+                if Qpgrading[i]==deg:
+                    # save the coefficient
+                    self._all_coeffs[-1].append(gvs[i]*int(QM[i]))
+
+                    # save the charges and gvs
+                    self._all_gvs[-1].append(int(gvs[i]))
+                    self._all_charges[-1].append(tuple([int(qj) for qj in Q[i]]))
+
+            # sum the terms to get the actual coefficient
+            coeff = sum(self._all_coeffs[-1])
+
+            yield coeff, deg/self._p_denom
+        return
+
+    def series(self, N_nonzero=float('inf'), verbosity=0):
+        # initialize series container
+        if self._series is None:
+            self._series = []
+            self._all_exps = []
+            self._all_gvs = []
+            self._all_charges = []
+            self._all_coeffs = []
+
+        len_series = len(self._series)
+
+        # series is already long enough!
+        if len_series >= N_nonzero:
+            return self._series[:N_nonzero]
+
+        # need to build the series to size
+        for coeff, exp in self.series_gen():
+            if verbosity>0:
+                print(f"Coefficients={coeff}; exponent={exp}")
+            if coeff != 0:
+                # nonzero coefficient!
+                self._series.append([coeff, exp])
+                len_series += 1
+                if len_series >= N_nonzero:
+                    return self._series
+
+            elif len_series==0:
+                # zero coefficient in the front
+                self.coeff_gap += 1
+
+        # built the entire series!
+        return self._series
+
+    def valid_coeff_ratio(self):
+        # checks if the coefficients obey |c1| > |c0|
+        terms = self.series(N_nonzero=2)
+        if len(terms)<2:
+            if (not self.silent):
+                print(f'{self} had too few terms...')
+            return None
+        else:
+            return abs(terms[1][0])>abs(terms[0][0])
+
+    # main physics outputs
+    # --------------------
+    def tau0(self):
+        # tau0 is the value of tau that minimizes the 2-term racetrack
+        
+        # check if PFV has valid leading coefficients
+        validQ = self.valid_coeff_ratio()
+        if validQ == False:
+            return None
+        elif validQ is None:
+            return None
+
+        # get the two leading terms
+        terms = self.series(N_nonzero=2)
+        c0, p0 = terms[0]
+        c1, p1 = terms[1]
+
+        # (np.log is natural log)
+        self._tau0 = np.log( abs((c0*p0)/(c1*p1)) )
+        if c0*c1>0:
+            # imaginary part of log
+            self._tau0 += 1j*np.pi
+
+        self._tau0 *= 1j/(2*np.pi*(p0-p1))
+
+        return self._tau0
+
+    def W0(self,
+           as_logs=False,
+           check_Ninvertible=True,
+           verbosity=0):
+        # check if PFV has valid N-rank
+        if check_Ninvertible and (not self.check_Ninvertible()):
+            return np.nan#float('inf')
+
+        # check if PFV has valid leading coefficients
+        validQ = self.valid_coeff_ratio()
+        if validQ == False:
+            return np.nan#float('inf')
+        elif validQ is None:
+            return np.nan
+
+        # helper
+        prefactor = 1/((2.0**1.5)*(np.pi**2.5)) # roughly, 0.0202107
+
+        # get the two leading terms
+        terms = self.series(N_nonzero=2)
+        c0, p0 = terms[0]
+        c1, p1 = terms[1]
+
+        # helpers (solely for clarity)
+        base = abs(-(c0*p0)/(c1*p1))
+        power = p1/(p1-p0)
+
+        if verbosity>0:
+            print(f"W0 = ({prefactor})*({c1*(p0-p1)/p0})*({base}**{power})")
+
+        self._log10W0 = np.log10(base)*power
+        self._log10W0 += np.log10(np.abs(c1*(p0-p1)/p0))
+        self._log10W0 += np.log10(prefactor)
+
+        if as_logs:
+            return self._log10W0
+        else:
+            return np.power(10,self._log10W0)
+
+    def gs(self):
+        # check if PFV has valid leading coefficients
+        if not self.valid_coeff_ratio():
+            return None
+
+        gs = 1/np.imag(self.tau0())
+        
+        if gs < 0:
+            warnings.warn("Negative string coupling!")
+        
+        return gs
+
+    # diagnostics
+    # ===========
+    def series_abs_vev(self, as_logs=False):
+        # look at the series W = sum_i Wi for Wi = ci exp(2*pi*i*tau*p.qi)
+        # find the value of exp(2*pi*i*tau) that minimizes W1+W2
+        # plug that in to each Wi, return the (absolute value of the) result
+        terms = self.series()
+        coeffs, exps = zip(*terms)
+
+        # some helper variables
+        base = float(-(exps[0]*coeffs[0])/(exps[1]*coeffs[1]))
+        base = abs(base) # only looking at absolute values
+
+        if as_logs:
+            log_base = math.log10(base)
+
+        # compute the terms
+        vevs = []
+        for c,e in zip(coeffs,exps):
+            power = float(e/(exps[1]-exps[0]))
+
+            if not as_logs:
+                term = abs(c)*(base**power)
+            else:
+                term = math.log10(abs(c))+power*log_base
+
+            vevs.append(term)
+
+        # return the (absolute values of the) VEVs of each term
+        return vevs
+
+    def series_corrections(self, as_logs=False):
+        if not self.silent:
+            print("THIS USES self.tau0() FROM THE 2-TERM APPROXIMATION")
+        log_vevs = self.series_abs_vev(as_logs=True)
+
+        log_W0 = self.W0(as_logs=True)
+
+        corrections = []
+        for i in range(2,len(log_vevs)):
+            term = log_vevs[i]-log_W0
+
+            if not as_logs:
+                corrections.append(10**term)
+            else:
+                corrections.append(term)
+
+        return corrections
+
+    # diagnostics
+    # -----------
+    def diagnostics(self, verbosity=0):
+        # generic info
+        print(f"Dumping info for:\n")
+        print(self)
+        print()
+
+        # passes checks?
+        if self.check_all():
+            print("Passes checks :^)")
+        else:
+            for _ in range(20):
+                print("FAILS CHECKS!!!")
+        print()
+
+        # tadpole saturation
+        MK = np.dot(self.M, self.K)
+        Q = self.h11 + self.h21 + 2
+        print(f"-M.K/Q = {-MK}/{Q} = {-MK/Q}")
+        if self.coni:
+            print(f"# anti-D3 branes = (|M.K|-Q)/2 = ({-MK}-{Q})/2 = {(-MK-Q)/2}")
+        print()
+
+        # main takeaways
+        logW0 = self.W0(as_logs=True)
+        W0 = 10**logW0
+
+        tau0 = self.tau0()
+        gs = self.gs()
+        print( "Main diagnostics:")
+        print( "-----------------")
+        print(f"W0   = 10**({logW0})")
+        print(f"tau0 = {tau0}")
+        print(f"gs   = {gs}")
+        if W0==float('inf'):
+            print("\n")
+            for _ in range(10):
+                print("There isn't a good coefficient ratio!")
+            print()
+        else:
+            print()
+
+        # coni-diagonstics
+        if self.coni:
+            ncf = 2
+
+            volProxy = (2*(2+self.h11+self.h21))**(3/2)
+            
+            gsM = gs*self.M[0]
+            Vtilde = (((self.kappa@self.p)@self.p)@self.p/6.)*np.imag(tau0)**(3)
+            kappa1aipi = (self.kappa@self.p)[0]
+            Kprime = self.K[0] - self.M@kappa1aipi
+
+            zcf = np.exp(2*np.pi*Kprime/(ncf*gsM))/(2.*np.pi)
+            align = 2*89.5643*(Vtilde**(1/3))*(volProxy**(2/3))*(zcf**(4/3))/(gsM*gsM*W0*W0)
+
+            print("Coni:")
+            print("-----")
+            print(f"zcf  = {zcf}")
+            print(f"align= {align}")
+            print()
+
+        # degrees of leading terms in p-grading
+        terms = self.series(N_nonzero=2)
+        deg0 = int(round(terms[0][1]*self._p_denom))
+        deg1 = int(round(terms[1][1]*self._p_denom))
+        p_graded_degs = np.array(list(self._gvs[:,:-1]))@self.pgrading
+
+        print( "Series:")
+        print( "-------")
+        print(f"The two leading terms have p-graded degrees: ", end="")
+        print(f"{deg0} and {deg1}")
+        print(f"Resultant W0 exponent is {deg1}/({deg1}-{deg0})=", end="")
+        print(f"{deg1/(deg1-deg0)}...")
+        print()
+
+        # full series
+        if verbosity>0:
+            print("Dumping the series...")
+            self.dump_series(verbosity=verbosity-1)
+            print()
+
+        # absolute value of vev (kinda redundant with plot)
+        if verbosity>4:
+            print("log10 |W_i|...")
+            print(self.series_abs_vev(as_logs=True))
+            print()
+
+        # plot the data
+        print("Plotting the series... evauluated at tau0 from 2-term")
+        corrections = self.series_corrections(as_logs=True)
+        plt.plot(range(2,2+len(corrections)),
+                 corrections)
+        plt.xlabel('ith term')
+        plt.ylabel('log$_{10}(|W_i|/W_0)$')
+
+    def dump_series(self,
+                    max_deg=15,
+                    p_grading=False,
+                    n_digits=150,
+                    verbosity=0):
+        # dump it!
+        if verbosity==0:
+            for term in self.series(max_deg=max_deg,
+                                    p_grading=p_grading,
+                                    n_digits=n_digits):
+                c,e = term
+                print(f"Exponent {e:.2f} has coefficient {c}")
+        elif verbosity==1:
+            self.series(max_deg=max_deg,
+                        p_grading=p_grading,
+                        n_digits=n_digits)
+
+            for c,e in zip(self._all_coeffs, self._all_exps):
+                print(f"Exponent {e:.2f} has coefficient {sum(c)} "
+                      f"arising from terms {c}...")
+        else:
+            self.series(max_deg=max_deg,
+                        p_grading=p_grading,
+                        n_digits=n_digits)
+
+            print("(format is (GV_i)·(M.q_i) + ...)")
+
+            for q,gv,c,e in zip(self._all_charges,
+                                self._all_gvs,
+                                self._all_coeffs,
+                                self._all_exps):
+                print(f"Exponent {e:.2f} has coefficient {sum(c)} = ", end="")
+                
+                first = True
+                if verbosity>2:
+                    print(f"{self.M.tolist()}·(", end="")
+                    for _q,_gv in zip(q, gv):
+                        if not first:
+                            print(" + ", end="")
+                        else:
+                            first = False
+                        print(f"({_gv} {_q})", end="")
+                    print(")",end="")
+
+                else:
+                    for _c,_gv in zip(c,gv):
+                        if not first:
+                            print(" + ", end="")
+                        else:
+                            first = False
+                        print(f"({_gv})·({_c//_gv})", end="")
+                print()
 
     # auxiliary
     # =========
