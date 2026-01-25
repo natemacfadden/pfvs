@@ -161,7 +161,7 @@ class CYData:
         kappa = cy.intersection_numbers(in_basis=True, format='dense')
         c2    = cy.second_chern_class(in_basis=True)
         # (hyperplanes of the Kahler cone)
-        H     = cy.mori_cone_cap(in_basis=True).extremal_rays()
+        H     = cy.mori_cone_cap(in_basis=True).rays()
 
         # return
         # ------
