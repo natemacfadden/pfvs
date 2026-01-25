@@ -98,7 +98,7 @@ class PFV():
         # alternative constructor
     # -----------------------
     @classmethod
-    def from_str(cls, str) -> "PFV":
+    def from_str(cls, str_) -> "PFV":
         """
         **Description:**
         Initializes an instance of the PFV validation class
@@ -114,7 +114,7 @@ class PFV():
             ) from e
 
         ns = {}
-        exec(str, {'Polytope':cytools.Polytope}, ns)
+        exec(str_, {'Polytope':cytools.Polytope}, ns)
 
         # construct the CYData
         # --------------------
@@ -506,10 +506,6 @@ class PFV():
                 if len_series >= N_nonzero:
                     return self._series
 
-            elif len_series==0:
-                # zero coefficient in the front
-                self.coeff_gap += 1
-
         # built the entire series!
         return self._series
 
@@ -525,6 +521,7 @@ class PFV():
 
     # main physics outputs
     # --------------------
+    @property
     def tau0(self):
         # tau0 is the value of tau that minimizes the 2-term racetrack
         
@@ -595,7 +592,7 @@ class PFV():
         if not self.valid_coeff_ratio():
             return None
 
-        gs = 1/np.imag(self.tau0())
+        gs = 1/np.imag(self.tau0)
         
         if gs < 0:
             warnings.warn("Negative string coupling!")
@@ -635,7 +632,7 @@ class PFV():
 
     def series_corrections(self, as_logs=False):
         if not self.silent:
-            print("THIS USES self.tau0() FROM THE 2-TERM APPROXIMATION")
+            print("THIS USES self.tau0 FROM THE 2-TERM APPROXIMATION")
         log_vevs = self.series_abs_vev(as_logs=True)
 
         log_W0 = self.W0(as_logs=True)
@@ -679,7 +676,7 @@ class PFV():
         logW0 = self.W0(as_logs=True)
         W0 = 10**logW0
 
-        tau0 = self.tau0()
+        tau0 = self.tau0
         gs = self.gs
         print( "Main diagnostics:")
         print( "-----------------")
