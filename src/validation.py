@@ -577,14 +577,14 @@ class PFV():
         if verbosity>0:
             print(f"W0 = ({prefactor})*({c1*(p0-p1)/p0})*({base}**{power})")
 
-        self._log10W0 = np.log10(base)*power
-        self._log10W0 += np.log10(np.abs(c1*(p0-p1)/p0))
-        self._log10W0 += np.log10(prefactor)
+        log10W0 = np.log10(base)*power
+        log10W0 += np.log10(np.abs(c1*(p0-p1)/p0))
+        log10W0 += np.log10(prefactor)
 
         if as_logs:
-            return self._log10W0
+            return log10W0
         else:
-            return np.power(10,self._log10W0)
+            return np.power(10,log10W0)
 
     @property
     def gs(self):
