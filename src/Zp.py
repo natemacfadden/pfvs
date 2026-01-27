@@ -39,6 +39,8 @@ def pvecs(
     data: "CYData",
     max_deg: int = None,
     requested_N_pts: int = None,
+    min_deg: int = 0,
+    deg_window: int = 1,
     backend: str = "cpsat") -> "ArrayLike":
     """
     **Description:**
@@ -79,45 +81,74 @@ def pvecs(
     else:
         H = data.H
 
+    # requesting N points
+    # -------------------
+    # use shifting degree windows until we get enough points
+    if requested_N_pts is not None:
+        ps = np.empty((0,H.shape[1]), dtype=int)
+
+        window_i = 0
+        while len(ps)<requested_N_pts:
+            print(len(ps))
+            print(min_deg + (window_i+0)*deg_window + window_i)
+            print(min_deg + (window_i+1)*deg_window + window_i)
+            print()
+            new_ps = pvecs(
+                data,
+                max_deg = min_deg + (window_i+1)*deg_window + window_i,
+                min_deg = min_deg + (window_i+0)*deg_window + window_i,
+            )
+            ps = np.vstack([ps, new_ps])
+
+            window_i += 1
+
+        return ps
+
+    # solving via min/max degree
+    # --------------------------
     # compute a grading vector
     # (just needs to be in strict interior of dual cone)
     grading = H.sum(axis=0)
     grading = grading//np.gcd.reduce(grading)
 
-    if backend == "cpsat":
-        if max_deg is None:
-            raise ValueError("CP-SAT backend assumes max_deg is set...")
+    """
+    if max_deg is None:
+        raise ValueError("CP-SAT backend assumes max_deg is set...")
+    """
 
-        # define a constraint-programming model to solve
-        model  = cp_model.CpModel()
-        max_pi = cp_model.INT32_MAX - 1
+    # define a constraint-programming model to solve
+    model  = cp_model.CpModel()
+    max_pi = cp_model.INT32_MAX - 1
 
-        p_vars = [model.NewIntVar(-max_pi, max_pi, f'x{i}') for i in\
-                                                            range(H.shape[1])]
+    p_vars = [model.NewIntVar(-max_pi, max_pi, f'x{i}') for i in\
+                                                        range(H.shape[1])]
 
-        for row in H:
-            model.Add(sum(int(row[j])*p_vars[j] for j in range(H.shape[1]))>=1)
-        model.Add(sum(int(grading[j])*p_vars[j] for j in range(H.shape[1])) <=\
-                                                                        max_deg)
+    for row in H:
+        model.Add(sum(int(row[j])*p_vars[j] for j in range(H.shape[1])) >= 1)
+    model.Add(sum(int(grading[j])*p_vars[j] for j in range(H.shape[1])) >=\
+                                                                    min_deg)
+    model.Add(sum(int(grading[j])*p_vars[j] for j in range(H.shape[1])) <=\
+                                                                    max_deg)
 
-        # enumerate all solutions up to max_deg
-        solver = cp_model.CpSolver()
+    # enumerate all solutions up to max_deg
+    solver = cp_model.CpSolver()
 
-        class SolutionPrinter(cp_model.CpSolverSolutionCallback):
-            def __init__(self, p_vars):
-                cp_model.CpSolverSolutionCallback.__init__(self)
-                self.p_vars = p_vars
-                self.points = []
+    class SolutionPrinter(cp_model.CpSolverSolutionCallback):
+        def __init__(self, p_vars):
+            cp_model.CpSolverSolutionCallback.__init__(self)
+            self.p_vars = p_vars
+            self.points = []
 
-            def on_solution_callback(self):
-                self.points.append([self.Value(v) for v in self.p_vars])
+        def on_solution_callback(self):
+            self.points.append([self.Value(v) for v in self.p_vars])
 
-        printer = SolutionPrinter(p_vars)
+    printer = SolutionPrinter(p_vars)
 
-        solver.SearchForAllSolutions(model, printer)
+    solver.SearchForAllSolutions(model, printer)
 
-        # return
-        ps = np.array(printer.points)
+    # return
+    ps = np.array(printer.points)
+    """
     elif backend == "gurobi":
         # import gurobi
         import gurobipy as gp
@@ -154,6 +185,9 @@ def pvecs(
         ps = np.array(sols)
     else:
         raise ValueError()
+    """
+    if len(ps) == 0:
+        return np.empty((0,H.shape[1]), dtype=int)
 
     # reduce by GCD
     gcds = np.gcd.reduce(ps,axis=1)
@@ -765,7 +799,7 @@ def coniZpM(
     all_Ms = np.zeros((0,data.h11), dtype=np.int32)
 
     # iterate over p-vectors
-    if verbosity >= 1:
+    if verbosity >= 0:
         iterator = tqdm(ps)
     else:
         iterator = ps
@@ -817,7 +851,7 @@ def coniZpM(
         chunk_size = 10_000_000
         chunk_num  = 0
         for chunk_start in range(0, lattice_points.shape[1], chunk_size):
-            if lattice_points.shape[1] > chunk_size:
+            if (verbosity >= 1) and (lattice_points.shape[1] > chunk_size):
                 print(f"Chunk #{chunk_num}..."); chunk_num += 1
 
             # read data from fp_ellipsoid
