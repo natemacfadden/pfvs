@@ -89,10 +89,6 @@ def pvecs(
 
         window_i = 0
         while len(ps)<requested_N_pts:
-            print(len(ps))
-            print(min_deg + (window_i+0)*deg_window + window_i)
-            print(min_deg + (window_i+1)*deg_window + window_i)
-            print()
             new_ps = pvecs(
                 data,
                 max_deg = min_deg + (window_i+1)*deg_window + window_i,
