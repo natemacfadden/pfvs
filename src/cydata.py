@@ -28,7 +28,6 @@ import numpy as np
 # local imports
 from . import lattice
 
-
 class CYData:
     """
     Simple class to hold the relevant data of a CY for constructing PFVs.
