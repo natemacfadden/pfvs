@@ -40,7 +40,8 @@ def pvecs(
     min_N_pts: int = None,
     max_deg: int = None,
     min_deg: int = 0,
-    deg_window: int = 1) -> "ArrayLike":
+    deg_window: int = 1,
+    verbosity: int = 0) -> "ArrayLike":
     """
     **Description:**
     Computes possible p-vectors.
@@ -69,8 +70,6 @@ def pvecs(
     **Returns:**
     Possible p-vectors.
     """
-    ps = []
-
     # check inputs
     if (max_deg is None) ^ (min_N_pts is None):
         pass
@@ -88,16 +87,22 @@ def pvecs(
     # use shifting degree windows until we get enough points
     if min_N_pts is not None:
         ps = np.empty((0,H.shape[1]), dtype=int)
+        N_ps = 0
 
         window_i = 0
-        while len(ps)<min_N_pts:
-            new_ps = pvecs(
-                data,
-                max_deg = min_deg + (window_i+1)*deg_window + window_i,
-                min_deg = min_deg + (window_i+0)*deg_window + window_i,
-            )
-            ps = np.vstack([ps, new_ps])
+        while N_ps<min_N_pts:
+            _min = min_deg + (window_i+0)*deg_window + window_i
+            _max = min_deg + (window_i+1)*deg_window + window_i
 
+            if verbosity >= 1:
+                print(f"Have {N_ps} p-vectors for degrees <{_min}", end=' '*20 + '\r')
+
+            # compute new p-vectors, save them
+            new_ps = pvecs(data, min_deg = _min, max_deg = _max)
+            ps     = np.vstack([ps, new_ps])
+            N_ps  += len(new_ps)
+
+            # increment the window
             window_i += 1
 
         return ps
@@ -108,11 +113,6 @@ def pvecs(
     # (just needs to be in strict interior of dual cone)
     grading = H.sum(axis=0)
     grading = grading//np.gcd.reduce(grading)
-
-    """
-    if max_deg is None:
-        raise ValueError("CP-SAT backend assumes max_deg is set...")
-    """
 
     # define a constraint-programming model to solve
     model  = cp_model.CpModel()
@@ -146,44 +146,6 @@ def pvecs(
 
     # return
     ps = np.array(printer.points)
-    """
-    elif backend == "gurobi":
-        # import gurobi
-        import gurobipy as gp
-
-        # define the model
-        model = gp.Model("pFinder")
-        model.setParam('OutputFlag', False)
-
-        p = model.addMVar(
-            (H.shape[1],),
-            lb=-float('inf'), ub=float('inf'),
-            vtype=gp.GRB.INTEGER)
-        model.setMObjective(
-            Q=None,
-            c=grading,
-            constant=0,
-            xc=p,
-            sense=gp.GRB.MINIMIZE)
-        model.addMConstr(H, p, '>', np.full(len(H),0.5))
-
-        # optimize for N solutions
-        model.setParam('PoolSearchMode', 2)
-        model.setParam('PoolSolutions', min_N_pts)
-
-        model.optimize()
-
-        # read the solutions
-        sols = []
-        for i in range(model.SolCount):
-            model.setParam('SolutionNumber', i)
-
-            sols.append(np.rint(p.xn).astype(int))
-
-        ps = np.array(sols)
-    else:
-        raise ValueError()
-    """
     if len(ps) == 0:
         return np.empty((0,H.shape[1]), dtype=int)
 
@@ -191,6 +153,49 @@ def pvecs(
     gcds = np.gcd.reduce(ps,axis=1)
     ps = ps[gcds==1]
     return ps.tolist()
+
+def mindeg_pvec_gurobi(data: "CYData", verbosity: int = 0):
+    # import gurobi
+    import gurobipy as gp
+
+    # setup
+    # -----
+    # read hyperplanes
+    if data.coni:
+        H = data.H_cob
+    else:
+        H = data.H
+
+    # compute a grading vector
+    # (just needs to be in strict interior of dual cone)
+    grading = H.sum(axis=0)
+    grading = grading//np.gcd.reduce(grading)
+
+    # define the model
+    # ----------------
+    model = gp.Model("pFinder")
+    model.setParam('OutputFlag', (verbosity > 0))
+
+    p = model.addMVar(
+        (H.shape[1],),
+        lb=-float('inf'), ub=float('inf'),
+        vtype=gp.GRB.INTEGER)
+    model.setMObjective(
+        Q=None,
+        c=grading,
+        constant=0,
+        xc=p,
+        sense=gp.GRB.MINIMIZE)
+    model.addMConstr(H, p, '>', np.full(len(H),0.5))
+
+    # optimize
+    # --------
+    model.setParam("PoolSolutions", 1)
+    model.optimize()
+
+    # return the p-vector
+    model.setParam('SolutionNumber', 0)
+    return np.rint(p.xn).astype(int)
 
 # Zp helpers
 # ==========
