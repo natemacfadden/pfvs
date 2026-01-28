@@ -312,7 +312,10 @@ class CYData:
 
     # basis for M-vectors
     # -------------------
-    def M_lattice(self, other_mat=None, other_mod=None, verify: bool = True)-> "ArrayLike":
+    def M_lattice(self,
+        other_mat=None,
+        other_mod=None,
+        verify: bool = True)-> "ArrayLike":
         """
         **Description:**
         Computes a basis of the sublattice of all vectors, M, such that

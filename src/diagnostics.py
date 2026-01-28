@@ -54,14 +54,14 @@ class PFV():
         - `silent`: Whether to suppress messages.
         """
         # read inputs
-        self._cy    = data
-        self._K     = np.array(K)
-        self._M     = np.array(M)
-        self.silent = silent
+        self._cydata      = data
+        self._K           = np.array(K)
+        self._M           = np.array(M)
+        self.silent       = silent
 
         # initialize other variables
-        self._p        = None
-        self._pgrading = None
+        self._p           = None
+        self._pgrading    = None
 
         self._N           = None
         self._Ninvertible = None
@@ -79,8 +79,10 @@ class PFV():
         # -----------------------
         if self.coni:
             # coni curve/basis
-            type(self).coni_curve = property(lambda self: self._cy.coni_curve)
-            type(self).cob        = property(lambda self: self._cy.cob)
+            type(self).coni_curve = property(lambda self:
+                self._cydata.coni_curve)
+            type(self).cob        = property(lambda self:
+                self._cydata.cob)
 
             # Kprime computation/check (must be positive)
             type(self).Kprime = property(lambda self: 
@@ -92,7 +94,7 @@ class PFV():
 
             type(self).gsM = property(lambda self: self.gs*self.M[0])
             type(self).Vtilde = property(lambda self: 
-                (((self.kappa@self.p)@self.p)@self.p/6.)*np.imag(self.tau0)**(3) )
+                (((self.kappa@self.p)@self.p)@self.p/6)*np.imag(self.tau0)**(3))
             type(self).zcf = property(lambda self:
                 np.exp(-2*np.pi*self.Kprime/(self.ncf*self.gsM))/(2.*np.pi) )
 
@@ -179,26 +181,46 @@ class PFV():
         """
         Whether this object describes a coni PFV.
         """
-        return self._cy.coni
+        return self._cydata.coni
 
     # CY info
     # -------
     @property
     def h11(self):
-        return self._cy.h11
+        return self._cydata.h11
 
     @property
     def h21(self):
-        return self._cy.h21
+        return self._cydata.h21
 
     @property
     def vertices(self):
-        return self._cy.vertices
+        return self._cydata.vertices
     verts = vertices
 
     @property
     def heights(self):
-        return self._cy.heights
+        return self._cydata.heights
+
+    @property
+    def cy(self):
+        try:
+            import cytools
+        except ImportError as e:
+            raise ImportError(
+                "cytools is required for computation of a formal CY object"
+            ) from e
+
+        # check that we know the vertices and heights
+        v = self.verts
+        h = self.heights
+        if isinstance(v,str):
+            raise ValueError("Vertices were not known... must set them...")
+        if isinstance(h,str):
+            raise ValueError("Heights were not known... must set them...")
+
+        # all good :) make the CY
+        return cytools.Polytope(v).triangulate(heights=h).cy()
 
     @property
     def kappa(self):
@@ -206,9 +228,9 @@ class PFV():
         The intersection numbers
         """
         if self.coni:
-            return self._cy.kappa_cob
+            return self._cydata.kappa_cob
         else:
-            return self._cy.kappa
+            return self._cydata.kappa
 
     # basic fluxes
     # ------------
@@ -231,23 +253,23 @@ class PFV():
     @property
     def H(self):
         if self.coni:
-            return self._cy.H_cob
+            return self._cydata.H_cob
         else:
-            return self._cy.H
+            return self._cydata.H
 
     @property
     def a(self):
         """
         The a-matrix
         """
-        return self._cy.a
+        return self._cydata.a
 
     @property
     def b(self):
         """
         The b-vector
         """
-        return self._cy.b
+        return self._cydata.b
 
     @property
     def gvs(self):
@@ -283,8 +305,8 @@ class PFV():
         """
         The p-vector
 
-        For non-coni PFVs, this is defined as `N.inv() @ K`
-        For     coni PFVs, this is defined as `concatenate([[0], N.inv() @ K[1:]])`
+        For non-coni PFVs, this is defined as `N.inv()@K`
+        For     coni PFVs, this is defined as `concatenate([[0],N.inv()@K[1:]])`
         """
         if self._p is None:
             self._calc_p()
@@ -360,7 +382,7 @@ class PFV():
                 "cytools is required for automatic computation of GVs..."
             ) from e
 
-
+        self._gvs = self.cy.compute_gvs(max_deg=max_deg).coo
 
     @gvs.setter
     def gvs(self, val):
@@ -368,7 +390,22 @@ class PFV():
         in coo format
         """
         # input sanitization
-        val = np.array(val)
+        try:
+            # standard input format is coo
+            # try to see if we can cast the input to a numeric array...
+            if not np.issubdtype(np.array(val).dtype, np.number):
+                # likely passed the CYTools GV class
+                raise ValueError
+            else:
+                # all good :)
+                val = np.array(val)
+
+        except:
+            # not arraylike... maybe CYTools GV class?
+            try:
+                val = val.coo
+            except:
+                raise ValueError("Unknown GV format input...")
 
         # change the basis
         if self.coni:
@@ -416,7 +453,10 @@ class PFV():
 
         if not passes:
             if not self.silent:
-                print(f"K = {self.K.tolist() if not isinstance(self.K,ValueError) else 'ERROR'}")
+                if isinstance(self.K,ValueError):
+                    print("K = ERROR")
+                else:
+                    print(f"K = {self.K.tolist()}")
                 print(f"M = {self.M.tolist()}")
             return False
 
@@ -566,9 +606,9 @@ class PFV():
         # check if PFV has valid leading coefficients
         validQ = self.valid_coeff_ratio()
         if validQ == False:
-            return None
+            return np.nan
         elif validQ is None:
-            return None
+            return np.nan
 
         # get the two leading terms
         terms = self.series(N_nonzero=2)
@@ -628,7 +668,7 @@ class PFV():
     def gs(self):
         # check if PFV has valid leading coefficients
         if not self.valid_coeff_ratio():
-            return None
+            return np.nan
 
         gs = 1/np.imag(self.tau0)
         
@@ -718,6 +758,10 @@ class PFV():
         gs = self.gs
         print( "Main diagnostics:")
         print( "-----------------")
+        if not self.valid_coeff_ratio():
+            print("INVALID COEFFICIENT RATIO...")
+            return
+
         print(f"W0   = 10**({logW0})")
         print(f"tau0 = {tau0}")
         print(f"gs   = {gs}")
@@ -834,13 +878,25 @@ class PFV():
         from lib.physics.vacua import PFV_search
         from cytools import Polytope
 
+        print("REMOVE THIS LATER!!!")
+
         cy = Polytope(self.verts).triangulate(heights=self.heights).cy()
 
         if gvs is None:
             gvs = cy.compute_gvs(max_deg=10).coo
 
 
-        out = PFV_search.harvestPFVs(cy, [[self.M,self.K,self.p]], gvs=gvs, max_deg=10, coni_LCS=True, basis_matrix=self.cob, return_extra=True, output_format='dict', verbosity=verbosity)
+        out = PFV_search.harvestPFVs(
+            cy,
+            [[self.M,self.K,self.p]],
+            gvs=gvs,
+            max_deg=10,
+            coni_LCS=True,
+            basis_matrix=self.cob,
+            return_extra=True,
+            output_format='dict', 
+            verbosity=verbosity
+        )
         
         if 'Kprime' in out:
             out['Kprime'] = [-Kp for Kp in out['Kprime']]

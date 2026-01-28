@@ -229,7 +229,7 @@ def fp_ellipsoid(
     if verbosity >= 1:
         prefactor = np.pi**(dim/2) / sp.special.gamma(dim/2+1)
         scaling   = Q**(dim/2)     / np.sqrt(np.linalg.det(mat))
-        print(f"Expected TOTAL number of lattice points is {prefactor*scaling}")
+        print(f"Expected TOTAL number of lattice points in ellipsoid is {prefactor*scaling}")
 
     # cholesky decomposition
     try:
