@@ -31,17 +31,16 @@ from ortools.sat.python import cp_model
 from tqdm.auto import tqdm
 
 # local imports
-from . import lattice
+from . import lattice, diagnostics
 
 # p-vectors
 # =========
 def pvecs(
     data: "CYData",
+    min_N_pts: int = None,
     max_deg: int = None,
-    requested_N_pts: int = None,
     min_deg: int = 0,
-    deg_window: int = 1,
-    backend: str = "cpsat") -> "ArrayLike":
+    deg_window: int = 1) -> "ArrayLike":
     """
     **Description:**
     Computes possible p-vectors.
@@ -58,11 +57,14 @@ def pvecs(
     facet of the Kahler cone defined by coni_normal.
 
     **Arguments:**
-    - `data`:            The CYData describing the CY.
-    - `max_deg`:         The maximum degree to compute points to.
-    - `requested_N_pts`: The number of points to request. Might get fewer due
-                         to non-trivial GCDs
-    - `backend`:         The backend to use. Either
+    - `data`:       The CYData describing the CY.
+    - `min_N_pts`:  Grab at least this many p-vectors.
+    - `max_deg`:    The maximum degree to compute p-vectors to.
+    - `min_deg`:    The minimum permissible degree to allow p-vectors to have.
+    - `deg_window`: When setting `min_N_pts`, it operates by sliding a degree
+                    window, grabbing all points in the window, and quitting only
+                    once enough points have been generated. This argument sets
+                    the width of the window.
 
     **Returns:**
     Possible p-vectors.
@@ -70,10 +72,10 @@ def pvecs(
     ps = []
 
     # check inputs
-    if (max_deg is None) ^ (requested_N_pts is None):
+    if (max_deg is None) ^ (min_N_pts is None):
         pass
     else:
-        raise ValueError("Either `max_deg` or `requested_N_pts` must be set...")
+        raise ValueError("Either `max_deg` or `min_N_pts` must be set...")
 
     # read hyperplanes
     if data.coni:
@@ -84,11 +86,11 @@ def pvecs(
     # requesting N points
     # -------------------
     # use shifting degree windows until we get enough points
-    if requested_N_pts is not None:
+    if min_N_pts is not None:
         ps = np.empty((0,H.shape[1]), dtype=int)
 
         window_i = 0
-        while len(ps)<requested_N_pts:
+        while len(ps)<min_N_pts:
             new_ps = pvecs(
                 data,
                 max_deg = min_deg + (window_i+1)*deg_window + window_i,
@@ -167,7 +169,7 @@ def pvecs(
 
         # optimize for N solutions
         model.setParam('PoolSearchMode', 2)
-        model.setParam('PoolSolutions', requested_N_pts)
+        model.setParam('PoolSolutions', min_N_pts)
 
         model.optimize()
 
@@ -766,6 +768,7 @@ def coniZpM(
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0,
     low_level_parallelism: bool = True,
+    return_formal_pfvs: bool = False,
     ) -> tuple["ArrayLike", "ArrayLike"]:
     """
     A Python "Zp" implementation that takes in p-vectors and outputs PFVs.
@@ -1035,4 +1038,7 @@ def coniZpM(
             all_Ms        = np.vstack([all_Ms, Ms])
 
     # return
-    return all_Ks, all_Ms
+    if return_formal_pfvs:
+        return [diagnostics.PFV(data, K, M) for K,M in zip(all_Ks, all_Ms)]
+    else:
+        return all_Ks, all_Ms
