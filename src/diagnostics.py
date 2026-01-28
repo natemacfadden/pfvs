@@ -34,13 +34,13 @@ class PFV():
     Class to stores/verifies (Coni-)PFVs.
 
     **Arguments:**
-    - `cy`: A CYData object defining the CY.
-    - `K`: K flux vector. Must be integral.
-    - `M`: M flux vector. Must be integral.
+    - `data`:   A CYData object defining the CY.
+    - `K`:      K flux vector. Must be integral.
+    - `M`:      M flux vector. Must be integral.
     - `silent`: Whether to suppress messages.
     """
     def __init__(self,
-        cy: "CYData",
+        data: "CYData",
         K: "ArrayLike",
         M: "ArrayLike",
         silent: bool = False):
@@ -48,13 +48,13 @@ class PFV():
         Class to stores/verifies (Coni-)PFVs.
 
         **Arguments:**
-        - `cy`: A CYData object defining the CY.
+        - `data`: A CYData object defining the CY.
         - `K`: K flux vector. Must be integral.
         - `M`: M flux vector. Must be integral.
         - `silent`: Whether to suppress messages.
         """
         # read inputs
-        self._cy    = cy
+        self._cy    = data
         self._K     = np.array(K)
         self._M     = np.array(M)
         self.silent = silent
@@ -76,10 +76,15 @@ class PFV():
         self._all_coeffs  = []
 
         # coni-specific variables
+        # -----------------------
         if self.coni:
+            # coni curve/basis
+            type(self).coni_curve = property(lambda self: self._cy.coni_curve)
+            type(self).cob        = property(lambda self: self._cy.cob)
+
             # Kprime computation/check (must be positive)
             type(self).Kprime = property(lambda self: 
-                -self.K[0] + (self.M@self._cy.kappa_cob@self.p)[0] )
+                -self.K[0] + (self.M@self.kappa@self.p)[0] )
             type(self).check_Kprime = lambda self: self.Kprime > 0
 
             # other physics-y variables
@@ -101,7 +106,7 @@ class PFV():
     def from_str(cls, str_) -> "PFV":
         """
         **Description:**
-        Initializes an instance of the PFV validation class
+        Initializes an instance of the PFV validation/diagnostic class.
 
         **Arguments:**
         - `str`: The string format representing the PFV, in the format that.
@@ -110,7 +115,7 @@ class PFV():
             import cytools
         except ImportError as e:
             raise ImportError(
-                "cytools is required reading data from a string object..."
+                "cytools is required for reading data from a string object..."
             ) from e
 
         ns = {}
@@ -138,8 +143,8 @@ class PFV():
     # basic
     # =====
     def __repr__(self):
-        verts   = self._cy.vertices
-        heights = self._cy.heights
+        verts   = self.vertices
+        heights = self.heights
 
         msg =  f"### An (h11,h21)={self.h11, self.h21} "
         msg += f"{'coni-' if self.coni else ''} PFV defined via\n"
@@ -152,9 +157,9 @@ class PFV():
             msg += f"cy      = Polytope(verts).triangulate(heights=heights).cy()\n"
         if self.coni:
             msg +=  "### for (original-basis) conifold curve\n"
-            msg += f"q = {self._cy.coni_curve.tolist()}\n"
+            msg += f"q = {self.coni_curve.tolist()}\n"
             msg +=  "### using basis defined by change-of-basis\n"
-            msg += f"cob = {self._cy.cob.tolist()}\n"
+            msg += f"cob = {self.cob.tolist()}\n"
         msg +=  "### with fluxes\n"
         msg += f"K = {self.K.tolist()}\n"
         msg += f"M = {self.M.tolist()}\n"
@@ -170,6 +175,15 @@ class PFV():
     # getters
     # =======
     @property
+    def coni(self):
+        """
+        Whether this object describes a coni PFV.
+        """
+        return self._cy.coni
+
+    # CY info
+    # -------
+    @property
     def h11(self):
         return self._cy.h11
 
@@ -178,13 +192,26 @@ class PFV():
         return self._cy.h21
 
     @property
-    def coni(self):
+    def vertices(self):
+        return self._cy.vertices
+    verts = vertices
+
+    @property
+    def heights(self):
+        return self._cy.heights
+
+    @property
+    def kappa(self):
         """
-        Whether this object describes a coni PFV.
+        The intersection numbers
         """
-        return self._cy.coni
+        if self.coni:
+            return self._cy.kappa_cob
+        else:
+            return self._cy.kappa
 
     # basic fluxes
+    # ------------
     @property
     def K(self):
         """
@@ -199,15 +226,14 @@ class PFV():
         """
         return self._M.copy()
 
+    # validation of fluxes
+    # --------------------
     @property
-    def kappa(self):
-        """
-        The intersection numbers
-        """
+    def H(self):
         if self.coni:
-            return self._cy.kappa_cob
+            return self._cy.H_cob
         else:
-            return self._cy.kappa
+            return self._cy.H
 
     @property
     def a(self):
@@ -227,26 +253,6 @@ class PFV():
     def gvs(self):
         if self._gvs is not None:
             return self._gvs.copy()
-
-    # setters
-    # =======
-    @gvs.setter
-    def gvs(self, val):
-        """
-        in coo format
-        """
-        # input sanitization
-        val = np.array(val)
-
-        # change the basis
-        if self.coni:
-            val[:,:-1] = val[:,:-1] @ np.array(self._cy.cob).T
-
-        # sanity check: the p-vector should be in Kcup
-        assert np.all(val[:,:-1]@self.p >= 0)
-        
-        # set the value :)
-        self._gvs  = val.copy()
 
     # N-matrix and its inverse
     # ------------------------
@@ -298,6 +304,8 @@ class PFV():
             
         return self._pgrading
 
+    # p-vector computation
+    # ====================
     def _calc_p(self):
         """
         Compute the p-vector and pgrading.
@@ -341,6 +349,36 @@ class PFV():
 
         # save p
         self._p = self._pgrading/self._p_denom
+
+    # GVs
+    # ===
+    def compute_gvs(self, max_deg):
+        try:
+            import cytools
+        except ImportError as e:
+            raise ImportError(
+                "cytools is required for automatic computation of GVs..."
+            ) from e
+
+
+
+    @gvs.setter
+    def gvs(self, val):
+        """
+        in coo format
+        """
+        # input sanitization
+        val = np.array(val)
+
+        # change the basis
+        if self.coni:
+            val[:,:-1] = val[:,:-1] @ np.array(self.cob).T
+
+        # sanity check: the p-vector should be in Kcup
+        assert np.all(val[:,:-1]@self.p >= 0)
+        
+        # set the value :)
+        self._gvs  = val.copy()
 
     # checkers
     # ========
@@ -414,9 +452,9 @@ class PFV():
         # check that p is *strictly* contained in Kcup (the union of 2-face
         # equivalent kahler cones)
         if self.coni:
-            return min(self._cy._H_cob@self.pgrading[1:])>0.5
+            return min(self.H@self.pgrading[1:])>0.5
         else:
-            return min(self._cy._H@self.p)>0.5
+            return min(self.H@self.p)>0.5
     
     def check_NpK(self, tol=1e-4):
         # check that N@p=K
@@ -796,13 +834,13 @@ class PFV():
         from lib.physics.vacua import PFV_search
         from cytools import Polytope
 
-        cy = Polytope(self._cy.verts).triangulate(heights=self._cy.heights).cy()
+        cy = Polytope(self.verts).triangulate(heights=self.heights).cy()
 
         if gvs is None:
             gvs = cy.compute_gvs(max_deg=10).coo
 
 
-        out = PFV_search.harvestPFVs(cy, [[self.M,self.K,self.p]], gvs=gvs, max_deg=10, coni_LCS=True, basis_matrix=self._cy.cob, return_extra=True, output_format='dict', verbosity=verbosity)
+        out = PFV_search.harvestPFVs(cy, [[self.M,self.K,self.p]], gvs=gvs, max_deg=10, coni_LCS=True, basis_matrix=self.cob, return_extra=True, output_format='dict', verbosity=verbosity)
         
         if 'Kprime' in out:
             out['Kprime'] = [-Kp for Kp in out['Kprime']]
