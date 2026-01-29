@@ -821,15 +821,14 @@ def coni_kernel(
         if (g > 0) and (g < (Q_upper-new_rem)//Q):
             continue
 
-        # cut if dot product is wrong...
+        # cut if M0 violates bounds
         if i == num_zeros:
-            if Binter0 is not None:
-                linear_eval = 0
-                for j in range(i,dim):
-                    linear_eval += Binter0[j]*vec[j]
+            M0 = 0
+            for j in range(i,dim):
+                M0 += Binter0[j]*vec[j]
 
-                if (linear_eval < M0min) or (linear_eval > M0max):
-                    continue
+            if (M0 < M0min) or (M0 > M0max):
+                continue
 
         # passes cuts -> push next depth :)
         sp += 1
