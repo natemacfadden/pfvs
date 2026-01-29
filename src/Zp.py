@@ -821,13 +821,31 @@ def coniZpM(
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
             if not use_box:
+                proj = np.hstack([
+                    np.zeros((data.h11-1, 1), dtype=int),
+                    np.eye(data.h11-1, dtype=int)
+                ])
+                G    = proj@ZBinter
+                G_fl = flint.fmpz_mat(G.tolist())
+
+                try:
+                    H    = np.array(G_fl.hnf().tolist()).astype(int)
+                except:
+                    print("C long error :(")
+                    continue
+
+                #print("THIS IS UGLY... :()")
+                #H32  = np.array(G_fl.hnf().tolist()).astype(np.int32)
+                #assert np.all(H==H32)
+
                 lattice_points, rawQs = lattice.fp_ellipsoid(
                     mat=mat,
                     Q=ellipsoid_dilation*Qmax,
-                    Q_lower=Qmin,
+                    Q_lower=0,
                     linvec = Binter[0],
                     lindot_min = M0min,
                     lindot_max = M0max,
+                    H = H, Qpostgcd=Qmax,
                     max_N_out=max_N_pfvs,
                     recursive=fp_recursive,
                     verbosity=verbosity-1
@@ -865,6 +883,8 @@ def coniZpM(
             
             # cut on feasibility of finding a K0 giving K'>0
             # ----------------------------------------------
+            # for 0 <= K_scaling <= 1
+            #
             # (A)
             # K' = -K[0] * Knat[0]*K_scaling
             # K' > 0  <=> K[0] < Knat[0]*K_scaling
