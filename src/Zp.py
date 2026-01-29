@@ -838,9 +838,9 @@ def coniZpM(
                 lattice_points, rawQs = lattice.fp_ellipsoid(
                     mat=mat,
                     Q=ellipsoid_dilation*Qmax,
-                    linvec = Binter[0],
-                    lindot_min = M0min,
-                    lindot_max = M0max,
+                    Binter0 = Binter[0],
+                    M0min = M0min,
+                    M0max = M0max,
                     H = H, Qpostgcd=Qmax,
                     max_N_out=max_N_pfvs,
                     recursive=fp_recursive,

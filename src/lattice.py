@@ -177,9 +177,9 @@ def inv_scaled(A_in, as_flint: bool = False):
 def fp_ellipsoid(
     mat: "ArrayLike",
     Q: float,
-    linvec: "ArrayLike" = None,
-    lindot_min: int = None,
-    lindot_max: int = None,
+    Binter0: "ArrayLike" = None,
+    M0min: int = None,
+    M0max: int = None,
     H: "ArrayLike" = None, Qpostgcd= None,
     max_N_out: int = 1_000_000_000,
     eps: float = 1e-4,
@@ -257,14 +257,14 @@ def fp_ellipsoid(
         Q   = np.empty((out_count[0]), dtype=np.int32)
     else:
         # iterative
-        if linvec is not None:
-            assert lindot_min is not None
-            assert lindot_max is not None
+        if Binter0 is not None:
+            assert M0min is not None
+            assert M0max is not None
 
         out, Q = coni_kernel(
             L=L,
             Q_upper=Q,
-            linvec=linvec, lindot_min=lindot_min, lindot_max=lindot_max,
+            Binter0=Binter0, M0min=M0min, M0max=M0max,
             H = H, Qpostgcd=Qpostgcd,
             max_N_out=max_N_out,
             eps=eps)
@@ -567,9 +567,9 @@ def gcd_vec(vec):
 def coni_kernel(
         L: "ArrayLike",
         Q_upper: float,
-        linvec: "ArrayLike",
-        lindot_min: int,
-        lindot_max: int,
+        Binter0: "ArrayLike",
+        M0min: int,
+        M0max: int,
         H: "ArrayLike",
         Qpostgcd: int,
         max_N_out: int,
@@ -578,17 +578,18 @@ def coni_kernel(
     """
     Iterative DFS implementation of the Fincke-Pohst algorithm
 
-    include linear constraint bc_min <= np.dot(b,c) <= bc_max
+    Includes linear constraint M0min <= np.dot(Binter0,vec) <= M0max
+    Includes gcd constraint gcd(Kperp)>=quad(c)//Q f <= np.dot(Binter0,vec) <= M0max
     """
     dim        = L.shape[0]
     L_diag_inv = 1.0 / np.diag(L)
 
     # linear constraint
-    if linvec is not None:
+    if Binter0 is not None:
         num_zeros = 0
         zeros = True
         for i in range(dim):
-            if linvec[i] == 0:
+            if Binter0[i] == 0:
                 if zeros == False:
                     raise ValueError("linear vec is not sorted so 0s are first...")
                 num_zeros += 1
@@ -756,12 +757,12 @@ def coni_kernel(
 
         # cut if dot product is wrong...
         if i == num_zeros:
-            if linvec is not None:
+            if Binter0 is not None:
                 linear_eval = 0
                 for j in range(i,dim):
-                    linear_eval += linvec[j]*vec[j]
+                    linear_eval += Binter0[j]*vec[j]
 
-                if (linear_eval < lindot_min) or (linear_eval > lindot_max):
+                if (linear_eval < M0min) or (linear_eval > M0max):
                     continue
 
         # passes cuts -> push next depth :)
