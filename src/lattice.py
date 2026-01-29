@@ -27,6 +27,18 @@ from numba import njit
 import numpy as np
 import scipy as sp
 
+# basic helpers
+# =============
+def lcm(a, b):
+    return abs(a*b) // math.gcd(a, b)
+
+@njit
+def gcd_vec(vec):
+    g = abs(vec[0])
+    for v in vec[1:]:
+        g = math.gcd(g,v)
+    return g
+
 # misc lattice
 # ============
 # LLL-reduction
@@ -122,8 +134,6 @@ def dual_lattice(B: "ArrayLike") -> "ArrayLike":
     return np.array(D.tolist()).astype(int), denom
 
 # integer 'inverse' of matrix (i.e., adjugate)
-def lcm(a, b):
-    return abs(a*b) // math.gcd(a, b)
 def inv_scaled(A_in, as_flint: bool = False):
     """
     Return (B, s) such that B*A = s*I
@@ -165,10 +175,8 @@ def inv_scaled(A_in, as_flint: bool = False):
         return Ainv, s
     else:
         # cast to numpy...
-        return (
-            np.array([[np.int64(Ainv[i, j]) for j in range(n)] for i in range(n)]),
-            s
-        )
+        Ainv_list = [[np.int64(Ainv[i, j]) for j in range(n)] for i in range(n)]
+        return np.array(Ainv_list), s
 
 # lattice points in ellipsoid
 # ===========================
@@ -177,43 +185,52 @@ def inv_scaled(A_in, as_flint: bool = False):
 def fp_ellipsoid(
     mat: "ArrayLike",
     Q: float,
+    recursive: bool = False,
     max_N_out: int = 1_000_000_000,
     eps: float = 1e-4,
-    recursive: bool = False,
     verbosity: int = 0) -> "ArrayLike":
     """
     **Description:**
     Enumerate all nonzero integer vectors vec such that
         0 <= vec^T @ mat @ vec <= Q.
 
-    Does so via the Fincke-Pohst algorithm. This is, roughly,
-        1) Cholesky-decompose mat = L@L^T for L lower triangular
+    The 'Fincke-Pohst' algorithm (FP) from
+        Improved Methods for Calculating Vectors of Short Length in a Lattice,
+        Including a Complexity Analysis by Fincke, Pohst
+    can be viewed as doing exactly this.
+
+    Roughly, FP operates via:
+        1) Cholesky-decompose mat = L@L^T for L.T upper triangular
         2) define c = L^T@vec, so the quadratic form becomes 0 <= |c|^2 <= Q
         3) observe that, since L^T is upper triangular, c[i] depends only on
-           vec[j>=i]. E.g., c[0] depends on vec[0], ..., vec[dim-1]
-                            c[1] depends on vec[1], ..., vec[dim-1]
-                            c[dim-1] depends on vec[dim-1]
+           vec[i:]. E.g., c[0] depends on vec[0], ..., vec[dim-1]
+                          c[1] depends on vec[1], ..., vec[dim-1]
+                          c[dim-1] depends on vec[dim-1]
         4) fix vec[dim-1], which reduces the norm-bound on c from Q to
            Q-c[dim-1]^2 and effectively reduces the dimension of the problem,
            at the cost of adding a shift-vector to c[:dim-1]
         5) recurse
+    It's generally better to force this into an iterative method with an
+    explicit stack.
 
     **Arguments:**
     - `mat`:       The matrix defining the ellipsoid via
                        0 <= vec^T @ mat @ vec <= Q.
     - `Q`:         A positive parameter defining the size of the ellipsoid.
+    - `recursive`: Whether to use a recursive implementation of the
+                   Fincke-Pohst algorithm. (Not recommended... slower...)
     - `max_N_out`: The maximum number of output allowed. We construct an array
                    with this length.
     - `eps`:       A small number used for correctly setting bounds despite
                    floating point errors.
-    - `recursive`: Whether to use a recursive implementation of the
-                   Fincke-Pohst algorithm.
     - `verbosity`: The verbosity level. Higher is more verbose.
 
 
     **Returns:**
     The lattice vectors, as rows. Also their valuation of the quadratic form.
     """
+    # prep
+    # ----
     mat = np.asarray(mat)
     dim = mat.shape[0]
 
@@ -221,23 +238,30 @@ def fp_ellipsoid(
     if not np.isdtype(mat.dtype, 'integral'):
         Q = 1.1*Q
 
-    if verbosity >= 1:
-        prefactor = np.pi**(dim/2) / sp.special.gamma(dim/2+1)
-        scaling   = Q**(dim/2)     / np.sqrt(np.linalg.det(mat))
-        print(f"Expected TOTAL number of lattice points in ellipsoid is {prefactor*scaling}")
-
     # cholesky decomposition
     try:
         L = np.linalg.cholesky(mat)
     except np.linalg.LinAlgError as e:
         raise e
 
+    # diagnostics on the problem difficulty
+    # -------------------------------------
+    if verbosity >= 1:
+        prefactor = np.pi**(dim/2) / sp.special.gamma(dim/2+1)
+        scaling   = Q**(dim/2)     / np.sqrt(np.linalg.det(mat))
+        expect    = prefactor*scaling
+        print(f"Expected number of lattice points in ellipsoid is {expect}")
+
     # solve it!
+    # ---------
     if recursive:
+        if verbosity >= 0:
+            print("THIS IS NOT GENERALLY RECOMMENDED")
+
         # container for outputs
-        vec = np.zeros(dim, dtype=np.int32)
-        out = np.empty((max_N_out, dim), dtype=np.int32)
-        out_count = np.zeros(1, np.int32)
+        vec = np.zeros(dim, dtype=np.int64)
+        out = np.empty((max_N_out, dim), dtype=np.int64)
+        out_count = np.zeros(1, np.int64)
 
         # recurse
         fp_recurse(
@@ -250,14 +274,10 @@ def fp_ellipsoid(
         if out_count[0] == max_N_out:
             print("SATURATED MAXIMUM ALLOWED OUTPUTS")
         out = out[:out_count[0], :]
-        Q   = np.empty((out_count[0]), dtype=np.int32)
+        Q   = np.empty((out_count[0]), dtype=np.int64)
     else:
         # iterative
-        if Binter0 is not None:
-            assert M0min is not None
-            assert M0max is not None
-
-        out, Q = coni_kernel(
+        out, Q = fp_iterative(
             L=L,
             Q_upper=Q,
             max_N_out=max_N_out,
@@ -284,22 +304,29 @@ def fp_recurse(
         eps: float) -> None:
     """
     **Description:**
+    Enumerate all nonzero integer vectors vec such that
+        0 <= vec^T @ mat @ vec <= Q.
+
     The 'Fincke-Pohst' algorithm (FP) from
         Improved Methods for Calculating Vectors of Short Length in a Lattice,
         Including a Complexity Analysis by Fincke, Pohst
-    can be viewed as enumerating the lattice points in an ellipsoid
-        0 <= vec^T M vec <= Q.
-    We take this perspective, using FP to compute such nonzero lattice points.
+    can be viewed as doing exactly this.
 
-    FP operates by Cholesky-decomposing the matrix M = L L^T (L lower
-    triangular) to enable rewriting of the ellipsoid condition as
-        0 <= |L^T vec|^2 <= Q.
-    Since L^T is upper triangular, the bounds on permissible values of vec[-1]
-    (ignoring all other components) are easy to compute. Once vec[-1] is fixed,
-    one can bound the component vec[-2] and so on.
-
-    This method follows a DFS-style iteration, building and saving each lattice
-    vector x to an output array `out`.
+    Roughly, FP operates via:
+        1) Cholesky-decompose mat = L@L^T for L.T upper triangular
+        2) define c = L^T@vec, so the quadratic form becomes 0 <= |c|^2 <= Q
+        3) observe that, since L^T is upper triangular, c[i] depends only on
+           vec[i:]. E.g., c[0] depends on vec[0], ..., vec[dim-1]
+                          c[1] depends on vec[1], ..., vec[dim-1]
+                          c[dim-1] depends on vec[dim-1]
+        4) fix vec[dim-1], which reduces the norm-bound on c from Q to
+           Q-c[dim-1]^2 and effectively reduces the dimension of the problem,
+           at the cost of adding a shift-vector to c[:dim-1]
+        5) recurse
+    
+    **Note:**
+    This is a recursive (DFS) iteration, building and saving each lattice vector
+    x to an output array `out`.
 
     **Arguments:**
     - `i`:           For this call, vec[i+1:] has been set. Iterate over
@@ -357,13 +384,13 @@ def fp_recurse(
         # split by case
         if lo >= 0:
             # 0 <= lo (<= hi)
-            veci_values = np.arange(lo, hi+1, dtype=np.int32)
+            veci_values = np.arange(lo, hi+1, dtype=np.int64)
         elif hi <= 0:
             # (lo <=) hi <= 0
-            veci_values = np.arange(hi, lo-1,-1, dtype=np.int32)
+            veci_values = np.arange(hi, lo-1,-1, dtype=np.int64)
         else:
             # lo < 0 < hi
-            veci_values = np.zeros(hi - lo + 1, dtype=np.int32)
+            veci_values = np.zeros(hi - lo + 1, dtype=np.int64)
             k = 1
 
             # positive/negative pairs in increasing abs value
@@ -375,7 +402,7 @@ def fp_recurse(
                     veci_values[k] = -v
                     k += 1
     else:
-        veci_values = np.arange(lo,hi+1, dtype=np.int32)
+        veci_values = np.arange(lo,hi+1, dtype=np.int64)
 
     # iterate over possible values of vec[i]
     for veci in veci_values:
@@ -408,14 +435,14 @@ def fp_iterative(
 
     # output object
     # -------------
-    out = np.empty((max_N_out, dim), dtype=np.int32)
+    out = np.empty((max_N_out, dim), dtype=np.int64)
     Q   = np.empty((max_N_out,), dtype=np.float32)
     
     # output pointer
     op  = 0
 
     # internal vector that gets built/written to output
-    vec = np.zeros(dim, dtype=np.int32)
+    vec = np.zeros(dim, dtype=np.int64)
 
     # stack variables
     # ---------------
@@ -426,14 +453,14 @@ def fp_iterative(
     MAX_DEPTH = dim + 1
 
     # stack arrays: i, pos, remaining_Q, nonzero, candidate values
-    stack_i      = np.empty(MAX_DEPTH, np.int32)
-    stack_pos    = np.empty(MAX_DEPTH, np.int32)
+    stack_i      = np.empty(MAX_DEPTH, np.int64)
+    stack_pos    = np.empty(MAX_DEPTH, np.int64)
     stack_remQ   = np.empty(MAX_DEPTH, np.float64)
     stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
     
     # candidate arrays per depth (preallocate maximum possible size)
     stack_val_len= np.zeros(MAX_DEPTH, np.int32)  # number of veci candidates
-    stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int32) # veci candidates
+    stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # veci candidates
 
     # offsets for ci
     # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
@@ -551,13 +578,6 @@ def fp_iterative(
 # FP-style methods but tailored to coniZpM
 # ----------------------------------------
 @njit
-def gcd_vec(vec):
-    g = abs(vec[0])
-    for v in vec[1:]:
-        g = np.gcd(g,v)
-    return g
-
-@njit
 def coni_kernel(
         L: "ArrayLike",
         Q: int,
@@ -620,6 +640,7 @@ def coni_kernel(
     stack_i      = np.empty(MAX_DEPTH, np.int64)
     stack_pos    = np.empty(MAX_DEPTH, np.int64)
     stack_remQ   = np.empty(MAX_DEPTH, np.float64)
+    stack_gcd    = np.empty(MAX_DEPTH, np.float64)
     stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
     
     # candidate arrays per depth (preallocate maximum possible size)
@@ -740,14 +761,9 @@ def coni_kernel(
                     tmp2[j-i] += L[j,k]*vec[k]
 
             tmpQ = Q_upper-new_rem
-            #print(tmp)
             g = gcd_vec(tmp)
             if (g > 0) and (g < tmpQ//Q):
                 continue
-            #tmp = H[i:,i:]@vec[i:]
-            #print(tmp.tolist())
-            #curr_gcd = gcd_vec(H[i:,i:]@vec[i:])
-            #print(curr_gcd)
 
         # cut if dot product is wrong...
         if i == num_zeros:
@@ -770,6 +786,9 @@ def coni_kernel(
         # else do not push (prune)
 
     return out[:op, :], Qs[:op]
+
+# CURRENTLY UNUSED!!!!
+# ====================
 
 # box approximations
 # ------------------
