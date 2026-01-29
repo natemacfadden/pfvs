@@ -453,7 +453,6 @@ def ZpM(
             lattice_points, _ = lattice.fp_ellipsoid(
                 mat=mat,
                 Q=ellipsoid_dilation*Qmax,
-                Q_lower=Qmin,
                 max_N_out=max_N_pfvs,
                 recursive=fp_recursive,
                 verbosity=verbosity-1)
@@ -595,7 +594,6 @@ def ZpK(
             lattice_points, _ = lattice.fp_ellipsoid(
                 mat,
                 ellipsoid_dilation*Qmax,
-                Q_lower=Qmin,
                 max_N_out=max_N_pfvs,
                 recursive=fp_recursive,
                 verbosity=verbosity-1)
@@ -762,7 +760,6 @@ def coniZpM(
     data: "cydata",
     ps: "ArrayLike",
     Qmax: int = None,
-    Qmin: int = 0, # ONLY USED FOR RESTRICTING TO SHELLS IN FP
     M0min: int = 13,
     M0max: int = float('inf'),
     max_Kperp_gcd: int = 4,
@@ -841,7 +838,6 @@ def coniZpM(
                 lattice_points, rawQs = lattice.fp_ellipsoid(
                     mat=mat,
                     Q=ellipsoid_dilation*Qmax,
-                    Q_lower=0,
                     linvec = Binter[0],
                     lindot_min = M0min,
                     lindot_max = M0max,

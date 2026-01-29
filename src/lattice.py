@@ -172,11 +172,11 @@ def inv_scaled(A_in, as_flint: bool = False):
 
 # lattice points in ellipsoid
 # ===========================
-# Fincke-Pohst
+# Fincke-Pohst (FP)
+# -----------------
 def fp_ellipsoid(
     mat: "ArrayLike",
     Q: float,
-    Q_lower: float = 0,
     linvec: "ArrayLike" = None,
     lindot_min: int = None,
     lindot_max: int = None,
@@ -206,8 +206,6 @@ def fp_ellipsoid(
     - `mat`:       The matrix defining the ellipsoid via
                        0 <= vec^T @ mat @ vec <= Q.
     - `Q`:         A positive parameter defining the size of the ellipsoid.
-    - `Q_lower`:   Allow searching of lattice points in the slice
-                       Q_lower <= vec^T @ mat @ vec <= Q.
     - `max_N_out`: The maximum number of output allowed. We construct an array
                    with this length.
     - `eps`:       A small number used for correctly setting bounds despite
@@ -249,7 +247,7 @@ def fp_ellipsoid(
         fp_recurse(
             i=dim-1, vec=vec,
             nonzero=False,
-            remaining_Q=Q, Q_lower=Q_lower,
+            remaining_Q=Q,
             L=L,
             out_count=out_count, out=out, max_N_out=max_N_out,
             eps=eps)
@@ -263,9 +261,9 @@ def fp_ellipsoid(
             assert lindot_min is not None
             assert lindot_max is not None
 
-        out, Q = fp_iterative_fancy(
+        out, Q = coni_kernel(
             L=L,
-            Q_upper=Q, Q_lower=Q_lower,
+            Q_upper=Q,
             linvec=linvec, lindot_min=lindot_min, lindot_max=lindot_max,
             H = H, Qpostgcd=Qpostgcd,
             max_N_out=max_N_out,
@@ -285,7 +283,6 @@ def fp_recurse(
         vec: "ArrayLike",
         nonzero: bool,
         remaining_Q: float,
-        Q_lower: float,
         L: "ArrayLike",
         out_count: list[int],
         out: "ArrayLike",
@@ -318,9 +315,6 @@ def fp_recurse(
                      output nonzero vectors).
     - `remaining_Q`: Imagine 'using-up' Q by setting vec[i+1:]. This is the
                      remaining Q allowed for setting vec[i].
-    - `Q_lower`:     Allow user-set lower bounds on |L^T vec|^2. I.e.,
-                     enumeration of lattice points in the shell
-                        Q_lower <= vec^T M vec <= Q.
     - `L`:           The Cholesky-decomposition of M.
     - `out_count`:   The count of output lattice vectors. Saved as a list of
                      length-1 so it is mutable.
@@ -394,11 +388,11 @@ def fp_recurse(
         vec[i] = veci
         ci = L[i,i]*veci + ci_offset
         new_rem = remaining_Q - ci*ci
-        if new_rem >= Q_lower-eps:
+        if new_rem >= 0-eps:
             fp_recurse(
                 i=i-1, vec=vec,
                 nonzero=nonzero or veci != 0,
-                remaining_Q=new_rem, Q_lower=Q_lower,
+                remaining_Q=new_rem,
                 L=L,
                 out_count=out_count, out=out, max_N_out=max_N_out,
                 eps=eps)
@@ -407,7 +401,6 @@ def fp_recurse(
 def fp_iterative(
         L: "ArrayLike",
         Q_upper: float,
-        Q_lower: float,
         max_N_out: int,
         eps: float,
         COORD_BUFF_SIZE: int = 2048) -> None:
@@ -546,7 +539,7 @@ def fp_iterative(
         new_rem = remQ - ci*ci
 
         # cut of no more Q left...
-        if new_rem < Q_lower - eps:
+        if new_rem < 0 - eps:
             continue
 
         # passes cuts -> push next depth :)
@@ -561,6 +554,8 @@ def fp_iterative(
 
     return out[:op, :], Q[:op]
 
+# FP-style methods but tailored to coniZpM
+# ----------------------------------------
 @njit
 def gcd_vec(vec):
     g = abs(vec[0])
@@ -569,10 +564,9 @@ def gcd_vec(vec):
     return g
 
 @njit
-def fp_iterative_fancy(
+def coni_kernel(
         L: "ArrayLike",
         Q_upper: float,
-        Q_lower: float,
         linvec: "ArrayLike",
         lindot_min: int,
         lindot_max: int,
