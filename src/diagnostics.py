@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # local imports
-from . import lattice, cydata
+from . import lattice, cydata, Zp
 
 class PFV():
     """
@@ -247,6 +247,37 @@ class PFV():
         The M-vector
         """
         return self._M.copy()
+
+    # search related properties
+    # -------------------------
+    @property
+    def ellipsoid_mat(self):
+        if not self.coni:
+            raise NotImplementedError
+
+        mat, Z, Binter = Zp.coniMellipsoid(self.pgrading, self._cydata)
+        return mat 
+
+    @property
+    def ellipsoid_c(self):
+        if not self.coni:
+            raise NotImplementedError
+
+        mat, Z, Binter = Zp.coniMellipsoid(self.pgrading, self._cydata)
+        c = np.rint(np.linalg.lstsq(Binter, self.M)[0]).astype(int)
+        assert np.all(self.M == Binter@c)
+
+        return c
+
+    @property
+    def ellipsoid_required_dilation(self):
+        if not self.coni:
+            raise NotImplementedError
+
+        mat = self.ellipsoid_mat
+        c   = self.ellipsoid_c
+
+        return (c.T@mat@c)/(self.h11+self.h21+4)
 
     # validation of fluxes
     # --------------------
