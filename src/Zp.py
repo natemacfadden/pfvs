@@ -800,7 +800,7 @@ def coniZpM(
 
     # iterate over p-vectors
     if verbosity >= 0:
-        iterator = tqdm(ps)
+        iterator = tqdm(ps, mininterval=2.0, maxinterval=5.0)
     else:
         iterator = ps
     for _i, p in enumerate(iterator):
