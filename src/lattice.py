@@ -180,6 +180,7 @@ def fp_ellipsoid(
     linvec: "ArrayLike" = None,
     lindot_min: int = None,
     lindot_max: int = None,
+    H: "ArrayLike" = None, Qpostgcd= None,
     max_N_out: int = 1_000_000_000,
     eps: float = 1e-4,
     recursive: bool = False,
@@ -261,11 +262,12 @@ def fp_ellipsoid(
         if linvec is not None:
             assert lindot_min is not None
             assert lindot_max is not None
-        
-        out, Q = fp_iterative(
+
+        out, Q = fp_iterative_fancy(
             L=L,
             Q_upper=Q, Q_lower=Q_lower,
-            linvec = linvec, lindot_min=lindot_min, lindot_max=lindot_max,
+            linvec=linvec, lindot_min=lindot_min, lindot_max=lindot_max,
+            H = H, Qpostgcd=Qpostgcd,
             max_N_out=max_N_out,
             eps=eps)
         
@@ -406,34 +408,16 @@ def fp_iterative(
         L: "ArrayLike",
         Q_upper: float,
         Q_lower: float,
-        linvec: "ArrayLike",
-        lindot_min: int,
-        lindot_max: int,
         max_N_out: int,
-        eps: float) -> None:
+        eps: float,
+        COORD_BUFF_SIZE: int = 2048) -> None:
     """
     Iterative DFS implementation of the Fincke-Pohst algorithm
 
     include linear constraint bc_min <= np.dot(b,c) <= bc_max
     """
-    COORD_BUFF_SIZE = 512
-
     dim        = L.shape[0]
     L_diag_inv = 1.0 / np.diag(L)
-
-    # linear constraint
-    if linvec is not None:
-        num_zeros = 0
-        zeros = True
-        for i in range(dim):
-            if linvec[i] == 0:
-                if zeros == False:
-                    raise ValueError("linear vec is not sorted so 0s are first...")
-                num_zeros += 1
-            else:
-                zeros = False
-    else:
-        num_zeros = -1
 
     # output object
     # -------------
@@ -564,6 +548,217 @@ def fp_iterative(
         # cut of no more Q left...
         if new_rem < Q_lower - eps:
             continue
+
+        # passes cuts -> push next depth :)
+        sp += 1
+        stack_i[sp]       = i-1
+        stack_pos[sp]     = 0
+        stack_remQ[sp]    = new_rem
+        stack_nz[sp]      = nz or (veci != 0)
+        stack_val_len[sp] = -1  # will fill when we visit
+        # candidate array for this depth is stack_vals[sp,:]
+        # else do not push (prune)
+
+    return out[:op, :], Q[:op]
+
+@njit
+def gcd_vec(vec):
+    g = abs(vec[0])
+    for v in vec[1:]:
+        g = np.gcd(g,v)
+    return g
+
+@njit
+def fp_iterative_fancy(
+        L: "ArrayLike",
+        Q_upper: float,
+        Q_lower: float,
+        linvec: "ArrayLike",
+        lindot_min: int,
+        lindot_max: int,
+        H: "ArrayLike",
+        Qpostgcd: int,
+        max_N_out: int,
+        eps: float,
+        COORD_BUFF_SIZE: int = 2048) -> None:
+    """
+    Iterative DFS implementation of the Fincke-Pohst algorithm
+
+    include linear constraint bc_min <= np.dot(b,c) <= bc_max
+    """
+    dim        = L.shape[0]
+    L_diag_inv = 1.0 / np.diag(L)
+
+    # linear constraint
+    if linvec is not None:
+        num_zeros = 0
+        zeros = True
+        for i in range(dim):
+            if linvec[i] == 0:
+                if zeros == False:
+                    raise ValueError("linear vec is not sorted so 0s are first...")
+                num_zeros += 1
+            else:
+                zeros = False
+    else:
+        num_zeros = -1
+
+    # output object
+    # -------------
+    out = np.empty((max_N_out, dim), dtype=np.int64)
+    Q   = np.empty((max_N_out,), dtype=np.float32)
+    
+    # output pointer
+    op  = 0
+
+    # internal vector that gets built/written to output
+    vec = np.zeros(dim, dtype=np.int64)
+
+    # stack variables
+    # ---------------
+    # stack pointer
+    sp = 0
+
+    # max stack depth
+    MAX_DEPTH = dim + 1
+
+    # stack arrays: i, pos, remaining_Q, nonzero, candidate values
+    stack_i      = np.empty(MAX_DEPTH, np.int64)
+    stack_pos    = np.empty(MAX_DEPTH, np.int64)
+    stack_remQ   = np.empty(MAX_DEPTH, np.float64)
+    stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
+    
+    # candidate arrays per depth (preallocate maximum possible size)
+    stack_val_len= np.zeros(MAX_DEPTH, np.int64)  # number of veci candidates
+    stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # veci candidates
+
+    # offsets for ci
+    # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
+    ci_offsets = np.zeros(dim, dtype=np.float64)
+
+    # initialize stack
+    # ----------------
+    stack_i[sp]    = dim-1
+    stack_pos[sp]  = 0
+    stack_remQ[sp] = Q_upper
+    stack_nz[sp]   = False
+
+    stack_val_len[sp] = -1  # will fill below
+    #stack_vals unset here
+
+    # process stack until empty
+    # -------------------------
+    while sp >= 0:
+        # read values
+        i    = stack_i[sp]
+        pos  = stack_pos[sp]
+        remQ = stack_remQ[sp]
+        nz   = stack_nz[sp]
+
+        # check if node is completed
+        # --------------------------
+        # if i==-1, then we have fully written vec
+        if i == -1:
+            if nz:
+                if op >= max_N_out:
+                    break
+                out[op, :] = vec
+                Q[op]      = Q_upper - remQ
+                op += 1
+            # kill node
+            sp -= 1
+            continue
+
+        # check if current depth is completed
+        # -----------------------------------
+        if pos == stack_val_len[sp]:
+            # kill node
+            sp -= 1
+            for k in range(i):
+                ci_offsets[k] -= L[i,k] * vec[i]
+            continue
+
+        # current depth incomplete...
+        # ---------------------------
+        # set candidate values of vec[i] if first time to depth
+        if stack_val_len[sp] == -1:
+            # feasible integer bounds for vec[i]
+            # -R                      <= c[i]          <= R
+            # -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
+            # (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
+            # where we used that the diagonal is positive
+            R = np.sqrt(max(0.0, remQ))
+            lo = int(np.ceil(( -R - ci_offsets[i]) * L_diag_inv[i] - eps))
+            hi = int(np.floor(( R - ci_offsets[i]) * L_diag_inv[i] + eps))
+
+            # values of veci to iterate over
+            k = 0
+            for v in range(lo,hi+1):
+                stack_vals[sp,k] = v
+                k += 1
+
+            # kill node if no valid veci values
+            if k == 0:
+                sp -= 1
+                continue
+            # kill execution if there are too many values
+            elif k>COORD_BUFF_SIZE:
+                raise ValueError(f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}")
+
+            # yes valid veci values
+            stack_val_len[sp] = k
+            stack_pos[sp] = 0
+            pos = 0
+
+            for k in range(i):
+                ci_offsets[k] += L[i,k] * (stack_vals[sp, pos]-1)
+
+        # pick candidate veci
+        # -------------------
+        veci   = stack_vals[sp, pos]
+        vec[i] = veci
+
+        # advance pos for next iteration
+        stack_pos[sp] += 1
+
+        # update ci_offsets for descendents
+        for k in range(i):
+            ci_offsets[k] += L[i,k]# * 1
+
+        # get ci, the new amount of remaining Q
+        ci = L[i,i]*veci + ci_offsets[i]
+        new_rem = remQ - ci*ci
+
+        # cut of no more Q left...
+        #if new_rem < 0 - eps:
+        if new_rem < 0 - eps:
+            continue
+
+        # check if we violated gcd constraints
+        if H is not None:
+            tmp = np.zeros(dim-i, dtype=np.int64)
+            for j in range(i, dim):
+                for k in range(i,dim):
+                    tmp[j-i] += H[j,k]*vec[k]
+            tmp2 = np.zeros(dim-i, dtype=np.float64)
+            for j in range(i, dim):
+                for k in range(i,dim):
+                    tmp2[j-i] += L[j,k]*vec[k]
+
+            tmpQ = Q_upper-new_rem
+            #print(tmp)
+            g = gcd_vec(tmp)
+            if (g > 0) and (g < tmpQ//Qpostgcd):
+                #print(i, vec[i:])
+                #print(tmp, tmp2, gcd_vec(tmp))
+                #print(ci_offsets[-1], ci, L[i,i]*veci, ci_offsets[i])
+                #print(Q_upper, remQ, tmpQ, Qpostgcd)
+                #print()
+                continue
+            #tmp = H[i:,i:]@vec[i:]
+            #print(tmp.tolist())
+            #curr_gcd = gcd_vec(H[i:,i:]@vec[i:])
+            #print(curr_gcd)
 
         # cut if dot product is wrong...
         if i == num_zeros:
