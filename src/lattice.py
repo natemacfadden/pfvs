@@ -718,6 +718,7 @@ def coni_kernel(
     stack_i[sp]    = dim-1
     stack_pos[sp]  = 0
     stack_remQ[sp] = Q_upper
+    stack_gcd[sp]  = 0
     stack_nz[sp]   = False
 
     stack_val_len[sp] = -1  # will fill below
@@ -730,6 +731,7 @@ def coni_kernel(
         i    = stack_i[sp]
         pos  = stack_pos[sp]
         remQ = stack_remQ[sp]
+        gcd  = stack_gcd[sp]
         nz   = stack_nz[sp]
 
         # check if node is completed
@@ -812,13 +814,11 @@ def coni_kernel(
             continue
 
         # check if we violated K'>0 constraints
-        Hvec = np.zeros(dim-i, dtype=np.int64)
-        for j in range(i, dim):
-            for k in range(i,dim):
-                Hvec[j-i] += H[j,k]*vec[k]
-
-        g = gcd_vec(Hvec)
-        if (g > 0) and (g < (Q_upper-new_rem)//Q):
+        Hvec_i = 0
+        for k in range(i,dim):
+            Hvec_i += H[i,k]*vec[k]
+        new_gcd = math.gcd(gcd, Hvec_i)
+        if (new_gcd > 0) and (new_gcd < (Q_upper-new_rem)//Q):
             continue
 
         # cut if M0 violates bounds
@@ -835,6 +835,7 @@ def coni_kernel(
         stack_i[sp]       = i-1
         stack_pos[sp]     = 0
         stack_remQ[sp]    = new_rem
+        stack_gcd[sp]     = new_gcd
         stack_nz[sp]      = nz or (veci != 0)
         stack_val_len[sp] = -1  # will fill when we visit
         # candidate array for this depth is stack_vals[sp,:]
