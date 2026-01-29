@@ -869,37 +869,4 @@ class PFV():
                             first = False
                         print(f"({_gv})·({_c//_gv})", end="")
                 print()
-
-    # auxiliary
-    # =========
-    def harvest(self, gvs=None, verbosity=0):
-        assert self.coni
-        import sys; sys.path.append('../../cornell-dev')
-        from lib.physics.vacua import PFV_search
-        from cytools import Polytope
-
-        print("REMOVE THIS LATER!!!")
-
-        cy = Polytope(self.verts).triangulate(heights=self.heights).cy()
-
-        if gvs is None:
-            gvs = cy.compute_gvs(max_deg=10).coo
-
-
-        out = PFV_search.harvestPFVs(
-            cy,
-            [[self.M,self.K,self.p]],
-            gvs=gvs,
-            max_deg=10,
-            coni_LCS=True,
-            basis_matrix=self.cob,
-            return_extra=True,
-            output_format='dict', 
-            verbosity=verbosity
-        )
-        
-        if 'Kprime' in out:
-            out['Kprime'] = [-Kp for Kp in out['Kprime']]
-
-        return out
     
