@@ -812,18 +812,13 @@ def coni_kernel(
             continue
 
         # check if we violated K'>0 constraints
-        tmp = np.zeros(dim-i, dtype=np.int64)
+        Hvec = np.zeros(dim-i, dtype=np.int64)
         for j in range(i, dim):
             for k in range(i,dim):
-                tmp[j-i] += H[j,k]*vec[k]
-        tmp2 = np.zeros(dim-i, dtype=np.float64)
-        for j in range(i, dim):
-            for k in range(i,dim):
-                tmp2[j-i] += L[j,k]*vec[k]
+                Hvec[j-i] += H[j,k]*vec[k]
 
-        tmpQ = Q_upper-new_rem
-        g = gcd_vec(tmp)
-        if (g > 0) and (g < tmpQ//Q):
+        g = gcd_vec(Hvec)
+        if (g > 0) and (g < (Q_upper-new_rem)//Q):
             continue
 
         # cut if dot product is wrong...
