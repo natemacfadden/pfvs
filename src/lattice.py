@@ -177,10 +177,6 @@ def inv_scaled(A_in, as_flint: bool = False):
 def fp_ellipsoid(
     mat: "ArrayLike",
     Q: float,
-    Binter0: "ArrayLike" = None,
-    M0min: int = None,
-    M0max: int = None,
-    H: "ArrayLike" = None, Qpostgcd= None,
     max_N_out: int = 1_000_000_000,
     eps: float = 1e-4,
     recursive: bool = False,
@@ -264,8 +260,6 @@ def fp_ellipsoid(
         out, Q = coni_kernel(
             L=L,
             Q_upper=Q,
-            Binter0=Binter0, M0min=M0min, M0max=M0max,
-            H = H, Qpostgcd=Qpostgcd,
             max_N_out=max_N_out,
             eps=eps)
         
@@ -566,12 +560,15 @@ def gcd_vec(vec):
 @njit
 def coni_kernel(
         L: "ArrayLike",
-        Q_upper: float,
+        Q: int,
+        dilation: int,
+        # M0 cuts:
         Binter0: "ArrayLike",
         M0min: int,
         M0max: int,
+        # K' cuts:
         H: "ArrayLike",
-        Qpostgcd: int,
+        # misc:
         max_N_out: int,
         eps: float,
         COORD_BUFF_SIZE: int = 2048) -> None:
@@ -581,6 +578,8 @@ def coni_kernel(
     Includes linear constraint M0min <= np.dot(Binter0,vec) <= M0max
     Includes gcd constraint gcd(Kperp)>=quad(c)//Q f <= np.dot(Binter0,vec) <= M0max
     """
+    # compute  useful variables
+    Q_upper = Q*dilation
     dim        = L.shape[0]
     L_diag_inv = 1.0 / np.diag(L)
 
@@ -601,7 +600,7 @@ def coni_kernel(
     # output object
     # -------------
     out = np.empty((max_N_out, dim), dtype=np.int64)
-    Q   = np.empty((max_N_out,), dtype=np.float32)
+    Qs  = np.empty((max_N_out,), dtype=np.float32)
     
     # output pointer
     op  = 0
@@ -658,7 +657,7 @@ def coni_kernel(
                 if op >= max_N_out:
                     break
                 out[op, :] = vec
-                Q[op]      = Q_upper - remQ
+                Qs[op]     = Q_upper - remQ
                 op += 1
             # kill node
             sp -= 1
@@ -743,12 +742,7 @@ def coni_kernel(
             tmpQ = Q_upper-new_rem
             #print(tmp)
             g = gcd_vec(tmp)
-            if (g > 0) and (g < tmpQ//Qpostgcd):
-                #print(i, vec[i:])
-                #print(tmp, tmp2, gcd_vec(tmp))
-                #print(ci_offsets[-1], ci, L[i,i]*veci, ci_offsets[i])
-                #print(Q_upper, remQ, tmpQ, Qpostgcd)
-                #print()
+            if (g > 0) and (g < tmpQ//Q):
                 continue
             #tmp = H[i:,i:]@vec[i:]
             #print(tmp.tolist())
@@ -775,7 +769,7 @@ def coni_kernel(
         # candidate array for this depth is stack_vals[sp,:]
         # else do not push (prune)
 
-    return out[:op, :], Q[:op]
+    return out[:op, :], Qs[:op]
 
 # box approximations
 # ------------------

@@ -766,7 +766,6 @@ def coniZpM(
     ellipsoid_dilation: float = 1, # typically want >=1
     cut_Kprime: bool = True,
     use_box: bool = False,
-    fp_recursive: bool = False,
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0,
     low_level_parallelism: bool = True,
@@ -835,17 +834,23 @@ def coniZpM(
                 #H32  = np.array(G_fl.hnf().tolist()).astype(np.int32)
                 #assert np.all(H==H32)
 
-                lattice_points, rawQs = lattice.fp_ellipsoid(
-                    mat=mat,
-                    Q=ellipsoid_dilation*Qmax,
-                    Binter0 = Binter[0],
-                    M0min = M0min,
-                    M0max = M0max,
-                    H = H, Qpostgcd=Qmax,
+                L = np.linalg.cholesky(mat)
+
+                lattice_points, rawQs = lattice.coni_kernel(
+                    # ellipsoid definition
+                    L=np.linalg.cholesky(mat),
+                    Q=Qmax,
+                    dilation=ellipsoid_dilation,
+                    # M0 cuts:
+                    Binter0=Binter[0,:],
+                    M0min=M0min,
+                    M0max=M0max,
+                    # K' cuts:
+                    H = H,
+                    # misc:
                     max_N_out=max_N_pfvs,
-                    recursive=fp_recursive,
-                    verbosity=verbosity-1
-                )
+                    eps=1e-4)
+
                 rawQs = np.rint(rawQs).astype(int)
             else:
                 lattice_points = lattice.boundingbox_enumerate(
