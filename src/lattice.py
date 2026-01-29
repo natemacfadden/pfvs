@@ -325,8 +325,8 @@ def fp_recurse(
         5) recurse
     
     **Note:**
-    This is a recursive (DFS) iteration, building and saving each lattice vector
-    x to an output array `out`.
+    This is a recursive (DFS) implementation, building and saving each lattice
+    vector x to an output array `out`.
 
     **Arguments:**
     - `i`:           For this call, vec[i+1:] has been set. Iterate over
@@ -421,14 +421,46 @@ def fp_recurse(
 @njit
 def fp_iterative(
         L: "ArrayLike",
-        Q_upper: float,
+        Q: float,
         max_N_out: int,
         eps: float,
-        COORD_BUFF_SIZE: int = 2048) -> None:
+        COORD_BUFF_SIZE: int = 2048) -> "ArrayLike":
     """
-    Iterative DFS implementation of the Fincke-Pohst algorithm
+    **Description:**
+    Enumerate all nonzero integer vectors vec such that
+        0 <= vec^T @ mat @ vec <= Q.
 
-    include linear constraint bc_min <= np.dot(b,c) <= bc_max
+    The 'Fincke-Pohst' algorithm (FP) from
+        Improved Methods for Calculating Vectors of Short Length in a Lattice,
+        Including a Complexity Analysis by Fincke, Pohst
+    can be viewed as doing exactly this.
+
+    Roughly, FP operates via:
+        1) Cholesky-decompose mat = L@L^T for L.T upper triangular
+        2) define c = L^T@vec, so the quadratic form becomes 0 <= |c|^2 <= Q
+        3) observe that, since L^T is upper triangular, c[i] depends only on
+           vec[i:]. E.g., c[0] depends on vec[0], ..., vec[dim-1]
+                          c[1] depends on vec[1], ..., vec[dim-1]
+                          c[dim-1] depends on vec[dim-1]
+        4) fix vec[dim-1], which reduces the norm-bound on c from Q to
+           Q-c[dim-1]^2 and effectively reduces the dimension of the problem,
+           at the cost of adding a shift-vector to c[:dim-1]
+        5) recurse
+    
+    **Note:**
+    This is an iterative (DFS) implementation using an explicit stack.
+
+    **Arguments:**
+    - `L`:               The lower triangular matrix such that mat = L@L.T
+    - `Q`:               The ellipsoid bound.
+    - `max_N_out`:       The maximum number of output allowed.
+    - `eps`:             A small number used for correctly setting bounds
+                         despite floating point errors.
+    - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
+                         of vec[i].
+
+    **Returns:**
+    The vectors `vec` in the ellipsoid.
     """
     dim        = L.shape[0]
     L_diag_inv = 1.0 / np.diag(L)
@@ -436,7 +468,7 @@ def fp_iterative(
     # output object
     # -------------
     out = np.empty((max_N_out, dim), dtype=np.int64)
-    Q   = np.empty((max_N_out,), dtype=np.float32)
+    Qs  = np.empty((max_N_out,), dtype=np.float32)
     
     # output pointer
     op  = 0
@@ -458,9 +490,9 @@ def fp_iterative(
     stack_remQ   = np.empty(MAX_DEPTH, np.float64)
     stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
     
-    # candidate arrays per depth (preallocate maximum possible size)
-    stack_val_len= np.zeros(MAX_DEPTH, np.int32)  # number of veci candidates
-    stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # veci candidates
+    # vec[i] candidate arrays per depth (preallocate maximum possible size)
+    stack_val_len= np.zeros(MAX_DEPTH, np.int64) # number of candidates
+    stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # candidates
 
     # offsets for ci
     # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
@@ -470,7 +502,7 @@ def fp_iterative(
     # ----------------
     stack_i[sp]    = dim-1
     stack_pos[sp]  = 0
-    stack_remQ[sp] = Q_upper
+    stack_remQ[sp] = Q
     stack_nz[sp]   = False
 
     stack_val_len[sp] = -1  # will fill below
@@ -493,7 +525,7 @@ def fp_iterative(
                 if op >= max_N_out:
                     break
                 out[op, :] = vec
-                Q[op]      = Q_upper - remQ
+                Qs[op]      = Q - remQ
                 op += 1
             # kill node
             sp -= 1
@@ -533,7 +565,8 @@ def fp_iterative(
                 continue
             # kill execution if there are too many values
             elif k>COORD_BUFF_SIZE:
-                raise ValueError(f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}")
+                msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
+                raise ValueError(msg)
 
             # yes valid veci values
             stack_val_len[sp] = k
@@ -573,7 +606,7 @@ def fp_iterative(
         # candidate array for this depth is stack_vals[sp,:]
         # else do not push (prune)
 
-    return out[:op, :], Q[:op]
+    return out[:op, :], Qs[:op]
 
 # FP-style methods but tailored to coniZpM
 # ----------------------------------------
@@ -593,10 +626,42 @@ def coni_kernel(
         eps: float,
         COORD_BUFF_SIZE: int = 2048) -> None:
     """
-    Iterative DFS implementation of the Fincke-Pohst algorithm
+    **Description:**
+    Adaptation of the (iterative) Fincke-Pohst algorithm for utility in
+    constructing coni-PFVs. I.e., solves
+        0 <= vec^T @ mat @ vec <= dilation*Q.
+    as well as (M[0] cuts)
+        M0min <= dot(Binter0, vec) <= M0max
+    as well as (K'>0 cuts)
+        (vec^T @ mat @ vec)//Q <= gcd(Kperp)
+                                = gcd([0, 1]@Z@Binter@vec)
+                                = gcd(H@vec)
+    for H the row-HNF of [0, 1]@Z@Binter.
 
-    Includes linear constraint M0min <= np.dot(Binter0,vec) <= M0max
-    Includes gcd constraint gcd(Kperp)>=quad(c)//Q f <= np.dot(Binter0,vec) <= M0max
+    Any `vec` satisfying all of the above can generate a coni-PFV, as long as
+    det(N) != 0.
+
+    **Arguments:**
+    - `L`:               The lower triangular matrix such that mat = L@L.T
+    - `Q`:               The ellipsoid bound.
+    - `dilation`:        The maximum allowed dilation to allow... As long as
+                         gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec
+                         can still define coni-PFV.
+    - `Binter0`:         Binter[0,:]. The vector such that dot(Binter0,vec)=M0.
+                         BEST TO ORDER COLUMNS SUCH THAT Binter0 HAS A LARGE
+                         NUMBER OF LEADING 0s.
+    - `M0min`:           The minimum value of M0 permitted. Inclusive.
+    - `M0max`:           The maximum value of M0 permitted. Inclusive.
+    - `H`:               Let G be the matrix such that Kperp = G@vec. Then
+                         H = HNF(G).
+    - `max_N_out`:       The maximum number of output allowed.
+    - `eps`:             A small number used for correctly setting bounds
+                         despite floating point errors.
+    - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
+                         of vec[i].
+
+    **Returns:**
+    The vectors `vec` in the ellipsoid and obeying the extra constraints
     """
     # compute  useful variables
     Q_upper = Q*dilation
@@ -604,18 +669,15 @@ def coni_kernel(
     L_diag_inv = 1.0 / np.diag(L)
 
     # linear constraint
-    if Binter0 is not None:
-        num_zeros = 0
-        zeros = True
-        for i in range(dim):
-            if Binter0[i] == 0:
-                if zeros == False:
-                    raise ValueError("linear vec is not sorted so 0s are first...")
-                num_zeros += 1
-            else:
-                zeros = False
-    else:
-        num_zeros = -1
+    num_zeros = 0
+    zeros = True
+    for i in range(dim):
+        if Binter0[i] == 0:
+            if zeros == False:
+                raise ValueError("Binter0 is not sorted so 0s are first...")
+            num_zeros += 1
+        else:
+            zeros = False
 
     # output object
     # -------------
@@ -643,9 +705,9 @@ def coni_kernel(
     stack_gcd    = np.empty(MAX_DEPTH, np.float64)
     stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
     
-    # candidate arrays per depth (preallocate maximum possible size)
-    stack_val_len= np.zeros(MAX_DEPTH, np.int64)  # number of veci candidates
-    stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # veci candidates
+    # vec[i] candidate arrays per depth (preallocate maximum possible size)
+    stack_val_len= np.zeros(MAX_DEPTH, np.int64) # number of candidates
+    stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # candidates
 
     # offsets for ci
     # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
@@ -718,7 +780,8 @@ def coni_kernel(
                 continue
             # kill execution if there are too many values
             elif k>COORD_BUFF_SIZE:
-                raise ValueError(f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}")
+                msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
+                raise ValueError(msg)
 
             # yes valid veci values
             stack_val_len[sp] = k
@@ -745,25 +808,23 @@ def coni_kernel(
         new_rem = remQ - ci*ci
 
         # cut of no more Q left...
-        #if new_rem < 0 - eps:
         if new_rem < 0 - eps:
             continue
 
-        # check if we violated gcd constraints
-        if H is not None:
-            tmp = np.zeros(dim-i, dtype=np.int64)
-            for j in range(i, dim):
-                for k in range(i,dim):
-                    tmp[j-i] += H[j,k]*vec[k]
-            tmp2 = np.zeros(dim-i, dtype=np.float64)
-            for j in range(i, dim):
-                for k in range(i,dim):
-                    tmp2[j-i] += L[j,k]*vec[k]
+        # check if we violated K'>0 constraints
+        tmp = np.zeros(dim-i, dtype=np.int64)
+        for j in range(i, dim):
+            for k in range(i,dim):
+                tmp[j-i] += H[j,k]*vec[k]
+        tmp2 = np.zeros(dim-i, dtype=np.float64)
+        for j in range(i, dim):
+            for k in range(i,dim):
+                tmp2[j-i] += L[j,k]*vec[k]
 
-            tmpQ = Q_upper-new_rem
-            g = gcd_vec(tmp)
-            if (g > 0) and (g < tmpQ//Q):
-                continue
+        tmpQ = Q_upper-new_rem
+        g = gcd_vec(tmp)
+        if (g > 0) and (g < tmpQ//Q):
+            continue
 
         # cut if dot product is wrong...
         if i == num_zeros:
