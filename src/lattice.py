@@ -823,15 +823,15 @@ def coni_kernel(
         for k in range(i,dim):
             Hvec_i += H[i,k] * vec[k]
         
-        required_dilation = (Q_upper-new_rem)/Q
+        required_dilation = (Q_upper-new_rem)/Q - eps
 
         # first try a simpler-to-compute upper
         new_gcd_upper_bound = gcd #min(gcd, abs(Hvec_i))
-        if (new_gcd_upper_bound > 0) and (new_gcd_upper_bound < required_dilation-eps):
+        if (new_gcd_upper_bound > 0) and (new_gcd_upper_bound < required_dilation):
             continue
 
         new_gcd = math.gcd(gcd, Hvec_i)
-        if (new_gcd > 0) and (new_gcd < required_dilation-eps):
+        if (new_gcd > 0) and (new_gcd < required_dilation):
             continue
 
         # cut if M0 violates bounds
