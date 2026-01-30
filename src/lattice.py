@@ -664,7 +664,7 @@ def coni_kernel(
     The vectors `vec` in the ellipsoid and obeying the extra constraints
     """
     # compute  useful variables
-    Q_upper = Q*dilation
+    Q_upper    = Q*dilation
     dim        = L.shape[0]
     L_diag_inv = 1.0 / np.diag(L)
 
@@ -765,7 +765,9 @@ def coni_kernel(
             # -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
             # (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
             # where we used that the diagonal is positive
-            R = np.sqrt(max(0.0, remQ))
+            if remQ < 0:
+                remQ = 0
+            R = np.sqrt(remQ)
 
             ci_offset = 0.0
             for j in range(i+1, dim):
@@ -817,7 +819,7 @@ def coni_kernel(
         # check if we violated K'>0 constraints
         Hvec_i = 0
         for k in range(i,dim):
-            Hvec_i += H[i,k]*vec[k]
+            Hvec_i += H[i,k] * vec[k]
         new_gcd = math.gcd(gcd, Hvec_i)
         if (new_gcd > 0) and (new_gcd < (Q_upper-new_rem)//Q):
             continue
