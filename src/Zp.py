@@ -885,6 +885,7 @@ def coniZpM(
             # cut on feasibility of finding a K0 giving K'>0
             # ----------------------------------------------
             # for 0 <= K_scaling <= 1
+            # for Qperp = -dot(Knat[1:],M[1:])
             #
             # (A)
             # K' = -K[0] * Knat[0]*K_scaling

@@ -549,7 +549,9 @@ def fp_iterative(
             # -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
             # (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
             # where we used that the diagonal is positive
-            R = np.sqrt(max(0.0, remQ))
+            if remQ<0:
+                remQ = 0
+            R = np.sqrt(remQ)
             lo = int(np.ceil(( -R - ci_offsets[i]) * L_diag_inv[i] - eps))
             hi = int(np.floor(( R - ci_offsets[i]) * L_diag_inv[i] + eps))
 
@@ -682,7 +684,7 @@ def coni_kernel(
     # output object
     # -------------
     out = np.empty((max_N_out, dim), dtype=np.int64)
-    Qs  = np.empty((max_N_out,), dtype=np.float32)
+    Qs  = np.empty((max_N_out,), dtype=np.float64)
     
     # output pointer
     op  = 0
@@ -820,8 +822,16 @@ def coni_kernel(
         Hvec_i = 0
         for k in range(i,dim):
             Hvec_i += H[i,k] * vec[k]
+        
+        required_dilation = (Q_upper-new_rem)/Q
+
+        # first try a simpler-to-compute upper
+        new_gcd_upper_bound = gcd #min(gcd, abs(Hvec_i))
+        if (new_gcd_upper_bound > 0) and (new_gcd_upper_bound < required_dilation-eps):
+            continue
+
         new_gcd = math.gcd(gcd, Hvec_i)
-        if (new_gcd > 0) and (new_gcd < np.floor((Q_upper-new_rem)/Q)+eps):
+        if (new_gcd > 0) and (new_gcd < required_dilation-eps):
             continue
 
         # cut if M0 violates bounds
