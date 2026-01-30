@@ -821,7 +821,7 @@ def coni_kernel(
         for k in range(i,dim):
             Hvec_i += H[i,k] * vec[k]
         new_gcd = math.gcd(gcd, Hvec_i)
-        if (new_gcd > 0) and (new_gcd < (Q_upper-new_rem)//Q):
+        if (new_gcd > 0) and (new_gcd < np.floor((Q_upper-new_rem)/Q)+eps):
             continue
 
         # cut if M0 violates bounds
