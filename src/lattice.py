@@ -711,7 +711,6 @@ def coni_kernel(
 
     # offsets for ci
     # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
-    #ci_offsets = np.zeros(dim, dtype=np.float64)
     stack_ci_offset = np.zeros(MAX_DEPTH, np.float64)# offset c[i]-L[i,i]*vec[i]
 
     # initialize stack
@@ -720,7 +719,6 @@ def coni_kernel(
     stack_pos[sp]  = 0
     stack_remQ[sp] = Q_upper
     stack_gcd[sp]  = 0
-    #stack_nz[sp]   = False
 
     stack_val_len[sp] = -1  # will fill below
     #stack_vals unset here
@@ -733,7 +731,6 @@ def coni_kernel(
         pos  = stack_pos[sp]
         remQ = stack_remQ[sp]
         gcd  = stack_gcd[sp]
-        #nz   = stack_nz[sp]
 
         # check if node is completed
         # --------------------------
@@ -757,8 +754,6 @@ def coni_kernel(
         if pos == stack_val_len[sp]:
             # kill node
             sp -= 1
-            #for k in range(i):
-            #    ci_offsets[k] -= L[i,k] * vec[i]
             continue
 
         # current depth incomplete...
@@ -771,9 +766,11 @@ def coni_kernel(
             # (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
             # where we used that the diagonal is positive
             R = np.sqrt(max(0.0, remQ))
+
             ci_offset = 0.0
             for j in range(i+1, dim):
                 ci_offset += L[j,i] * vec[j]
+
             lo = int(np.ceil(( -R - ci_offset) * L_diag_inv[i] - eps))
             hi = int(np.floor(( R - ci_offset) * L_diag_inv[i] + eps))
 
@@ -809,10 +806,6 @@ def coni_kernel(
         # advance pos for next iteration
         stack_pos[sp] += 1
 
-        # update ci_offsets for descendents
-        #for k in range(i):
-        #    ci_offsets[k] += L[i,k]# * 1
-
         # get ci, the new amount of remaining Q
         ci = L[i,i]*veci + stack_ci_offset[sp]#ci_offsets[i]
         new_rem = remQ - ci*ci
@@ -844,7 +837,6 @@ def coni_kernel(
         stack_pos[sp]     = 0
         stack_remQ[sp]    = new_rem
         stack_gcd[sp]     = new_gcd
-        #stack_nz[sp]      = nz or (veci != 0)
         stack_val_len[sp] = -1  # will fill when we visit
         # candidate array for this depth is stack_vals[sp,:]
         # else do not push (prune)
