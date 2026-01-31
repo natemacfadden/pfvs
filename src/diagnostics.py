@@ -138,7 +138,7 @@ class PFV():
         # construct the PFV
         # -----------------
         return cls(
-            cy=data,
+            data=data,
             K=ns['K'],
             M=ns['M'])
 
