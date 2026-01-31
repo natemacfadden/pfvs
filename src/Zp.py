@@ -41,6 +41,8 @@ def pvecs(
     max_deg: int = None,
     min_deg: int = 0,
     deg_window: int = 1,
+    max_window_i: int = 10_000,
+    max_time: float = 120, # 2 min...
     verbosity: int = 0) -> "ArrayLike":
     """
     **Description:**
@@ -89,8 +91,7 @@ def pvecs(
         ps = np.empty((0,H.shape[1]), dtype=int)
         N_ps = 0
 
-        window_i = 0
-        while N_ps<min_N_pts:
+        for window_i in tqdm(range(max_window_i+1)):
             _min = min_deg + (window_i+0)*deg_window + window_i
             _max = min_deg + (window_i+1)*deg_window + window_i
 
@@ -98,12 +99,17 @@ def pvecs(
                 print(f"Have {N_ps} p-vectors for degrees <{_min}", end=' '*20 + '\r')
 
             # compute new p-vectors, save them
-            new_ps = pvecs(data, min_deg = _min, max_deg = _max)
+            new_ps = pvecs(
+                data,
+                min_deg = _min,
+                max_deg = _max,
+                max_time = max_time)
             ps     = np.vstack([ps, new_ps])
             N_ps  += len(new_ps)
 
-            # increment the window
-            window_i += 1
+            # break if done
+            if N_ps >= min_N_pts:
+                break
 
         return ps
 
@@ -130,6 +136,7 @@ def pvecs(
 
     # enumerate all solutions up to max_deg
     solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = max_time
 
     class SolutionPrinter(cp_model.CpSolverSolutionCallback):
         def __init__(self, p_vars):
@@ -142,7 +149,15 @@ def pvecs(
 
     printer = SolutionPrinter(p_vars)
 
-    solver.SearchForAllSolutions(model, printer)
+    status = solver.SearchForAllSolutions(model, printer)
+    if status == cp_model.OPTIMAL:
+        pass
+    elif status == cp_model.UNKNOWN:
+        print("LIKELY HIT TIME LIMIT!!!\nLIKELY HIT TIME LIMIT!!!\nLIKELY HIT TIME LIMIT!!!")
+        print(min_deg, max_deg)
+    elif status != cp_model.INFEASIBLE:
+        print("UNKNOWN ERROR\nUNKNOWN ERROR\nUNKNOWN ERROR")
+        print(min_deg, max_deg, status)
 
     # return
     ps = np.array(printer.points)
@@ -826,9 +841,9 @@ def coniZpM(
 
                 try:
                     H    = np.array(G_fl.hnf().tolist()).astype(int)
-                except:
+                except Exception as e:
                     print("C long error :(")
-                    continue
+                    raise e
 
                 #print("THIS IS UGLY... :()")
                 #H32  = np.array(G_fl.hnf().tolist()).astype(np.int32)
@@ -910,6 +925,10 @@ def coniZpM(
             else:
                 Kperps = ZBinter[1:]@cs
                 K_gcds = np.gcd.reduce(Kperps, axis=0)
+
+            # cure cases where K_gcd = 0
+            # think this should just occur if K = (x!=0,0,...,0)
+            K_gcds = max(1,K_gcds)
 
             mask   = Qs/K_gcds < Qmax
             cs     = cs[:,mask]
