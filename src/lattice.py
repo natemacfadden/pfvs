@@ -185,6 +185,8 @@ def inv_scaled(A_in, as_flint: bool = False):
 def fp_ellipsoid(
     mat: "ArrayLike",
     Q: float,
+    linvec: "ArrayLike" = None,
+    linmin: float = None,
     recursive: bool = False,
     max_N_out: int = 1_000_000_000,
     eps: float = 1e-4,
@@ -277,11 +279,20 @@ def fp_ellipsoid(
         Q   = np.empty((out_count[0]), dtype=np.int64)
     else:
         # iterative
-        out, Q = fp_iterative(
-            L=L,
-            Q=Q,
-            max_N_out=max_N_out,
-            eps=eps)
+        if linvec is None:
+            out, Q = fp_iterative(
+                L=L,
+                Q=Q,
+                max_N_out=max_N_out,
+                eps=eps)
+        else:
+            out, Q = fp_iterative_lincut(
+                L=L,
+                Q=Q,
+                linvec=linvec,
+                linmin=linmin,
+                max_N_out=max_N_out,
+                eps=eps)
         
         if out.shape[0] == max_N_out:
             print("SATURATED MAXIMUM ALLOWED OUTPUTS")
@@ -301,7 +312,7 @@ def fp_recurse(
         out_count: list[int],
         out: "ArrayLike",
         max_N_out: int,
-        eps: float) -> None:
+        eps: float = 1e-4) -> None:
     """
     **Description:**
     Enumerate all nonzero integer vectors vec such that
@@ -422,8 +433,8 @@ def fp_recurse(
 def fp_iterative(
         L: "ArrayLike",
         Q: float,
-        max_N_out: int,
-        eps: float,
+        max_N_out: int = 10_000_000,
+        eps: float = 1e-4,
         COORD_BUFF_SIZE: int = 2048) -> "ArrayLike":
     """
     **Description:**
@@ -616,9 +627,8 @@ def fp_iterative_lincut(
         Q: float,
         linvec: "ArrayLike",
         linmin: int,
-        linmax: int,
-        max_N_out: int,
-        eps: float,
+        max_N_out: int = 10_000_000,
+        eps: float = 1e-4,
         COORD_BUFF_SIZE: int = 2048) -> "ArrayLike":
     """
     **Description:**
@@ -810,7 +820,7 @@ def fp_iterative_lincut(
             for j in range(i,dim):
                 val += linvec[j]*vec[j]
 
-            if (val < linmin) or (val > linmax):
+            if val < linmin:
                 continue
 
         # passes cuts -> push next depth :)
@@ -835,12 +845,11 @@ def coni_kernel(
         # M0 cuts:
         Binter0: "ArrayLike",
         M0min: int,
-        M0max: int,
         # K' cuts:
         H: "ArrayLike",
         # misc:
         max_N_out: int,
-        eps: float,
+        eps: float = 1e-4,
         COORD_BUFF_SIZE: int = 2048) -> None:
     """
     **Description:**
@@ -848,7 +857,7 @@ def coni_kernel(
     constructing coni-PFVs. I.e., solves
         0 <= vec^T @ mat @ vec <= dilation*Q.
     as well as (M[0] cuts)
-        M0min <= dot(Binter0, vec) <= M0max
+        M0min <= dot(Binter0, vec)
     as well as (K'>0 cuts)
         (vec^T @ mat @ vec)//Q <= gcd(Kperp)
                                 = gcd([0, 1]@Z@Binter@vec)
@@ -868,7 +877,6 @@ def coni_kernel(
                          BEST TO ORDER COLUMNS SUCH THAT Binter0 HAS A LARGE
                          NUMBER OF LEADING 0s.
     - `M0min`:           The minimum value of M0 permitted. Inclusive.
-    - `M0max`:           The maximum value of M0 permitted. Inclusive.
     - `H`:               Let G be the matrix such that Kperp = G@vec. Then
                          H = HNF(G).
     - `max_N_out`:       The maximum number of output allowed.
@@ -1055,7 +1063,7 @@ def coni_kernel(
             for j in range(i,dim):
                 M0 += Binter0[j]*vec[j]
 
-            if (M0 < M0min) or (M0 > M0max):
+            if (M0 < M0min):
                 continue
 
         # passes cuts -> push next depth :)
