@@ -279,7 +279,7 @@ def fp_ellipsoid(
         # iterative
         out, Q = fp_iterative(
             L=L,
-            Q_upper=Q,
+            Q=Q,
             max_N_out=max_N_out,
             eps=eps)
         
