@@ -832,39 +832,52 @@ def coniZpM(
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
             if not use_box:
-                proj = np.hstack([
-                    np.zeros((data.h11-1, 1), dtype=int),
-                    np.eye(data.h11-1, dtype=int)
-                ])
-                G    = proj@ZBinter
-                G_fl = flint.fmpz_mat(G.tolist())
-
-                try:
-                    H    = np.array(G_fl.hnf().tolist()).astype(int)
-                except Exception as e:
-                    print("C long error :(")
-                    raise e
-
-                #print("THIS IS UGLY... :()")
-                #H32  = np.array(G_fl.hnf().tolist()).astype(np.int32)
-                #assert np.all(H==H32)
-
                 L = np.linalg.cholesky(mat)
 
-                lattice_points, rawQs = lattice.coni_kernel(
-                    # ellipsoid definition
-                    L=np.linalg.cholesky(mat),
-                    Q=Qmax,
-                    dilation=ellipsoid_dilation,
-                    # M0 cuts:
-                    Binter0=Binter[0,:],
-                    M0min=M0min,
-                    M0max=M0max,
-                    # K' cuts:
-                    H = H,
-                    # misc:
-                    max_N_out=max_N_pfvs,
-                    eps=1e-4)
+                if cut_Kprime:
+                    proj = np.hstack([
+                        np.zeros((data.h11-1, 1), dtype=int),
+                        np.eye(data.h11-1, dtype=int)
+                    ])
+                    G    = proj@ZBinter
+                    G_fl = flint.fmpz_mat(G.tolist())
+
+                    try:
+                        H    = np.array(G_fl.hnf().tolist()).astype(int)
+                    except Exception as e:
+                        print("C long error :(")
+                        raise e
+
+                    #print("THIS IS UGLY... :()")
+                    #H32  = np.array(G_fl.hnf().tolist()).astype(np.int32)
+                    #assert np.all(H==H32)
+
+                    lattice_points, rawQs = lattice.coni_kernel(
+                        # ellipsoid definition
+                        L=L,
+                        Q=Qmax,
+                        dilation=ellipsoid_dilation,
+                        # M0 cuts:
+                        Binter0=Binter[0,:],
+                        M0min=M0min,
+                        M0max=M0max,
+                        # K' cuts:
+                        H = H,
+                        # misc:
+                        max_N_out=max_N_pfvs,
+                        eps=1e-4)
+                else:
+                    lattice_points, rawQs = lattice.fp_iterative_lincut(
+                        # ellipsoid definition
+                        L=L,
+                        Q=ellipsoid_dilation*Qmax,
+                        # M0 cuts:
+                        linvec=Binter[0,:],
+                        linmin=M0min,
+                        linmax=M0max,
+                        # misc:
+                        max_N_out=max_N_pfvs,
+                        eps=1e-4)
 
                 rawQs = np.rint(rawQs).astype(int)
             else:
@@ -928,7 +941,7 @@ def coniZpM(
 
             # cure cases where K_gcd = 0
             # think this should just occur if K = (x!=0,0,...,0)
-            K_gcds = max(1,K_gcds)
+            K_gcds[K_gcds<1] = 1
 
             mask   = Qs/K_gcds < Qmax
             cs     = cs[:,mask]
