@@ -60,14 +60,18 @@ def pvecs(
     facet of the Kahler cone defined by coni_normal.
 
     **Arguments:**
-    - `data`:       The CYData describing the CY.
-    - `min_N_pts`:  Grab at least this many p-vectors.
-    - `max_deg`:    The maximum degree to compute p-vectors to.
-    - `min_deg`:    The minimum permissible degree to allow p-vectors to have.
-    - `deg_window`: When setting `min_N_pts`, it operates by sliding a degree
-                    window, grabbing all points in the window, and quitting only
-                    once enough points have been generated. This argument sets
-                    the width of the window.
+    - `data`:         The CYData describing the CY.
+    - `min_N_pts`:    Grab at least this many p-vectors.
+    - `max_deg`:      The maximum degree to compute p-vectors to.
+    - `min_deg`:      The minimum permissible degree to allow p-vectors to have.
+    - `deg_window`:   When setting `min_N_pts`, it operates by sliding a degree
+                      window, grabbing all points in the window, and quitting
+                      only once enough points have been generated. This
+                      argument sets the width of the window.
+    - `max_window_i`: The maximum number of windows to try if setting min_N_pts.
+    - `max_time`:     The maximum amount of time (in seconds) per degree window
+                      to search for p-vectors.
+    - `verbosity`:    The verbosity level.
 
     **Returns:**
     Possible p-vectors.
@@ -170,6 +174,17 @@ def pvecs(
     return ps.tolist()
 
 def mindeg_pvec_gurobi(data: "CYData", verbosity: int = 0):
+    """
+    **Description:**
+    Use gurobi to find the minimum degree integral p-vector.
+
+    **Arguments:**
+    - `data`:      The CYData describing the CY.
+    - `verbosity`: The verbosity level.
+
+    **Returns:**
+    The minimum-degree p-vector
+    """
     # import gurobi
     import gurobipy as gp
 
@@ -266,128 +281,6 @@ def allow_gcds(Ks, Ms, Qmax, h11):
     else:
         raise ValueError(f"#input = {num_input}")
         return np.zeros((0,h11),dtype=int), np.zeros((0,h11),dtype=int)
-
-# coni
-# ----
-#@numba.njit
-#def gcd_vec(vec):
-#    g = abs(vec[0])
-#    for i in range(1, len(vec)):
-#        x = abs(vec[i])
-#        while x != 0:
-#            g, x = x, g % x
-#    return g
-
-@numba.njit
-def try_coni_K0(Qperps, Kperps, Ms, h11, lo, up, Qmin, Qmax, max_N_out: int = 100_000_000):
-    """
-    columnwise
-    """
-    # check if empty
-    num_pfvs = Ms.shape[1]
-    if num_pfvs == 0:
-        return np.empty((h11,0), dtype=np.int32), np.empty((h11,0), dtype=np.int32)
-
-    # make the output objects
-    Ks_out = np.empty((h11, max_N_out), dtype=np.int32)
-    Ms_out = np.empty((h11, max_N_out), dtype=np.int32)
-    op = 0
-
-    # fill them
-    for i in range(num_pfvs):
-        for K0 in range(lo[i], up[i]+1):
-            Qtest = Qperps[i] - K0*Ms[0,i]
-
-            # save if this is in the permissible range
-            if (Qmin<=Qtest) and (Qtest<=Qmax):
-                if op >= max_N_out:
-                    print('saturated maximum allowed outputs')
-                    return Ks_out, Ms_out
-
-                Ks_out[0,op]  = K0
-                Ks_out[1:,op] = Kperps[:,i]
-                Ms_out[:,op]  = Ms[:,i]
-                op += 1
-
-    return Ks_out[:,:op], Ms_out[:,:op]
-
-@numba.njit
-def set_coni_K0(Ks, Ms, Kperp_gcd, h11, Qmin, Qmax,
-    #Qperps=None,
-    max_N_out: int = 1_000_000, verbosity: int = 0):
-    """
-    columnwise
-    """
-    if np.any(Ms[0]==0):
-        raise ValueError("needs M0!=0")
-
-    # check if empty
-    num_pfvs = len(Ms)
-    if num_pfvs == 0:
-        return np.empty((h11,0), dtype=np.int32), np.empty((h11,0), dtype=np.int32)
-
-    # output objects
-    # --------------
-    Ks_out = np.empty((h11, max_N_out), dtype=np.int32)
-    Ms_out = np.empty((h11, max_N_out), dtype=np.int32)
-    op = 0
-    N_skipped = 0
-    
-    # need to accommodate two things:
-    #    1) K0 is effectively unfixed
-    #    2) K->K/gcd(K) is allowed (introduces denominator to p-vec)
-    # observe:
-    #    Qmin <= (-K0*M0 - dot(Kperp, Mperp)) / gcd(K) <= Qmax
-    #    Qmin*gcd(K) <= -K0*M0 - dot(Kperp, Mperp) <= Qmax*gcd(K)
-    # also observe that 1 <= gcd(K) <= gcd(Kperp) so we can rewrite
-    #    Qmin <= -K0*M0 - dot(Kperp, Mperp) <= Qmax*gcd(Kperp)
-    # not all such K0 will be valid, but any valid K0 will satisfy this inequality
-    # such a K0 can be found simply - rewrte:
-    #    Qmin + dot(Kperp, Mperp) <= -K0*M0 <= Qmax*gcd(Kperp) + dot(Kperp, Mperp)
-    # so the bounds on K0 are (which one is upper vs. lower depends on sign of M0)
-    #    -(Qmin + dot(Kperp, Mperp))/M0
-    # and
-    #    -(Qmax*gcd(Kperp) + dot(Kperp, Mperp))/M0
-    #if Qperps is None:
-    #    Qperps = -np.sum(Ks[:,1:]*Ms[:,1:],axis=1)
-    Ktest = np.empty(h11, dtype=np.int32)
-    for i in range(num_pfvs):
-        # read info from K,M
-        M0    = Ms[0,i]
-        Mperp = Ms[1:,i]
-        Kperp = Ks[1:,i]
-        #Qperp = Qperps[i]
-        Qperp = 0
-        for i in range(h11-1):
-            Qperp -= Kperp[i]*Mperp[i]
-
-        # bounds on K0
-        #Kperp_gcd = gcd_vec(Kperp)
-        lo = -(Qmax*Kperp_gcd - Qperp)/M0
-        up = -(Qmin - Qperp)/M0
-        if up<lo:
-            lo,up = up,lo
-
-        # try all values of K0
-        for K0 in range(math.floor(lo),math.ceil(up)+1):
-            Ktest[0]  = K0
-            Ktest[1:] = Kperp
-
-            # compute the dot product
-            Qtest = -K0*M0 + Qperp
-
-            # save if this is in the permissible range
-            if (Qmin<=Qtest) and (Qtest<=Qmax):
-                if op >= max_N_out:
-                    print('saturated maximum allowed outputs')
-                    return Ks_out, Ms_out
-
-                Ks_out[:,op]  = Ktest
-                Ms_out[0,op]  = M0
-                Ms_out[1:,op] = Mperp
-                op += 1
-
-    return Ks_out[:,:op], Ms_out[:,:op]
 
 # non-coni Zp
 # ===========
@@ -687,6 +580,17 @@ def ZpK(
 # coni Zp
 # =======
 def coniMellipsoid(p, data):
+    """
+    **Description:**
+    Compute the matrices defining the M-ellipsoid in coni-ZpM.
+
+    **Arguments:**
+    - `p`:    The relevant p-vector
+    - `data`: The CYData describing the CY.
+
+    **Returns:**
+    mat, Z, Binter
+    """
     kappa  = data.kappa_cob
     Mbasis = data.M_lattice()
 
@@ -749,6 +653,57 @@ def coniMellipsoid(p, data):
 
     return mat, Z, Binter
 
+def Kperp_gcd_lattice(data, Z, Binter, gcd):
+    # compute the matrix A such that Kperp = A@c
+    # ------------------------------------------
+    proj = np.hstack([
+        np.zeros((data.h11-1,1), dtype=int),
+        np.eye(data.h11-1, dtype=int)
+    ])
+    A = proj@Z@Binter
+
+    # compute the basis B such that (A @ (B@d)) % gcd == 0
+    # ----------------------------------------------------
+    # equiv: compute null lattice of [A, -gcd*identity]...
+    #        first #A.shape[1] rows of null-lattice correspond to B...
+    A_extended    = np.hstack([A, -gcd*np.eye(A.shape[0], dtype=int) ])
+    A_extended_fl = flint.fmpz_mat(A_extended.tolist())
+
+    # get the null lattice via HNF
+    Ht, Tt = A_extended_fl.transpose().hnf(transform=True)
+    H = Ht.transpose()
+    T = Tt.transpose() # last ? columns of T correspond to null lattice
+
+    # extract the data corresponding to null lattice
+    # ----------------------------------------------
+    # think: T[:T.nrows()//2, first_null_ind:] is the desired null lattice
+    first_null_ind = 0
+    for j in range(H.ncols()):
+        for i in range(H.nrows()):
+            if H[i,j] != 0:
+                break
+        else:
+            first_null_ind = j
+            break
+
+    # extract the data
+    null_fl = flint.fmpz_mat(T.nrows()//2, H.ncols()-first_null_ind)
+    for i in range(null_fl.nrows()):
+        for j in range(null_fl.ncols()):
+            null_fl[i,j] = T[i,j+first_null_ind]
+
+    # LLL transform and map to NumPy array
+    null = np.array(null_fl.transpose().lll().transpose().tolist()).astype(int)
+    assert np.all((A@null % gcd) == 0)
+
+    # sort null to maximize leading 0s in (Binter@null)[0]
+    sort_inds = np.argsort((Binter@null)[0]!=0)
+    null = null[:,sort_inds]
+
+    # return
+    # ------
+    return null
+
 @numba.njit(parallel=True, fastmath=False)
 def gcd_of_matmul(A, C):
     """
@@ -776,11 +731,10 @@ def coniZpM(
     ps: "ArrayLike",
     Qmax: int = None,
     M0min: int = 13,
-    M0max: int = float('inf'),
     max_Kperp_gcd: int = 4,
     ellipsoid_dilation: float = 1, # typically want >=1
-    cut_Kprime: bool = True,
     use_box: bool = False,
+    use_gcd_lattice: bool = False,
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0,
     low_level_parallelism: bool = True,
@@ -831,10 +785,23 @@ def coniZpM(
         # =========================================
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
-            if not use_box:
-                L = np.linalg.cholesky(mat)
+            # BOX METHOD
+            # ==========
+            if use_box:
+                print("NOT RECOMMENDED!!!")
+                lattice_points = lattice.boundingbox_enumerate(
+                    mat,
+                    ellipsoid_dilation*Qmax,
+                    max_N_out=max_N_pfvs)
 
-                if cut_Kprime:
+            # ELLIPSOIDAL METHODS
+            # ===================
+            else:
+
+                # do the computation in the standard way...
+                 # -----------------------------------------
+                if not use_gcd_lattice:
+                    # find relevant lattice points in ellipsoid c.T@mat@c <= Q
                     proj = np.hstack([
                         np.zeros((data.h11-1, 1), dtype=int),
                         np.eye(data.h11-1, dtype=int)
@@ -848,46 +815,54 @@ def coniZpM(
                         print("C long error :(")
                         raise e
 
-                    #print("THIS IS UGLY... :()")
-                    #H32  = np.array(G_fl.hnf().tolist()).astype(np.int32)
-                    #assert np.all(H==H32)
-
                     lattice_points, rawQs = lattice.coni_kernel(
                         # ellipsoid definition
-                        L=L,
+                        L=np.linalg.cholesky(mat),
                         Q=Qmax,
                         dilation=ellipsoid_dilation,
                         # M0 cuts:
                         Binter0=Binter[0,:],
                         M0min=M0min,
-                        M0max=M0max,
                         # K' cuts:
                         H = H,
                         # misc:
-                        max_N_out=max_N_pfvs,
-                        eps=1e-4)
+                        max_N_out=max_N_pfvs)
+                
+                # use GCD lattices
+                # ----------------
                 else:
-                    lattice_points, rawQs = lattice.fp_iterative_lincut(
-                        # ellipsoid definition
-                        L=L,
-                        Q=ellipsoid_dilation*Qmax,
-                        # M0 cuts:
-                        linvec=Binter[0,:],
-                        linmin=M0min,
-                        linmax=M0max,
-                        # misc:
-                        max_N_out=max_N_pfvs,
-                        eps=1e-4)
+                    # i.e., encode gcd(Kperp) == val as a lattice
+                    # scan in each lattice
+                    lattice_points = np.empty((0,Binter.shape[1]), dtype=int)
+                    rawQs          = np.empty((0,), dtype=int)
 
+                    for gcd in range(1,ellipsoid_dilation+1):
+                        Bgcd = Kperp_gcd_lattice(data, Z, Binter, gcd)
+                        
+                        vs, vQs = lattice.fp_iterative_lincut(
+                            # ellipsoid definition
+                            L=np.linalg.cholesky(Bgcd.T@mat@Bgcd),
+                            Q=gcd*Qmax,
+                            # M0 cuts:
+                            linvec = (Binter@Bgcd)[0],
+                            linmin = 13,
+                            # misc:
+                            max_N_out=max_N_pfvs)
+
+                        # concatenate
+                        lattice_points = np.vstack([
+                            lattice_points,
+                            vs@Bgcd.T
+                        ])
+                        rawQs = np.concatenate([rawQs, vQs])
+
+                # clean Qs
+                # --------
                 rawQs = np.rint(rawQs).astype(int)
 
                 if verbosity >= 1:
                     print(f"found {len(lattice_points)} lattice points...")
-            else:
-                lattice_points = lattice.boundingbox_enumerate(
-                    mat,
-                    ellipsoid_dilation*Qmax,
-                    max_N_out=max_N_pfvs)
+
         except Exception as e:
             print("ERROR!!!")
             print(f"LIKELY mat={mat.tolist()} ISN'T POSITIVE DEFINITE...")
@@ -1007,10 +982,8 @@ def coniZpM(
                     # K'     = -K[0] + (natural K)[0] * Kperp_gcd/K_gcds
                     # K' > 0 => K[0] < (natural K)[0] * Kperp_gcd/K_gcds
                     # (subtract 1e-4 to enforce K'>0, not K'>=0)
-                    if cut_Kprime:
-                        #tmp = (natural_K0s*Kperp_gcd-1e-4)//K_gcds
-                        tmp = np.floor((natural_K0s*Kperp_gcd-1e-4)/K_gcds).astype(int)
-                        up  = np.minimum(up, tmp.astype(int))
+                    tmp = np.floor((natural_K0s*Kperp_gcd-1e-4)/K_gcds).astype(int)
+                    up  = np.minimum(up, tmp.astype(int))
 
                     # compute the PFVs
                     # (any lo<=K0<=up should work...)
