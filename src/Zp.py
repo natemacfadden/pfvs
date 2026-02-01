@@ -880,6 +880,9 @@ def coniZpM(
                         eps=1e-4)
 
                 rawQs = np.rint(rawQs).astype(int)
+
+                if verbosity >= 1:
+                    print(f"found {len(lattice_points)} lattice points...")
             else:
                 lattice_points = lattice.boundingbox_enumerate(
                     mat,
