@@ -69,7 +69,7 @@ class PFV():
 
         # GVs/series info
         self._gvs         = None
-        self._series      = None
+        self._series      = []
         self._all_exps    = []
         self._all_gvs     = []
         self._all_charges = []
@@ -591,12 +591,11 @@ class PFV():
 
     def series(self, N_nonzero=float('inf'), verbosity=0):
         # initialize series container
-        if self._series is None:
-            self._series = []
-            self._all_exps = []
-            self._all_gvs = []
-            self._all_charges = []
-            self._all_coeffs = []
+        self._series = []
+        self._all_exps = []
+        self._all_gvs = []
+        self._all_charges = []
+        self._all_coeffs = []
 
         len_series = len(self._series)
 
