@@ -842,6 +842,9 @@ class PFV():
 
         # plot the data
         print("Plotting the series... evauluated at tau0 from 2-term")
+        self.plot_series()
+
+    def plot_series(self):
         corrections = self.series_corrections(as_logs=True)
         plt.plot(range(2,2+len(corrections)),
                  corrections)
