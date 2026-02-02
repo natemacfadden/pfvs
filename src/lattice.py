@@ -279,20 +279,13 @@ def fp_ellipsoid(
         Q   = np.empty((out_count[0]), dtype=np.int64)
     else:
         # iterative
-        if linvec is None:
-            out, Q = fp_iterative(
-                L=L,
-                Q=Q,
-                max_N_out=max_N_out,
-                eps=eps)
-        else:
-            out, Q = fp_iterative_lincut(
-                L=L,
-                Q=Q,
-                linvec=linvec,
-                linmin=linmin,
-                max_N_out=max_N_out,
-                eps=eps)
+        out, Q = fp_iterative(
+            L=L,
+            Q=Q,
+            linvec=linvec,
+            linmin=linmin,
+            max_N_out=max_N_out,
+            eps=eps)
         
         if out.shape[0] == max_N_out:
             print("SATURATED MAXIMUM ALLOWED OUTPUTS")
@@ -433,200 +426,8 @@ def fp_recurse(
 def fp_iterative(
         L: "ArrayLike",
         Q: float,
-        max_N_out: int = 10_000_000,
-        eps: float = 1e-4,
-        COORD_BUFF_SIZE: int = 2048) -> "ArrayLike":
-    """
-    **Description:**
-    Enumerate all nonzero integer vectors vec such that
-        0 <= vec^T @ mat @ vec <= Q.
-
-    The 'Fincke-Pohst' algorithm (FP) from
-        Improved Methods for Calculating Vectors of Short Length in a Lattice,
-        Including a Complexity Analysis by Fincke, Pohst
-    can be viewed as doing exactly this.
-
-    Roughly, FP operates via:
-        1) Cholesky-decompose mat = L@L^T for L.T upper triangular
-        2) define c = L^T@vec, so the quadratic form becomes 0 <= |c|^2 <= Q
-        3) observe that, since L^T is upper triangular, c[i] depends only on
-           vec[i:]. E.g., c[0] depends on vec[0], ..., vec[dim-1]
-                          c[1] depends on vec[1], ..., vec[dim-1]
-                          c[dim-1] depends on vec[dim-1]
-        4) fix vec[dim-1], which reduces the norm-bound on c from Q to
-           Q-c[dim-1]^2 and effectively reduces the dimension of the problem,
-           at the cost of adding a shift-vector to c[:dim-1]
-        5) recurse
-    
-    **Note:**
-    This is an iterative (DFS) implementation using an explicit stack.
-
-    **Arguments:**
-    - `L`:               The lower triangular matrix such that mat = L@L.T
-    - `Q`:               The ellipsoid bound.
-    - `max_N_out`:       The maximum number of output allowed.
-    - `eps`:             A small number used for correctly setting bounds
-                         despite floating point errors.
-    - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
-                         of vec[i].
-
-    **Returns:**
-    The vectors `vec` in the ellipsoid.
-    """
-    dim        = L.shape[0]
-    L_diag_inv = 1.0 / np.diag(L)
-
-    # output object
-    # -------------
-    out = np.empty((max_N_out, dim), dtype=np.int64)
-    Qs  = np.empty((max_N_out,), dtype=np.float32)
-    
-    # output pointer
-    op  = 0
-
-    # internal vector that gets built/written to output
-    vec = np.zeros(dim, dtype=np.int64)
-
-    # stack variables
-    # ---------------
-    # stack pointer
-    sp = 0
-
-    # max stack depth
-    MAX_DEPTH = dim + 1
-
-    # stack arrays: i, pos, remaining_Q, nonzero, candidate values
-    stack_i      = np.empty(MAX_DEPTH, np.int64)
-    stack_pos    = np.empty(MAX_DEPTH, np.int64)
-    stack_remQ   = np.empty(MAX_DEPTH, np.float64)
-    stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
-    
-    # vec[i] candidate arrays per depth (preallocate maximum possible size)
-    stack_val_len= np.zeros(MAX_DEPTH, np.int64) # number of candidates
-    stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # candidates
-
-    # offsets for ci
-    # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
-    ci_offsets = np.zeros(dim, dtype=np.float64)
-
-    # initialize stack
-    # ----------------
-    stack_i[sp]    = dim-1
-    stack_pos[sp]  = 0
-    stack_remQ[sp] = Q
-    stack_nz[sp]   = False
-
-    stack_val_len[sp] = -1  # will fill below
-    #stack_vals unset here
-
-    # process stack until empty
-    # -------------------------
-    while sp >= 0:
-        # read values
-        i    = stack_i[sp]
-        pos  = stack_pos[sp]
-        remQ = stack_remQ[sp]
-        nz   = stack_nz[sp]
-
-        # check if node is completed
-        # --------------------------
-        # if i==-1, then we have fully written vec
-        if i == -1:
-            if nz:
-                if op >= max_N_out:
-                    break
-                out[op, :] = vec
-                Qs[op]      = Q - remQ
-                op += 1
-            # kill node
-            sp -= 1
-            continue
-
-        # check if current depth is completed
-        # -----------------------------------
-        if pos == stack_val_len[sp]:
-            # kill node
-            sp -= 1
-            for k in range(i):
-                ci_offsets[k] -= L[i,k] * vec[i]
-            continue
-
-        # current depth incomplete...
-        # ---------------------------
-        # set candidate values of vec[i] if first time to depth
-        if stack_val_len[sp] == -1:
-            # feasible integer bounds for vec[i]
-            # -R                      <= c[i]          <= R
-            # -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
-            # (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
-            # where we used that the diagonal is positive
-            if remQ<0:
-                remQ = 0
-            R = np.sqrt(remQ)
-            lo = int(np.ceil(( -R - ci_offsets[i]) * L_diag_inv[i] - eps))
-            hi = int(np.floor(( R - ci_offsets[i]) * L_diag_inv[i] + eps))
-
-            # values of veci to iterate over
-            k = 0
-            for v in range(lo,hi+1):
-                stack_vals[sp,k] = v
-                k += 1
-
-            # kill node if no valid veci values
-            if k == 0:
-                sp -= 1
-                continue
-            # kill execution if there are too many values
-            elif k>COORD_BUFF_SIZE:
-                msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
-                raise ValueError(msg)
-
-            # yes valid veci values
-            stack_val_len[sp] = k
-            stack_pos[sp] = 0
-            pos = 0
-
-            for k in range(i):
-                ci_offsets[k] += L[i,k] * (stack_vals[sp, pos]-1)
-
-        # pick candidate veci
-        # -------------------
-        veci   = stack_vals[sp, pos]
-        vec[i] = veci
-
-        # advance pos for next iteration
-        stack_pos[sp] += 1
-
-        # update ci_offsets for descendents
-        for k in range(i):
-            ci_offsets[k] += L[i,k]# * 1
-
-        # get ci, the new amount of remaining Q
-        ci = L[i,i]*veci + ci_offsets[i]
-        new_rem = remQ - ci*ci
-
-        # cut of no more Q left...
-        if new_rem < 0 - eps:
-            continue
-
-        # passes cuts -> push next depth :)
-        sp += 1
-        stack_i[sp]       = i-1
-        stack_pos[sp]     = 0
-        stack_remQ[sp]    = new_rem
-        stack_nz[sp]      = nz or (veci != 0)
-        stack_val_len[sp] = -1  # will fill when we visit
-        # candidate array for this depth is stack_vals[sp,:]
-        # else do not push (prune)
-
-    return out[:op, :], Qs[:op]
-
-@njit
-def fp_iterative_lincut(
-        L: "ArrayLike",
-        Q: float,
-        linvec: "ArrayLike",
-        linmin: int,
+        linvec: "ArrayLike" = None,
+        linmin: int = None,
         max_N_out: int = 10_000_000,
         eps: float = 1e-4,
         COORD_BUFF_SIZE: int = 2048) -> "ArrayLike":
@@ -671,15 +472,18 @@ def fp_iterative_lincut(
     L_diag_inv = 1.0 / np.diag(L)
 
     # linear constraint
-    num_zeros = 0
-    zeros = True
-    for i in range(dim):
-        if linvec[i] == 0:
-            if zeros == False:
-                raise ValueError("linvec is not sorted so 0s are first...")
-            num_zeros += 1
-        else:
-            zeros = False
+    if linvec is None:
+        num_zeros = -1
+    else:
+        num_zeros = 0
+        zeros = True
+        for i in range(dim):
+            if linvec[i] == 0:
+                if zeros == False:
+                    raise ValueError("linvec is not sorted so 0s are first...")
+                num_zeros += 1
+            else:
+                zeros = False
 
     # output object
     # -------------
@@ -1117,6 +921,93 @@ def boundingbox_bounds(mat: "ArrayLike", Q: float):
 
 @njit
 def enumerate_box_njit(bounds: "ArrayLike", max_N_out: int):
+    dim = len(bounds)
+    
+    # output array
+    out = np.empty((max_N_out, dim), dtype=np.int32)
+    op = 0  # output pointer
+    
+    # iterative stack
+    vec = np.zeros(dim, dtype=np.int32)
+    stack_i = 0
+    stack_pos = np.zeros(dim, dtype=np.int32)
+    stack_len = np.zeros(dim, dtype=np.int32)
+    
+    # allowed values per dimension
+    candidates = np.empty((dim, 2*bounds.max()+1), dtype=np.int32)
+
+    for i in range(dim):
+        k = 0
+        for v in range(-bounds[i], bounds[i]+1):
+            candidates[i,k] = v
+            k += 1
+        stack_len[i] = k
+    
+    # iterate in a ~DFS manner
+    stack_pos[:] = 0
+    
+    while stack_i >= 0:        
+        if stack_pos[stack_i] == stack_len[stack_i]:
+            stack_i -= 1
+            if stack_i >= 0:
+                stack_pos[stack_i] += 1
+            continue
+        
+        vec[stack_i] = candidates[stack_i, stack_pos[stack_i]]
+        
+        if stack_i == dim-1:
+            # leaf node
+            if op >= max_N_out:
+                raise ValueError("Too many outputs...")
+            out[op,:] = vec
+            op += 1
+
+            stack_pos[stack_i] += 1
+        else:
+            stack_i += 1
+            stack_pos[stack_i] = 0
+    
+    return out[:op,:]
+
+@njit
+def coni_box_kernel(bounds: "ArrayLike", max_N_out: int):
+    """
+    **Description:**
+    Adaptation of the (iterative) Fincke-Pohst algorithm for utility in
+    constructing coni-PFVs. I.e., solves
+        0 <= vec^T @ mat @ vec <= dilation*Q.
+    as well as (M[0] cuts)
+        M0min <= dot(Binter0, vec)
+    as well as (K'>0 cuts)
+        (vec^T @ mat @ vec)//Q <= gcd(Kperp)
+                                = gcd([0, 1]@Z@Binter@vec)
+                                = gcd(H@vec)
+    for H the row-HNF of [0, 1]@Z@Binter.
+
+    Any `vec` satisfying all of the above can generate a coni-PFV, as long as
+    det(N) != 0.
+
+    **Arguments:**
+    - `L`:               The lower triangular matrix such that mat = L@L.T
+    - `Q`:               The ellipsoid bound.
+    - `dilation`:        The maximum allowed dilation to allow... As long as
+                         gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec
+                         can still define coni-PFV.
+    - `Binter0`:         Binter[0,:]. The vector such that dot(Binter0,vec)=M0.
+                         BEST TO ORDER COLUMNS SUCH THAT Binter0 HAS A LARGE
+                         NUMBER OF LEADING 0s.
+    - `M0min`:           The minimum value of M0 permitted. Inclusive.
+    - `H`:               Let G be the matrix such that Kperp = G@vec. Then
+                         H = HNF(G).
+    - `max_N_out`:       The maximum number of output allowed.
+    - `eps`:             A small number used for correctly setting bounds
+                         despite floating point errors.
+    - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
+                         of vec[i].
+
+    **Returns:**
+    The vectors `vec` in the ellipsoid and obeying the extra constraints
+    """
     dim = len(bounds)
     
     # output array
