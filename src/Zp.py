@@ -108,12 +108,13 @@ def pvecs(
                 min_deg = _min,
                 max_deg = _max,
                 max_time = max_time)
-            ps     = np.vstack([ps, new_ps])
-            N_ps  += len(new_ps)
+            if len(new_ps):
+                ps     = np.vstack([ps, new_ps])
+                N_ps  += len(new_ps)
 
-            # break if done
-            if N_ps >= min_N_pts:
-                break
+                # break if done
+                if N_ps >= min_N_pts:
+                    break
 
         return ps
 
