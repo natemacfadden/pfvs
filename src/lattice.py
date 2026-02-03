@@ -27,6 +27,9 @@ from numba import njit
 import numpy as np
 import scipy as sp
 
+from numba import types
+from numba.typed import Dict
+
 # basic helpers
 # =============
 def lcm(a, b):
@@ -712,9 +715,8 @@ def coni_kernel(
     # -------------
     out = np.empty((max_N_out, dim), dtype=np.int64)
     Qs  = np.empty((max_N_out,), dtype=np.float64)
-    
-    # output pointer
-    op  = 0
+
+    op  = 0 # output pointer
 
     # internal vector that gets built/written to output
     vec = np.zeros(dim, dtype=np.int64)
@@ -837,6 +839,15 @@ def coni_kernel(
         # advance pos for next iteration
         stack_pos[sp] += 1
 
+        # cut if M0 violates bounds
+        if i == num_zeros:
+            M0 = 0
+            for j in range(i,dim):
+                M0 += Binter0[j]*vec[j]
+
+            if (M0 < M0min):
+                continue
+
         # get ci, the new amount of remaining Q
         ci = L[i,i]*veci + stack_ci_offset[sp]#ci_offsets[i]
         new_rem = remQ - ci*ci
@@ -861,15 +872,6 @@ def coni_kernel(
         if (new_gcd > 0) and (new_gcd < required_dilation):
             continue
 
-        # cut if M0 violates bounds
-        if i == num_zeros:
-            M0 = 0
-            for j in range(i,dim):
-                M0 += Binter0[j]*vec[j]
-
-            if (M0 < M0min):
-                continue
-
         # passes cuts -> push next depth :)
         sp += 1
         stack_i[sp]       = i-1
@@ -892,6 +894,23 @@ def boundingbox_enumerate(
     Q: float,
     use_np: bool=False,
     max_N_out: int = 1_000_000_000):
+    """
+    **Description:**
+    Enumerate all nonzero integer vectors vec in a bounding box around the
+    ellipsoid
+        0 <= vec^T @ mat @ vec <= Q.
+
+    **Arguments:**
+    - `mat`:       The matrix defining the ellipsoid via
+                       0 <= vec^T @ mat @ vec <= Q.
+    - `Q`:         A positive parameter defining the size of the ellipsoid.
+    - `use_np`:    Whether to use a simple NumPy implementation (slower)
+    - `max_N_out`: The maximum number of output allowed. We construct an array
+                   with this length.
+
+    **Returns:**
+    The lattice vectors, as rows.
+    """
     bounds = np.floor(boundingbox_bounds(mat, Q)).astype(int)
 
     # simple (but slow) computation using numpy
@@ -901,6 +920,19 @@ def boundingbox_enumerate(
         return enumerate_box_njit(bounds, max_N_out)
 
 def boundingbox_bounds(mat: "ArrayLike", Q: float):
+    """
+    **Description:**
+    Computes a bounding box around the ellipsoid
+        0 <= vec^T @ mat @ vec <= Q.
+
+    **Arguments:**
+    - `mat`:       The matrix defining the ellipsoid via
+                       0 <= vec^T @ mat @ vec <= Q.
+    - `Q`:         A positive parameter defining the size of the ellipsoid.
+
+    **Returns:**
+    Bounds.
+    """
     mat = np.asarray(mat)
     dim = mat.shape[0]
 
@@ -921,6 +953,21 @@ def boundingbox_bounds(mat: "ArrayLike", Q: float):
 
 @njit
 def enumerate_box_njit(bounds: "ArrayLike", max_N_out: int):
+    """
+    **Description:**
+    Enumerate all vectors in the box [-bounds, bounds]
+
+    Uses an iterative, stack based method analogous to the Fincke-Pohst
+    algorithm.
+
+    **Arguments:**
+    - `bounds`:    Bounds defining the box.
+    - `max_N_out`: The maximum number of output allowed. We construct an array
+                   with this length.
+
+    **Returns:**
+    The lattice vectors, as rows.
+    """
     dim = len(bounds)
     
     # output array
@@ -970,88 +1017,185 @@ def enumerate_box_njit(bounds: "ArrayLike", max_N_out: int):
     return out[:op,:]
 
 @njit
-def coni_box_kernel(bounds: "ArrayLike", max_N_out: int):
+def coni_box_kernel(
+        bounds: "ArrayLike",
+        L: "ArrayLike",
+        Q: int,
+        dilation: float,
+        # M0 cuts:
+        Binter0: "ArrayLike",
+        M0min: int,
+        # K' cuts:
+        H: "ArrayLike",
+        # misc:
+        max_N_out: int,
+        eps: float = 1e-4):
     """
     **Description:**
-    Adaptation of the (iterative) Fincke-Pohst algorithm for utility in
-    constructing coni-PFVs. I.e., solves
-        0 <= vec^T @ mat @ vec <= dilation*Q.
-    as well as (M[0] cuts)
-        M0min <= dot(Binter0, vec)
-    as well as (K'>0 cuts)
-        (vec^T @ mat @ vec)//Q <= gcd(Kperp)
-                                = gcd([0, 1]@Z@Binter@vec)
-                                = gcd(H@vec)
-    for H the row-HNF of [0, 1]@Z@Binter.
+    Enumerate all vectors in the box [-bounds, bounds].
 
-    Any `vec` satisfying all of the above can generate a coni-PFV, as long as
-    det(N) != 0.
+    TAILORED TO CONI-PFV CREATION
+
+    Uses an iterative, stack based method analogous to the Fincke-Pohst
+    algorithm.
 
     **Arguments:**
-    - `L`:               The lower triangular matrix such that mat = L@L.T
-    - `Q`:               The ellipsoid bound.
-    - `dilation`:        The maximum allowed dilation to allow... As long as
-                         gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec
-                         can still define coni-PFV.
-    - `Binter0`:         Binter[0,:]. The vector such that dot(Binter0,vec)=M0.
-                         BEST TO ORDER COLUMNS SUCH THAT Binter0 HAS A LARGE
-                         NUMBER OF LEADING 0s.
-    - `M0min`:           The minimum value of M0 permitted. Inclusive.
-    - `H`:               Let G be the matrix such that Kperp = G@vec. Then
-                         H = HNF(G).
-    - `max_N_out`:       The maximum number of output allowed.
-    - `eps`:             A small number used for correctly setting bounds
-                         despite floating point errors.
-    - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
-                         of vec[i].
+    - `bounds`:    Bounds defining the box.
+    - `max_N_out`: The maximum number of output allowed. We construct an array
+                   with this length.
 
     **Returns:**
-    The vectors `vec` in the ellipsoid and obeying the extra constraints
+    The lattice vectors, as rows.
     """
+    Q_upper    = Q*dilation
+
+    # basics
+    # ------
     dim = len(bounds)
+
+    # linear constraint
+    num_zeros = 0
+    zeros = True
+    for i in range(dim):
+        if Binter0[i] == 0:
+            if zeros == False:
+                raise ValueError("Binter0 is not sorted so 0s are first...")
+            num_zeros += 1
+        else:
+            zeros = False
+
+    # output object
+    # -------------
+    out = np.empty((max_N_out, dim), dtype=np.int64)
+    Qs  = np.empty((max_N_out,), dtype=np.float64)
+
+    op  = 0 # output pointer
+
+    # internal vector that gets built/written to output
+    vec = np.zeros(dim, dtype=np.int64)
+
+    # stack variables
+    # ---------------
+    # stack pointer
+    sp = 0
+
+    # max stack depth
+    MAX_DEPTH = dim + 1
+
+    # stack arrays: i, pos, remaining_Q, nonzero, candidate values
+    stack_i   = np.empty(MAX_DEPTH, np.int64)
+    stack_pos = np.empty(MAX_DEPTH, np.int64)
+    stack_Q   = np.empty(MAX_DEPTH, np.float64)
+    stack_gcd = np.empty(MAX_DEPTH, np.float64)
+    stack_nz  = np.zeros(MAX_DEPTH, np.bool_)
     
-    # output array
-    out = np.empty((max_N_out, dim), dtype=np.int32)
-    op = 0  # output pointer
-    
-    # iterative stack
-    vec = np.zeros(dim, dtype=np.int32)
-    stack_i = 0
-    stack_pos = np.zeros(dim, dtype=np.int32)
-    stack_len = np.zeros(dim, dtype=np.int32)
-    
+    # vec[i] candidate arrays per depth (preallocate maximum possible size)
     # allowed values per dimension
-    candidates = np.empty((dim, 2*bounds.max()+1), dtype=np.int32)
+    stack_val_len= 2*bounds + 1 # number of candidates
+    stack_vals   = np.empty((dim, 2*bounds.max()+1), dtype=np.int64) # candidates
 
     for i in range(dim):
         k = 0
         for v in range(-bounds[i], bounds[i]+1):
-            candidates[i,k] = v
+            stack_vals[i,k] = v
             k += 1
-        stack_len[i] = k
-    
-    # iterate in a ~DFS manner
-    stack_pos[:] = 0
-    
-    while stack_i >= 0:        
-        if stack_pos[stack_i] == stack_len[stack_i]:
-            stack_i -= 1
-            if stack_i >= 0:
-                stack_pos[stack_i] += 1
-            continue
-        
-        vec[stack_i] = candidates[stack_i, stack_pos[stack_i]]
-        
-        if stack_i == dim-1:
-            # leaf node
-            if op >= max_N_out:
-                raise ValueError("Too many outputs...")
-            out[op,:] = vec
-            op += 1
 
-            stack_pos[stack_i] += 1
-        else:
-            stack_i += 1
-            stack_pos[stack_i] = 0
-    
-    return out[:op,:]
+    # offsets for ci
+    # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
+    stack_ci_offset = np.zeros(MAX_DEPTH, np.float64)# offset c[i]-L[i,i]*vec[i]
+
+    # initialize stack
+    # ----------------
+    stack_i[sp]   = dim-1
+    stack_pos[sp] = 0
+    stack_Q[sp]   = 0
+    stack_gcd[sp] = 0
+
+    # process stack until empty
+    # -------------------------
+    while sp >= 0:
+        # read values
+        i   = stack_i[sp]
+        pos = stack_pos[sp]
+        _Q  = stack_Q[sp]
+        gcd = stack_gcd[sp]
+
+        # check if node is completed
+        # --------------------------
+        # if i==-1, then we have fully written vec
+        if i == -1:
+            if op >= max_N_out:
+                break
+
+            # don't save the 0-vector
+            if _Q>eps:
+                out[op, :] = vec
+                Qs[op]     = _Q
+                op += 1
+            # kill node
+            sp -= 1
+            continue
+
+        # check if current depth is completed
+        # -----------------------------------
+        if pos == stack_val_len[i]:
+            # kill node
+            sp -= 1
+            continue
+
+        # set ci_offset
+        # -------------
+        if pos == 0:
+            ci_offset = 0.0
+            for j in range(i+1, dim):
+                ci_offset += L[j,i] * vec[j]
+
+            stack_ci_offset[sp] = ci_offset
+
+        # pick candidate veci
+        # -------------------
+        veci   = stack_vals[i, pos]
+        vec[i] = veci
+
+        # advance pos for next iteration
+        stack_pos[sp] += 1
+
+        # cut if M0 violates bounds
+        if i == num_zeros:
+            M0 = 0
+            for j in range(i,dim):
+                M0 += Binter0[j]*vec[j]
+
+            if (M0 < M0min):
+                continue
+
+        # get ci, the new amount Q
+        ci = L[i,i]*veci + stack_ci_offset[sp]#ci_offsets[i]
+        new_Q = _Q + ci*ci
+
+        # check if we violated K'>0 constraints
+        Hvec_i = 0
+        for k in range(i,dim):
+            Hvec_i += H[i,k] * vec[k]
+        
+        required_dilation = _Q/Q - eps
+
+        # first try a simpler-to-compute upper
+        new_gcd_upper_bound = gcd #min(gcd, abs(Hvec_i))
+        if (new_gcd_upper_bound > 0) and (new_gcd_upper_bound < required_dilation):
+            continue
+
+        new_gcd = math.gcd(gcd, Hvec_i)
+        if (new_gcd > 0) and (new_gcd < required_dilation):
+            continue
+
+        # passes cuts -> push next depth :)
+        sp += 1
+        stack_i[sp]   = i-1
+        stack_pos[sp] = 0
+        stack_Q[sp]   = new_Q
+        stack_gcd[sp] = new_gcd
+        # candidate array for this depth is stack_vals[dim-i-1,:]
+        # else do not push (prune)
+
+    return out[:op, :], Qs[:op]
