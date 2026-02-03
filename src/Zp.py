@@ -789,11 +789,40 @@ def coniZpM(
             # BOX METHOD
             # ==========
             if use_box:
-                print("NOT RECOMMENDED!!!")
-                lattice_points = lattice.boundingbox_enumerate(
+                # bounding box bounds
+                bounds_raw = lattice.boundingbox_bounds(
                     mat,
-                    ellipsoid_dilation*Qmax,
-                    max_N_out=max_N_pfvs)
+                    ellipsoid_dilation*Qmax
+                )
+                bounds = np.floor(bounds_raw).astype(int)
+
+                # get mat for gcd cutting
+                proj = np.hstack([
+                    np.zeros((data.h11-1, 1), dtype=int),
+                    np.eye(data.h11-1, dtype=int)
+                ])
+                G    = proj@ZBinter
+                G_fl = flint.fmpz_mat(G.tolist())
+
+                try:
+                    H    = np.array(G_fl.hnf().tolist()).astype(int)
+                except Exception as e:
+                    print("C long error :(")
+                    raise e
+                
+                lattice_points, rawQs = lattice.coni_box_kernel(
+                        # ellipsoid definition
+                        bounds=bounds,
+                        L=np.linalg.cholesky(mat),
+                        Q=Qmax,
+                        dilation=ellipsoid_dilation,
+                        # M0 cuts:
+                        Binter0=Binter[0,:],
+                        M0min=M0min,
+                        # K' cuts:
+                        H = H,
+                        # misc:
+                        max_N_out=max_N_pfvs)
 
             # ELLIPSOIDAL METHODS
             # ===================
@@ -857,12 +886,17 @@ def coniZpM(
                         ])
                         rawQs = np.concatenate([rawQs, vQs])
 
-                # clean Qs
-                # --------
-                rawQs = np.rint(rawQs).astype(int)
+            # clean Qs
+            # --------
+            rawQs = np.rint(rawQs).astype(int)
+            if False:
+                cs     = np.array(lattice_points)
+                testQs = np.sum(cs * (cs@mat.T), axis=1)
+                if not all(rawQs == testQs):
+                    print("PANIC!!!")
 
-                if verbosity >= 1:
-                    print(f"found {len(lattice_points)} lattice points...")
+            if verbosity >= 1:
+                print(f"found {len(lattice_points)} lattice points...")
 
         except Exception as e:
             print("ERROR!!!")
@@ -1023,10 +1057,12 @@ def coniZpM(
                         inds = np.where(-np.sum(new_Ks*new_Ms, axis=0) > Qmax)
                         i = inds[0]
 
+                        print("VIOLATED QMAX!!!")
                         print(new_Ks[:,i].T.tolist(), new_Ms[:,i].T.tolist())
                         print(-np.sum(new_Ks*new_Ms, axis=0)[i], Qmax)
                         print(np.repeat(lo[mask], num_K0s_perM)[i])
                         print(np.repeat(up[mask], num_K0s_perM)[i])
+                        print(Qperps, Qmax, M0s)
                         raise ValueError()
 
                     # save
