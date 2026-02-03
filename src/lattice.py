@@ -505,7 +505,7 @@ def fp_iterative(
     sp = 0
 
     # max stack depth
-    MAX_DEPTH = dim + 1
+    MAX_DEPTH = dim
 
     # stack arrays: i, pos, remaining_Q, nonzero, candidate values
     stack_i      = np.empty(MAX_DEPTH, np.int64)
@@ -727,7 +727,7 @@ def coni_kernel(
     sp = 0
 
     # max stack depth
-    MAX_DEPTH = dim + 1
+    MAX_DEPTH = dim
 
     # stack arrays: i, pos, remaining_Q, nonzero, candidate values
     stack_i      = np.empty(MAX_DEPTH, np.int64)
