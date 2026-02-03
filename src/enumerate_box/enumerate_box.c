@@ -1,15 +1,17 @@
 #include "enumerate_box.h"
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int enumerate_box_c(
-    const int32_t *bounds,
+    const int32_t * restrict bounds,
     int dim,
     int max_N_out,
-    int32_t *out,
-    int *N_out)
+    int32_t * restrict out,
+    int * restrict N_out)
 {
     // allocate memory for stack variables
-    int32_t *vec = calloc(dim, sizeof(int32_t));
+    int32_t *vec       = calloc(dim, sizeof(int32_t));
     int32_t *stack_pos = calloc(dim, sizeof(int32_t));
     int32_t *stack_len = calloc(dim, sizeof(int32_t));
 
@@ -19,6 +21,14 @@ int enumerate_box_c(
     // set # of components per dimension
     for (int i = 0; i < dim; ++i)
         stack_len[i] = 2 * bounds[i] + 1;
+
+    // define candidate array
+    int **candidates = malloc(dim * sizeof(int*));
+    for (int i = 0; i < dim; ++i) {
+        candidates[i] = malloc(stack_len[i] * sizeof(int32_t));
+        for (int k = 0; k < stack_len[i]; ++k)
+            candidates[i][k] = -bounds[i] + k;
+    }
 
     // iterate over the stack
     int stack_i = 0;
@@ -35,15 +45,16 @@ int enumerate_box_c(
         }
 
         // set vec[stack_i]
-        vec[stack_i] = -bounds[stack_i] + stack_pos[stack_i];
+        vec[stack_i] = candidates[stack_i][stack_pos[stack_i]];
 
         // check if done
         if (stack_i == dim - 1) {
             if (op >= max_N_out)
                 return -2;
 
-            for (int j = 0; j < dim; ++j)
-                out[op * dim + j] = vec[j];
+            //for (int j = 0; j < dim; ++j)
+            //    out[op * dim + j] = vec[j];
+            memcpy(&out[op * dim], vec, dim * sizeof(int32_t));
 
             op++;
             stack_pos[stack_i]++;

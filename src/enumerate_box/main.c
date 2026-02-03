@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <errno.h>
+#include <time.h>
 
 #include "enumerate_box.h"
 
@@ -50,11 +51,16 @@ int main(int argc, char *argv[])
 
     // do the enumeration
     int N_out = 0;
+
+    clock_t start = clock();
     int rc = enumerate_box_c(bounds, dim, max_N, out, &N_out);
+    clock_t end = clock();
+    float eval_time = (float)(end - start) / CLOCKS_PER_SEC;
+    
     if (rc != 0) {
         fprintf(stderr, "enumerate_box_c failed (%d)\n", rc);
     } else {
-        printf("Generated %d vectors\n", N_out);
+        printf("Generated %d vectors if %fs\n", N_out, eval_time);
     }
 
     // free memory
