@@ -16,3 +16,12 @@ dist/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
+
+# Images
+*.svg
+
+# Custom data types
+PFVSTRINGS-*
+
+# C stuff
+*.dSYM/
