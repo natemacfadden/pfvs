@@ -662,21 +662,23 @@ def _coni_kernel_set_coord_candidates(
     ***For use only in coni_kernel.***
 
     **Description:**
-    Sets the
-    
+    Sets the candidate values for vec[i], bound by constraints on Q. Operates as
+    follows.
+
+    Feasible integer bounds for vec[i] (let R = sqrt(remQ)):
+        -R                      <= c[i]          <= R
+        -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
+        (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
+    where we used that the diagonal is positive.
 
     **Arguments:**
-    - `L`:               The lower triangular matrix such that mat = L@L.T
-    - `Q`:               The ellipsoid bound.
-    - `dilation`:        The maximum allowed dilation to allow... As long as
-                         gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec
-                         can still define coni-PFV.
-    - `Binter0`:         Binter[0,:]. The vector such that dot(Binter0,vec)=M0.
-                         BEST TO ORDER COLUMNS SUCH THAT Binter0 HAS A LARGE
-                         NUMBER OF LEADING 0s.
-    - `M0min`:           The minimum value of M0 permitted. Inclusive.
-    - `H`:               Let G be the matrix such that Kperp = G@vec. Then
-                         H = HNF(G).
+    - `sp`:              Stack pointer. For writing our outputs.
+    - `remQ`:            The remaining amount of Q that we have to work with.
+    - `ci_offset`:       The offset to the vector vec[i] from vec[j>i]
+                         contributions.
+    - `L_diag_inv`:      The value 1/L[i,i] for setting bounds.
+    - `stack_vals`:      The output array to store candidate vec[i] values to.
+    - `stack_val_len`:   How many candidate vec[i] values exist.
     - `max_N_out`:       The maximum number of output allowed.
     - `eps`:             A small number used for correctly setting bounds
                          despite floating point errors.
@@ -684,15 +686,8 @@ def _coni_kernel_set_coord_candidates(
                          of vec[i].
 
     **Returns:**
-    The vectors `vec` in the ellipsoid and obeying the extra constraints.
-    The valuation `vec^T @ mat @ vec`.
+    The number of candidate values, stack_val_len[sp].
     """
-
-    # feasible integer bounds for vec[i]
-    # -R                      <= c[i]          <= R
-    # -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
-    # (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
-    # where we used that the diagonal is positive
     if remQ < 0:
         remQ = 0
     R = np.sqrt(remQ)
@@ -961,6 +956,10 @@ def coni_kernel(
     # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
     return out[:op, :], Qs[:op]
+
+
+
+
 
 # CURRENTLY UNUSED!!!!
 # ====================
