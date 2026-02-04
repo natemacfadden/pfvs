@@ -11,8 +11,10 @@ int enumerate_fp_c(
     int dim,
     float * restrict L,
     int Q,
+    float dilation,
     int * restrict linvec,
     float linmin,
+    int * restrict H,
     float eps,
     int COORD_BUFF_SIZE
 );

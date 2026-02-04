@@ -5,6 +5,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+long long gcd(long long a, long long b)
+{
+    a = llabs(a);
+    b = llabs(b);
+
+    while (b != 0) {
+        long long t = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
 int enumerate_fp_c(
     int32_t * restrict out,
     float * restrict Qs,
@@ -13,12 +26,15 @@ int enumerate_fp_c(
     int dim,
     float * restrict L,
     int Q,
+    float dilation,
     int * restrict linvec,
     float linmin,
+    int * restrict H,
     float eps,
     int COORD_BUFF_SIZE)
 {
     // misc
+    float Q_upper = Q*dilation;
     float *L_diag_inv = malloc(dim * sizeof(float));
     for (int j=0; j<dim; ++j)
         L_diag_inv[j] = 1.0 / L[j*dim + j];
@@ -42,6 +58,7 @@ int enumerate_fp_c(
     int32_t *stack_i    = malloc(dim * sizeof(int32_t));
     int32_t *stack_pos  = malloc(dim * sizeof(int32_t));
     float *stack_remQ   = malloc(dim * sizeof(float));
+    int32_t *stack_gcd  = malloc(dim * sizeof(int32_t));
     bool *stack_nz      = malloc(dim * sizeof(bool));
 
     int32_t *stack_val_len = malloc(dim * sizeof(int32_t));
@@ -60,7 +77,8 @@ int enumerate_fp_c(
 
     stack_i[sp]       = dim-1;
     stack_pos[sp]     = 0;
-    stack_remQ[sp]    = Q;
+    stack_remQ[sp]    = Q_upper;
+    stack_gcd[sp]     = 0;
     stack_nz[sp]      = false;
     stack_val_len[sp] = -1; // will fill below
 
@@ -70,6 +88,7 @@ int enumerate_fp_c(
     int i;
     int pos;
     float remQ;
+    int _gcd;
     bool nz;
 
     while (sp >= 0) {
@@ -77,6 +96,7 @@ int enumerate_fp_c(
         i    = stack_i[sp];
         pos  = stack_pos[sp];
         remQ = stack_remQ[sp];
+        _gcd = stack_gcd[sp];
         nz   = stack_nz[sp];
 
         // save if node is complete
@@ -86,7 +106,7 @@ int enumerate_fp_c(
                 if (op >= max_N_out)
                     return -2;
                 memcpy(&out[op * dim], vec, dim * sizeof(int32_t));
-                Qs[op] = Q-remQ;
+                Qs[op] = Q_upper-remQ;
                 op ++;
             }
             // kill node
@@ -175,11 +195,29 @@ int enumerate_fp_c(
                 continue;
         }
 
+        // check if we violated K'>0 constraints
+        // -------------------------------------
+        int Hvec_i = 0;
+        for (int k=i; k<dim; ++k)
+            Hvec_i += H[i*dim + k] * vec[k];
+        
+        float required_dilation = (Q_upper-new_rem)/Q - eps;
+
+        // first try a simpler-to-compute upper
+        int new_gcd_upper_bound = _gcd;
+        if ((new_gcd_upper_bound > 0) && (new_gcd_upper_bound < required_dilation))
+            continue;
+
+        int new_gcd = gcd(_gcd, Hvec_i);
+        if ((new_gcd > 0) && (new_gcd < required_dilation)) 
+            continue;
+
         // passes cuts -> push next depth :)
         sp += 1;
         stack_i[sp]       = i-1;
         stack_pos[sp]     = 0;
         stack_remQ[sp]    = new_rem;
+        stack_gcd[sp]     = new_gcd;
         stack_nz[sp]      = nz || (veci != 0);
         stack_val_len[sp] = -1; // will fill when we visit
         // candidate array for this depth is stack_vals[sp,:]

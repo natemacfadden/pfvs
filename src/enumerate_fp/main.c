@@ -15,7 +15,8 @@ int main(int argc, char *argv[])
     int Q = 162;
     int linvec[] = {0,0,0,4,-4,-2,-2};
     float linmin = 13;
-    int max_N_out = 10000000;
+    int H[] = {2,0,0,0,62,58974,-5086,0,2,0,0,84,224666,-19686,0,0,2,0,12,234014,-20736,0,0,0,4,52,78376,-6916,0,0,0,0,120,161172,-14052,0,0,0,0,0,262692,-23292,0,0,0,0,0,0,0};
+    int max_N_out = 100000000;
     float eps = 1e-4;
     int COORD_BUFF_SIZE = 2048;
 
@@ -44,7 +45,7 @@ int main(int argc, char *argv[])
     int N_out = 0;
 
     clock_t start = clock();
-    int rc = enumerate_fp_c(out, Qs, &N_out, max_N_out, dim, L, dilation*Q, linvec, linmin, eps, COORD_BUFF_SIZE);
+    int rc = enumerate_fp_c(out, Qs, &N_out, max_N_out, dim, L, Q, 1.0*dilation, linvec, linmin, H, eps, COORD_BUFF_SIZE);
     clock_t end = clock();
     float eval_time = (float)(end - start) / CLOCKS_PER_SEC;
     
