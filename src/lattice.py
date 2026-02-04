@@ -1032,11 +1032,24 @@ def coni_kernel(
     stack_remQ[sp] = Q_upper
     stack_gcd[sp]  = 0
 
-    stack_val_len[sp] = -1  # will fill below
-    #stack_vals unset here
+    k = coni_kernel_set_coord_bounds(
+        sp,
+        Q_upper,
+        0,
+        L_diag_inv[dim-1],
+        stack_vals,
+        stack_val_len,
+        eps,
+        COORD_BUFF_SIZE)
+    if k == 0:
+        print("ERROR NO VECTORS")
+        return out[:op, :], Qs[:op]
 
     # process stack until empty
     # -------------------------
+    # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+    # HOT LOOP HOT LOOP HOT LOOP HOT LOOP
+    # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
     while sp >= 0:
         # read values
         i    = stack_i[sp]
@@ -1067,29 +1080,6 @@ def coni_kernel(
             # kill node
             sp -= 1
             continue
-
-        # current depth incomplete...
-        # ---------------------------
-        # set candidate values of vec[i] if first time to depth
-        if stack_val_len[sp] == -1:
-            ci_offset = 0.0
-            for j in range(i+1, dim):
-                ci_offset += L[j,i] * vec[j]
-
-            stack_ci_offset[sp] = ci_offset
-
-            k = coni_kernel_set_coord_bounds(
-                sp,
-                remQ,
-                ci_offset,
-                L_diag_inv[i],
-                stack_vals,
-                stack_val_len,
-                eps,
-                COORD_BUFF_SIZE)
-            if k == 0:
-                sp -= 1
-                continue
 
         # pick candidate veci
         # -------------------
@@ -1138,9 +1128,28 @@ def coni_kernel(
         stack_pos[sp]     = 0
         stack_remQ[sp]    = new_rem
         stack_gcd[sp]     = new_gcd
-        stack_val_len[sp] = -1  # will fill when we visit
-        # candidate array for this depth is stack_vals[sp,:]
-        # else do not push (prune)
+        
+
+        # set candidate values of vec[i]
+        # ------------------------------
+        ci_offset = 0.0
+        for j in range(i, dim):
+            ci_offset += L[j,i-1] * vec[j]
+
+        stack_ci_offset[sp] = ci_offset
+
+        coni_kernel_set_coord_bounds(
+            sp,
+            new_rem,
+            ci_offset,
+            L_diag_inv[i-1],
+            stack_vals,
+            stack_val_len,
+            eps,
+            COORD_BUFF_SIZE)
+    # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    # HOT LOOP HOT LOOP HOT LOOP HOT LOOP
+    # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
     return out[:op, :], Qs[:op]
 
