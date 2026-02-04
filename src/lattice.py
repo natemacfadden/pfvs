@@ -1014,6 +1014,7 @@ def coni_kernel(
     stack_i      = np.empty(MAX_DEPTH, np.int64)
     stack_pos    = np.empty(MAX_DEPTH, np.int64)
     stack_remQ   = np.empty(MAX_DEPTH, np.float64)
+    stack_M0     = np.empty(MAX_DEPTH, np.int64)
     stack_gcd    = np.empty(MAX_DEPTH, np.float64)
     stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
     
@@ -1030,6 +1031,7 @@ def coni_kernel(
     stack_i[sp]    = dim-1
     stack_pos[sp]  = 0
     stack_remQ[sp] = Q_upper
+    stack_M0[sp]   = 0
     stack_gcd[sp]  = 0
 
     k = coni_kernel_set_coord_bounds(
@@ -1055,6 +1057,7 @@ def coni_kernel(
         i    = stack_i[sp]
         pos  = stack_pos[sp]
         remQ = stack_remQ[sp]
+        M0   = stack_M0[sp]
         gcd  = stack_gcd[sp]
 
         # check if node is completed
@@ -1089,26 +1092,25 @@ def coni_kernel(
         # advance pos for next iteration
         stack_pos[sp] += 1
 
-        # cut if M0 violates bounds
-        if i == num_zeros:
-            M0 = 0
-            for j in range(i,dim):
-                M0 += Binter0[j]*vec[j]
+        # cut on M0 >= M0min
+        # ------------------
+        M0 += Binter0[i]*vec[i]
+        if (i == num_zeros) and (M0 < M0min):
+            continue
 
-            if (M0 < M0min):
-                continue
-
-        # get ci, the new amount of remaining Q
-        ci = L[i,i]*veci + stack_ci_offset[sp]#ci_offsets[i]
+        # cut on Q > 0
+        # ------------
+        ci      = L[i,i]*veci + stack_ci_offset[sp]
         new_rem = remQ - ci*ci
 
         # cut of no more Q left...
         if new_rem < 0 - eps:
             continue
 
-        # check if we violated K'>0 constraints
+        # cut on K' > 0
+        # -------------
         Hvec_i = 0
-        for k in range(i,dim):
+        for k in range(i, dim):
             Hvec_i += H[i,k] * vec[k]
         
         required_dilation = (Q_upper-new_rem)/Q - eps
@@ -1123,21 +1125,21 @@ def coni_kernel(
             continue
 
         # passes cuts -> push next depth :)
+        # ---------------------------------
         sp += 1
         stack_i[sp]       = i-1
         stack_pos[sp]     = 0
         stack_remQ[sp]    = new_rem
+        stack_M0[sp]      = M0
         stack_gcd[sp]     = new_gcd
         
-
-        # set candidate values of vec[i]
-        # ------------------------------
         ci_offset = 0.0
         for j in range(i, dim):
             ci_offset += L[j,i-1] * vec[j]
 
         stack_ci_offset[sp] = ci_offset
 
+        # set candidate values of vec[i]
         coni_kernel_set_coord_bounds(
             sp,
             new_rem,
