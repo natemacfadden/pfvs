@@ -1059,7 +1059,6 @@ def coni_kernel(
         pos  = stack_pos[sp]
         remQ = stack_remQ[sp]
         M0   = stack_M0[sp]
-        gcd  = stack_gcd[sp]
 
         # check if node is completed
         # --------------------------
@@ -1116,12 +1115,12 @@ def coni_kernel(
         
         required_dilation = (Q_upper-new_rem)/Q - eps
 
-        # first try a simpler-to-compute upper
-        new_gcd_upper_bound = gcd #min(gcd, abs(Hvec_i))
-        if (new_gcd_upper_bound > 0) and (new_gcd_upper_bound < required_dilation):
+        new_gcd = stack_gcd[sp]
+
+        # first try the cut with old GCD but new tadpole
+        if (new_gcd > 0) and (new_gcd < required_dilation):
             continue
 
-        new_gcd = gcd
         if new_gcd != 1:
             new_gcd = math.gcd(new_gcd, Hvec_i)
             if (new_gcd > 0) and (new_gcd < required_dilation):
