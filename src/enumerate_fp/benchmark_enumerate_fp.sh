@@ -1,7 +1,7 @@
 #!/bin/bash
 
-for b in 2 3 4 5 6 7; do
+for b in 1 10 20 30 40 50; do
 	echo "STUDYING" $b
-    ./enum $b $b $b $b $b $b $b
+    ./enum $b
     echo "DONE STUDYING" $b
 done
