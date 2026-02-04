@@ -285,6 +285,7 @@ def allow_gcds(Ks, Ms, Qmax, h11):
 
 # non-coni Zp
 # ===========
+print("NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")
 def ZpM(
     data: "cydata",
     ps: "ArrayLike",
