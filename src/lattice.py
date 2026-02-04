@@ -645,34 +645,25 @@ def fp_iterative(
 # FP-style methods but tailored to coniZpM
 # ----------------------------------------
 @njit
-def coni_kernel_OLDWORKING(
-        L: "ArrayLike",
-        Q: int,
-        dilation: int,
-        # M0 cuts:
-        Binter0: "ArrayLike",
-        M0min: int,
-        # K' cuts:
-        H: "ArrayLike",
-        # misc:
-        max_N_out: int,
-        eps: float = 1e-4,
-        COORD_BUFF_SIZE: int = 2048) -> None:
+def _coni_kernel_set_coord_candidates(
+    sp,
+    remQ,
+    ci_offset,
+    L_diag_inv,
+    stack_vals,
+    stack_val_len,
+    eps,
+    COORD_BUFF_SIZE) -> int:
     """
-    **Description:**
-    Adaptation of the (iterative) Fincke-Pohst algorithm for utility in
-    constructing coni-PFVs. I.e., solves
-        0 <= vec^T @ mat @ vec <= dilation*Q.
-    as well as (M[0] cuts)
-        M0min <= dot(Binter0, vec)
-    as well as (K'>0 cuts)
-        (vec^T @ mat @ vec)//Q <= gcd(Kperp)
-                                = gcd([0, 1]@Z@Binter@vec)
-                                = gcd(H@vec)
-    for H the row-HNF of [0, 1]@Z@Binter.
+    ***For use only in coni_kernel.***
+    ***For use only in coni_kernel.***
+    ***For use only in coni_kernel.***
+    ***For use only in coni_kernel.***
+    ***For use only in coni_kernel.***
 
-    Any `vec` satisfying all of the above can generate a coni-PFV, as long as
-    det(N) != 0.
+    **Description:**
+    Sets the
+    
 
     **Arguments:**
     - `L`:               The lower triangular matrix such that mat = L@L.T
@@ -693,207 +684,10 @@ def coni_kernel_OLDWORKING(
                          of vec[i].
 
     **Returns:**
-    The vectors `vec` in the ellipsoid and obeying the extra constraints
+    The vectors `vec` in the ellipsoid and obeying the extra constraints.
+    The valuation `vec^T @ mat @ vec`.
     """
-    # compute  useful variables
-    Q_upper    = Q*dilation
-    dim        = L.shape[0]
-    L_diag_inv = 1.0 / np.diag(L)
 
-    # linear constraint
-    num_zeros = 0
-    zeros = True
-    for i in range(dim):
-        if Binter0[i] == 0:
-            if zeros == False:
-                raise ValueError("Binter0 is not sorted so 0s are first...")
-            num_zeros += 1
-        else:
-            zeros = False
-
-    # output object
-    # -------------
-    out = np.empty((max_N_out, dim), dtype=np.int64)
-    Qs  = np.empty((max_N_out,), dtype=np.float64)
-
-    op  = 0 # output pointer
-
-    # internal vector that gets built/written to output
-    vec = np.zeros(dim, dtype=np.int64)
-
-    # stack variables
-    # ---------------
-    # stack pointer
-    sp = 0
-
-    # max stack depth
-    MAX_DEPTH = dim
-
-    # stack arrays: i, pos, remaining_Q, nonzero, candidate values
-    stack_i      = np.empty(MAX_DEPTH, np.int64)
-    stack_pos    = np.empty(MAX_DEPTH, np.int64)
-    stack_remQ   = np.empty(MAX_DEPTH, np.float64)
-    stack_gcd    = np.empty(MAX_DEPTH, np.float64)
-    stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
-    
-    # vec[i] candidate arrays per depth (preallocate maximum possible size)
-    stack_val_len= np.zeros(MAX_DEPTH, np.int64) # number of candidates
-    stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # candidates
-
-    # offsets for ci
-    # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
-    stack_ci_offset = np.zeros(MAX_DEPTH, np.float64)# offset c[i]-L[i,i]*vec[i]
-
-    # initialize stack
-    # ----------------
-    stack_i[sp]    = dim-1
-    stack_pos[sp]  = 0
-    stack_remQ[sp] = Q_upper
-    stack_gcd[sp]  = 0
-
-    stack_val_len[sp] = -1  # will fill below
-    #stack_vals unset here
-
-    # process stack until empty
-    # -------------------------
-    while sp >= 0:
-        # read values
-        i    = stack_i[sp]
-        pos  = stack_pos[sp]
-        remQ = stack_remQ[sp]
-        gcd  = stack_gcd[sp]
-
-        # check if node is completed
-        # --------------------------
-        # if i==-1, then we have fully written vec
-        if i == -1:
-            if op >= max_N_out:
-                break
-
-            # don't save the 0-vector
-            Qsave = Q_upper - remQ
-            if Qsave>eps:
-                out[op, :] = vec
-                Qs[op]     = Qsave
-                op += 1
-            # kill node
-            sp -= 1
-            continue
-
-        # check if current depth is completed
-        # -----------------------------------
-        if pos == stack_val_len[sp]:
-            # kill node
-            sp -= 1
-            continue
-
-        # current depth incomplete...
-        # ---------------------------
-        # set candidate values of vec[i] if first time to depth
-        if stack_val_len[sp] == -1:
-            # feasible integer bounds for vec[i]
-            # -R                      <= c[i]          <= R
-            # -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
-            # (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
-            # where we used that the diagonal is positive
-            if remQ < 0:
-                remQ = 0
-            R = np.sqrt(remQ)
-
-            ci_offset = 0.0
-            for j in range(i+1, dim):
-                ci_offset += L[j,i] * vec[j]
-
-            lo = int(np.ceil(( -R - ci_offset) * L_diag_inv[i] - eps))
-            hi = int(np.floor(( R - ci_offset) * L_diag_inv[i] + eps))
-
-            # values of veci to iterate over
-            k = 0
-            for v in range(lo,hi+1):
-                stack_vals[sp,k] = v
-                k += 1
-
-            # kill node if no valid veci values
-            if k == 0:
-                sp -= 1
-                continue
-            # kill execution if there are too many values
-            elif k>COORD_BUFF_SIZE:
-                msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
-                raise ValueError(msg)
-
-            # yes valid veci values
-            stack_val_len[sp] = k
-            stack_pos[sp] = 0
-            stack_ci_offset[sp] = ci_offset
-            pos = 0
-
-            #for k in range(i):
-            #    ci_offsets[k] += L[i,k] * (stack_vals[sp, pos]-1)
-
-        # pick candidate veci
-        # -------------------
-        veci   = stack_vals[sp, pos]
-        vec[i] = veci
-
-        # advance pos for next iteration
-        stack_pos[sp] += 1
-
-        # cut if M0 violates bounds
-        if i == num_zeros:
-            M0 = 0
-            for j in range(i,dim):
-                M0 += Binter0[j]*vec[j]
-
-            if (M0 < M0min):
-                continue
-
-        # get ci, the new amount of remaining Q
-        ci = L[i,i]*veci + stack_ci_offset[sp]#ci_offsets[i]
-        new_rem = remQ - ci*ci
-
-        # cut of no more Q left...
-        if new_rem < 0 - eps:
-            continue
-
-        # check if we violated K'>0 constraints
-        Hvec_i = 0
-        for k in range(i,dim):
-            Hvec_i += H[i,k] * vec[k]
-        
-        required_dilation = (Q_upper-new_rem)/Q - eps
-
-        # first try a simpler-to-compute upper
-        new_gcd_upper_bound = gcd #min(gcd, abs(Hvec_i))
-        if (new_gcd_upper_bound > 0) and (new_gcd_upper_bound < required_dilation):
-            continue
-
-        new_gcd = math.gcd(gcd, Hvec_i)
-        if (new_gcd > 0) and (new_gcd < required_dilation):
-            continue
-
-        # passes cuts -> push next depth :)
-        sp += 1
-        stack_i[sp]       = i-1
-        stack_pos[sp]     = 0
-        stack_remQ[sp]    = new_rem
-        stack_gcd[sp]     = new_gcd
-        stack_val_len[sp] = -1  # will fill when we visit
-        # candidate array for this depth is stack_vals[sp,:]
-        # else do not push (prune)
-
-    return out[:op, :], Qs[:op]
-
-@njit
-def coni_kernel_set_coord_bounds(
-    sp,
-    remQ,
-    ci_offset,
-    L_diag_inv,
-    stack_vals,
-    stack_val_len,
-    eps,
-    COORD_BUFF_SIZE) -> int:
     # feasible integer bounds for vec[i]
     # -R                      <= c[i]          <= R
     # -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
@@ -938,19 +732,20 @@ def coni_kernel(
         # misc:
         max_N_out: int,
         eps: float = 1e-4,
-        COORD_BUFF_SIZE: int = 2048) -> None:
+        COORD_BUFF_SIZE: int = 2048) -> ("ArrayLike", "ArrayLike"):
     """
     **Description:**
     Adaptation of the (iterative) Fincke-Pohst algorithm for utility in
     constructing coni-PFVs. I.e., solves
-        0 <= vec^T @ mat @ vec <= dilation*Q.
+        0 <= vec^T @ mat     @ vec <= dilation*Q.
+        0 <= vec^T @ (L@L^T) @ vec <= dilation*Q
     as well as (M[0] cuts)
         M0min <= dot(Binter0, vec)
     as well as (K'>0 cuts)
         (vec^T @ mat @ vec)//Q <= gcd(Kperp)
                                 = gcd([0, 1]@Z@Binter@vec)
                                 = gcd(H@vec)
-    for H the row-HNF of [0, 1]@Z@Binter.
+    for H the row-HNF of [0, 1]@Z@Binter (this matrix computes Kperp from vec).
 
     Any `vec` satisfying all of the above can generate a coni-PFV, as long as
     det(N) != 0.
@@ -974,7 +769,8 @@ def coni_kernel(
                          of vec[i].
 
     **Returns:**
-    The vectors `vec` in the ellipsoid and obeying the extra constraints
+    The vectors `vec` in the ellipsoid and obeying the extra constraints.
+    The valuation `vec^T @ mat @ vec`.
     """
     # compute  useful variables
     Q_upper    = Q*dilation
@@ -1016,7 +812,6 @@ def coni_kernel(
     stack_remQ   = np.empty(MAX_DEPTH, np.float64)
     stack_M0     = np.empty(MAX_DEPTH, np.int64)
     stack_gcd    = np.empty(MAX_DEPTH, np.int64)
-    stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
     
     # vec[i] candidate arrays per depth (preallocate maximum possible size)
     stack_val_len= np.zeros(MAX_DEPTH, np.int64) # number of candidates
@@ -1035,7 +830,7 @@ def coni_kernel(
     stack_M0[sp]   = 0
     stack_gcd[sp]  = 0
 
-    k = coni_kernel_set_coord_bounds(
+    k = _coni_kernel_set_coord_candidates(
         sp,
         Q_upper,
         0,
@@ -1060,8 +855,8 @@ def coni_kernel(
         remQ = stack_remQ[sp]
         M0   = stack_M0[sp]
 
-        # check if node is completed
-        # --------------------------
+        # check if node is leaf
+        # ---------------------
         # if i==-1, then we have fully written vec
         if i == -1:
             if op >= max_N_out:
@@ -1073,6 +868,7 @@ def coni_kernel(
                 out[op, :] = vec
                 Qs[op]     = Qsave
                 op += 1
+
             # kill node
             sp -= 1
             continue
@@ -1089,12 +885,11 @@ def coni_kernel(
         veci   = stack_vals[sp, pos]
         vec[i] = veci
 
-        # advance pos for next iteration
-        stack_pos[sp] += 1
+        stack_pos[sp] += 1 # advance pos for next iteration
 
         # cut on M0 >= M0min
         # ------------------
-        M0 += Binter0[i]*vec[i]
+        M0 += Binter0[i]*veci
         if (i == num_zeros) and (M0 < M0min):
             continue
 
@@ -1104,28 +899,29 @@ def coni_kernel(
         new_rem = remQ - ci*ci
 
         # cut of no more Q left...
+        # (TBH unless there is a floating point error in the vec[i] range
+        #  computation, this check should never be hit...)
         if new_rem < 0 - eps:
             continue
 
         # cut on K' > 0
         # -------------
-        Hvec_i = stack_Hveci[sp] + H[i,i]*vec[i]#0
-        #for k in range(i, dim):
-        #    Hvec_i += H[i,k] * vec[k]
-        
         required_dilation = (Q_upper-new_rem)/Q - eps
 
-        new_gcd = stack_gcd[sp]
-
         # first try the cut with old GCD but new tadpole
+        new_gcd = stack_gcd[sp]
         if (new_gcd > 0) and (new_gcd < required_dilation):
             continue
 
-        if new_gcd != 1:
+        # try with the actual GCD
+        if new_gcd != 1: # if the old GCD was 1, no need to recompute...
+            # compute the GCD
+            Hvec_i  = stack_Hveci[sp] + H[i,i]*veci
             new_gcd = math.gcd(new_gcd, Hvec_i)
+
+            # check it
             if (new_gcd > 0) and (new_gcd < required_dilation):
                 continue
-        #print(required_dilation, Hvec_i, gcd)
 
         # passes cuts -> push next depth :)
         # ---------------------------------
@@ -1136,20 +932,22 @@ def coni_kernel(
         stack_M0[sp]      = M0
         stack_gcd[sp]     = new_gcd
         
+        # compute the new ci offset value for i-1 using this vector
         ci_offset = 0.0
         for j in range(i, dim):
             ci_offset += L[j,i-1] * vec[j]
 
         stack_ci_offset[sp] = ci_offset
 
+        # compute the new Hvec_i offset value for i-1 using this vector
         Hvec_i = 0
         for k in range(i, dim):
             Hvec_i += H[i-1,k] * vec[k]
 
         stack_Hveci[sp] = Hvec_i
 
-        # set candidate values of vec[i]
-        coni_kernel_set_coord_bounds(
+        # set candidate values of vec[i-1]
+        _coni_kernel_set_coord_candidates(
             sp,
             new_rem,
             ci_offset,
