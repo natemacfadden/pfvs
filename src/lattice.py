@@ -1015,7 +1015,7 @@ def coni_kernel(
     stack_pos    = np.empty(MAX_DEPTH, np.int64)
     stack_remQ   = np.empty(MAX_DEPTH, np.float64)
     stack_M0     = np.empty(MAX_DEPTH, np.int64)
-    stack_gcd    = np.empty(MAX_DEPTH, np.float64)
+    stack_gcd    = np.empty(MAX_DEPTH, np.int64)
     stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
     
     # vec[i] candidate arrays per depth (preallocate maximum possible size)
@@ -1025,6 +1025,7 @@ def coni_kernel(
     # offsets for ci
     # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
     stack_ci_offset = np.zeros(MAX_DEPTH, np.float64)# offset c[i]-L[i,i]*vec[i]
+    stack_Hveci     = np.zeros(MAX_DEPTH, np.int64)
 
     # initialize stack
     # ----------------
@@ -1109,9 +1110,9 @@ def coni_kernel(
 
         # cut on K' > 0
         # -------------
-        Hvec_i = 0
-        for k in range(i, dim):
-            Hvec_i += H[i,k] * vec[k]
+        Hvec_i = stack_Hveci[sp] + H[i,i]*vec[i]#0
+        #for k in range(i, dim):
+        #    Hvec_i += H[i,k] * vec[k]
         
         required_dilation = (Q_upper-new_rem)/Q - eps
 
@@ -1120,9 +1121,12 @@ def coni_kernel(
         if (new_gcd_upper_bound > 0) and (new_gcd_upper_bound < required_dilation):
             continue
 
-        new_gcd = math.gcd(gcd, Hvec_i)
-        if (new_gcd > 0) and (new_gcd < required_dilation):
-            continue
+        new_gcd = gcd
+        if new_gcd != 1:
+            new_gcd = math.gcd(new_gcd, Hvec_i)
+            if (new_gcd > 0) and (new_gcd < required_dilation):
+                continue
+        #print(required_dilation, Hvec_i, gcd)
 
         # passes cuts -> push next depth :)
         # ---------------------------------
@@ -1138,6 +1142,12 @@ def coni_kernel(
             ci_offset += L[j,i-1] * vec[j]
 
         stack_ci_offset[sp] = ci_offset
+
+        Hvec_i = 0
+        for k in range(i, dim):
+            Hvec_i += H[i-1,k] * vec[k]
+
+        stack_Hveci[sp] = Hvec_i
 
         # set candidate values of vec[i]
         coni_kernel_set_coord_bounds(
