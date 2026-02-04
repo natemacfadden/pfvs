@@ -49,11 +49,12 @@ int enumerate_box_c(
 
         // check if done
         if (stack_i == dim - 1) {
-            if (op >= max_N_out)
+            if (op >= max_N_out) {
                 free(vec);
                 free(stack_pos);
                 free(stack_len);
                 return -2;
+            }
 
             //for (int j = 0; j < dim; ++j)
             //    out[op * dim + j] = vec[j];
