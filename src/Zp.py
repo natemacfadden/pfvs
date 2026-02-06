@@ -174,7 +174,7 @@ def pvecs(
     ps = ps[gcds==1]
     return ps.tolist()
 
-def mindeg_pvec_gurobi(data: "CYData", verbosity: int = 0):
+def pvecs_gurobi(data: "CYData", max_deg: int=None, verbosity: int = 0):
     """
     **Description:**
     Use gurobi to find the minimum degree integral p-vector.
@@ -218,15 +218,35 @@ def mindeg_pvec_gurobi(data: "CYData", verbosity: int = 0):
         xc=p,
         sense=gp.GRB.MINIMIZE)
     model.addMConstr(H, p, '>', np.full(len(H),0.5))
+    if max_deg is not None:
+        model.addMConstr(grading.reshape(1,-1), p, '<=', [max_deg])
 
     # optimize
     # --------
-    model.setParam("PoolSolutions", 1)
+    if max_deg is None:
+        model.setParam("PoolSolutions", 1)
+    else:
+        model.setParam('PoolSearchMode', 1)
+        model.setParam("PoolSolutions",  1_000_000_000)
     model.optimize()
 
-    # return the p-vector
+    # retrieve and print the solutions
+    nSolutions = model.SolCount
+    if verbosity>=1:
+        print(f"Found {nSolutions} solutions")
+
+    model.Params.outputFlag = 0 # avoid clutter
+    sols = []
+    for i in range(nSolutions):
+        model.setParam('SolutionNumber', i)
+
+        sols.append(np.rint(p.xn).astype(int))
     model.setParam('SolutionNumber', 0)
-    return np.rint(p.xn).astype(int)
+
+    if len(sols) == 1:
+        return sols[0]
+    else:
+        return sols
 
 # Zp helpers
 # ==========
