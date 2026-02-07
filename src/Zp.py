@@ -37,6 +37,52 @@ from . import lattice, diagnostics
 # =========
 def pvecs(
     data: "CYData",
+    min_N_pts: int,
+    verbosity: int = 0) -> "ArrayLike":
+
+    # read hyperplanes
+    if data.coni:
+        H = data.H_cob
+    else:
+        H = data.H
+
+    # get the points
+    Bs_fit   = []
+    Npts_fit = []
+
+    B = 1
+    while True:
+        if verbosity >= 1:
+            print(B)
+        pts = lattice.kanaan_box_mat(
+            B=B,
+            linmat=H,
+            linmin=1,
+            max_N_out=10*min_N_pts
+        )
+        N = len(pts)
+        if N >= min_N_pts:
+            break
+        if N > 0:
+            Bs_fit.append(np.log(B))
+            Npts_fit.append(np.log(N))
+
+        # guess the B to scale it to
+        # y = mx + b
+        # y1-y0 = m(x1-x0)
+        if len(Bs_fit) > 1:
+            m = (Npts_fit[-1]-Npts_fit[-2])/(Bs_fit[-1]-Bs_fit[-2])
+            Bguess = (np.log(min_N_pts)-Npts_fit[-1])/m + Bs_fit[-1]
+            Bguess = int(np.ceil(np.exp(Bguess)))
+            assert Bguess > B
+            B += min(5,Bguess-B)
+        else:
+            B += 1
+
+    return pts
+
+def pvecs_cpsat(
+    data: "CYData",
     min_N_pts: int = None,
     max_deg: int = None,
     min_deg: int = 0,

@@ -907,35 +907,25 @@ def _kanaan_box_mat_set_coord_candidates(
         if linmat[j,i] == 0:
             continue
 
-        tmp = linmin - stack_partial_sum[sp,j] - B*abssum[j,i]
+        numer = linmin - stack_partial_sum[sp,j] - B*abssum[j,i]
 
-        if linmat[j,i]>0:
-            #print('.')
-            lo = max(
-                lo,
-                int(np.ceil(tmp/linmat[j,i]))
-            )
+        h = linmat[j,i]
+        if h>0:
+            lo = max(lo, int(np.ceil(numer/h)))
         else:
-            hi = min(
-                hi,
-                int(np.floor(tmp/linmat[j,i]))
-            )
+            hi = min(hi, int(np.floor(numer/h)))
 
-    # values of veci to iterate over
-    k = 0
-    for v in range(lo,hi+1):
-        stack_vals[sp,k] = v
-        k += 1
-
-    # kill node if no valid veci values
-    if k == 0:
-        return k
-    # kill execution if there are too many values
-    elif k>COORD_BUFF_SIZE:
+    # compute the number of veci to iterate over
+    k = hi - lo + 1
+    if k <= 0:
+        stack_val_len[sp] = 0
+        return 0
+    if k > COORD_BUFF_SIZE:
         msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
         raise ValueError(msg)
 
-    # yes valid veci values
+    for t in range(k):
+        stack_vals[sp, t] = lo + t
     stack_val_len[sp] = k
 
     return k
@@ -944,7 +934,7 @@ def _kanaan_box_mat_set_coord_candidates(
 def kanaan_box_mat(
         B: int,
         linmat: "ArrayLike",
-        linmin: "ArrayLike",
+        linmin: int,
         max_N_out: int = 10_000_000,
         eps: float = 1e-4,
         COORD_BUFF_SIZE: int = 2048) -> "ArrayLike":
@@ -998,7 +988,7 @@ def kanaan_box_mat(
     sp = 0
 
     # max stack depth
-    MAX_DEPTH = dim
+    MAX_DEPTH = dim+1
 
     # stack arrays: i, pos, remaining_Q, nonzero, candidate values
     stack_i      = np.empty(MAX_DEPTH, np.int64)
@@ -1057,62 +1047,6 @@ def kanaan_box_mat(
             sp -= 1
             continue
 
-        # current depth incomplete...
-        # ---------------------------
-        # set candidate values of vec[i] if first time to depth
-        if stack_val_len[sp] == -1:
-            # feasible integer bounds for vec[i]
-            # -B <= vec[i] <= B
-            # linmat[j,i]*vec[i] >= linmin - \sum_{k>i} linmat[j,k]*vec[k] - \sum_{k<i} linmat[j,k]*vec[k]
-            # but we don't know vec[k] for k<i so use worst case bounds
-            # -abs(linmat[j,k])*B <= -linmat[j,k]*vec[k] <= abs(linmat[j,k])*B
-            # so, if linmat[j,i] > 0,
-            # vec[i] >= ceil( [linmin - \sum_{k>i} linmat[j,k]*vec[k] - B*\sum_{k<i} abs(linmat[j,k])]/linmat[j,i] )
-            # else
-            # vec[i] <= floor( [linmin - \sum_{k>i} linmat[j,k]*vec[k] - B*\sum_{k<i} abs(linmat[j,k])]/linmat[j,i] )
-            lo = -B
-            hi = B
-
-            for j in range(linmat.shape[0]):
-                if linmat[j,i] == 0:
-                    continue
-
-                tmp = linmin - stack_partial_sum[sp,j] - B*abssum[j,i]
-
-                if linmat[j,i]>0:
-                    #print('.')
-                    lo = max(
-                        lo,
-                        int(np.ceil(tmp/linmat[j,i]))
-                    )
-                else:
-                    hi = min(
-                        hi,
-                        int(np.floor(tmp/linmat[j,i]))
-                    )
-
-                #print(vec[i+1:], lo, hi, bound1, linmat[j,i])
-
-            # values of veci to iterate over
-            k = 0
-            for v in range(lo,hi+1):
-                stack_vals[sp,k] = v
-                k += 1
-
-            # kill node if no valid veci values
-            if k == 0:
-                sp -= 1
-                continue
-            # kill execution if there are too many values
-            elif k>COORD_BUFF_SIZE:
-                msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
-                raise ValueError(msg)
-
-            # yes valid veci values
-            stack_val_len[sp] = k
-            stack_pos[sp] = 0
-            pos = 0
-
         # pick candidate veci
         # -------------------
         veci   = stack_vals[sp, pos]
@@ -1125,12 +1059,10 @@ def kanaan_box_mat(
         sp += 1
         stack_i[sp]       = i-1
         stack_pos[sp]     = 0
-        stack_val_len[sp] = -1  # will fill when we visit
 
         for j in range(linmat.shape[0]):
             stack_partial_sum[sp,j] = stack_partial_sum[sp-1,j] + linmat[j,i]*vec[i]
 
-        """
         if i >= 1:
             _kanaan_box_mat_set_coord_candidates(
                 sp,
@@ -1144,7 +1076,6 @@ def kanaan_box_mat(
                 stack_val_len,
                 COORD_BUFF_SIZE
             )
-        """
 
     return out[:op, :]
 
@@ -1200,21 +1131,17 @@ def _coni_kernel_set_coord_candidates(
     lo = int(np.ceil(( -R - ci_offset) * L_diag_inv - eps))
     hi = int(np.floor(( R - ci_offset) * L_diag_inv + eps))
 
-    # values of veci to iterate over
-    k = 0
-    for v in range(lo,hi+1):
-        stack_vals[sp,k] = v
-        k += 1
-
-    # kill node if no valid veci values
-    if k == 0:
-        return k
-    # kill execution if there are too many values
-    elif k>COORD_BUFF_SIZE:
+    # compute the number of veci to iterate over
+    k = hi - lo + 1
+    if k <= 0:
+        stack_val_len[sp] = 0
+        return 0
+    if k > COORD_BUFF_SIZE:
         msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
         raise ValueError(msg)
 
-    # yes valid veci values
+    for t in range(k):
+        stack_vals[sp, t] = lo + t
     stack_val_len[sp] = k
 
     return k
@@ -1304,7 +1231,7 @@ def coni_kernel(
     sp = 0
 
     # max stack depth
-    MAX_DEPTH = dim
+    MAX_DEPTH = dim+1
 
     # stack arrays: i, pos, remaining_Q, nonzero, candidate values
     stack_i      = np.empty(MAX_DEPTH, np.int64)
