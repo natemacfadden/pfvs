@@ -44,6 +44,7 @@ def pvecs(
     deg_window: int = 1,
     max_window_i: int = 10_000,
     max_time: float = 120, # 2 min...
+    reduce_deg: bool = True,
     verbosity: int = 0) -> "ArrayLike":
     """
     **Description:**
@@ -130,9 +131,9 @@ def pvecs(
     model  = cp_model.CpModel()
     if max_Linf is None:
         print("PLEASE set max_Linf")
-        max_pi = cp_model.INT32_MAX - 1
+        max_Linf = cp_model.INT32_MAX - 1
 
-    p_vars = [model.NewIntVar(-max_pi, max_pi, f'x{i}') for i in\
+    p_vars = [model.NewIntVar(-max_Linf, max_Linf, f'x{i}') for i in\
                                                         range(H.shape[1])]
 
     for row in H:
@@ -173,8 +174,9 @@ def pvecs(
         return np.empty((0,H.shape[1]), dtype=int)
 
     # reduce by GCD
-    gcds = np.gcd.reduce(ps,axis=1)
-    ps = ps[gcds==1]
+    if reduce_deg:
+        gcds = np.gcd.reduce(ps,axis=1)
+        ps = ps[gcds==1]
     return ps.tolist()
 
 def pvecs_gurobi(data: "CYData", max_deg: int=None, verbosity: int = 0):
