@@ -868,6 +868,77 @@ def fp_iterative_mat(
     return out[:op, :], Qs[:op]
 
 @njit
+def _kanaan_box_mat_set_coord_candidates(
+    sp,
+    remQ,
+    ci_offset,
+    L_diag_inv,
+    stack_vals,
+    stack_val_len,
+    eps,
+    COORD_BUFF_SIZE) -> int:
+    """
+    ***For use only in kanaan_box_mat.***
+    ***For use only in kanaan_box_mat.***
+    ***For use only in kanaan_box_mat.***
+    ***For use only in kanaan_box_mat.***
+    ***For use only in kanaan_box_mat.***
+
+    **Description:**
+    Sets the candidate values for vec[i], bound by constraints on Q. Operates as
+    follows.
+
+    Feasible integer bounds for vec[i] (let R = sqrt(remQ)):
+        -R                      <= c[i]          <= R
+        -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
+        (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
+    where we used that the diagonal is positive.
+
+    **Arguments:**
+    - `sp`:              Stack pointer. For writing our outputs.
+    - `remQ`:            The remaining amount of Q that we have to work with.
+    - `ci_offset`:       The offset to the vector vec[i] from vec[j>i]
+                         contributions.
+    - `L_diag_inv`:      The value 1/L[i,i] for setting bounds.
+    - `stack_vals`:      The output array to store candidate vec[i] values to.
+    - `stack_val_len`:   How many candidate vec[i] values exist.
+    - `max_N_out`:       The maximum number of output allowed.
+    - `eps`:             A small number used for correctly setting bounds
+                         despite floating point errors.
+    - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
+                         of vec[i].
+
+    **Returns:**
+    The number of candidate values, stack_val_len[sp].
+    """
+    return -1 # NOT YET IMPLEMENTED!!!
+    if remQ < 0:
+        remQ = 0
+    R = np.sqrt(remQ)
+
+    lo = int(np.ceil(( -R - ci_offset) * L_diag_inv - eps))
+    hi = int(np.floor(( R - ci_offset) * L_diag_inv + eps))
+
+    # values of veci to iterate over
+    k = 0
+    for v in range(lo,hi+1):
+        stack_vals[sp,k] = v
+        k += 1
+
+    # kill node if no valid veci values
+    if k == 0:
+        return k
+    # kill execution if there are too many values
+    elif k>COORD_BUFF_SIZE:
+        msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
+        raise ValueError(msg)
+
+    # yes valid veci values
+    stack_val_len[sp] = k
+
+    return k
+
+@njit
 def kanaan_box_mat(
         B: int,
         linmat: "ArrayLike",
@@ -926,6 +997,10 @@ def kanaan_box_mat(
     stack_val_len= np.zeros(MAX_DEPTH, np.int64) # number of candidates
     stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # candidates
 
+    # misc helper
+    # stack_partial_sum[sp][j] = \sum_{ k > stack_i[sp] } linmat[j][k] * vec[k]
+    stack_partial_sum = np.zeros((MAX_DEPTH, linmat.shape[0]), np.int64)
+
     # initialize stack
     # ----------------
     stack_i[sp]    = dim-1
@@ -983,7 +1058,6 @@ def kanaan_box_mat(
             # vec[i] >= ceil( [linmin - \sum_{k>i} linmat[j,k]*vec[k] - B*\sum_{k<i} abs(linmat[j,k])]/linmat[j,i] )
             # else
             # vec[i] <= floor( [linmin - \sum_{k>i} linmat[j,k]*vec[k] - B*\sum_{k<i} abs(linmat[j,k])]/linmat[j,i] )
-
             lo = -B
             hi = B
 
@@ -991,23 +1065,18 @@ def kanaan_box_mat(
                 if linmat[j,i] == 0:
                     continue
 
-                known = 0
-                for k in range(i+1,dim):
-                    # known vec[k]
-                    known += linmat[j,k]*vec[k]
-
-                bound1 = linmin - known - B*abssum[j,i]
+                tmp = linmin - stack_partial_sum[sp,j] - B*abssum[j,i]
 
                 if linmat[j,i]>0:
                     #print('.')
                     lo = max(
                         lo,
-                        int(np.ceil(bound1/linmat[j,i]))
+                        int(np.ceil(tmp/linmat[j,i]))
                     )
                 else:
                     hi = min(
                         hi,
-                        int(np.floor(bound1/linmat[j,i]))
+                        int(np.floor(tmp/linmat[j,i]))
                     )
 
                 #print(vec[i+1:], lo, hi, bound1, linmat[j,i])
@@ -1045,8 +1114,9 @@ def kanaan_box_mat(
         stack_i[sp]       = i-1
         stack_pos[sp]     = 0
         stack_val_len[sp] = -1  # will fill when we visit
-        # candidate array for this depth is stack_vals[sp,:]
-        # else do not push (prune)
+
+        for j in range(linmat.shape[0]):
+            stack_partial_sum[sp,j] = stack_partial_sum[sp-1,j] + linmat[j,i]*vec[i]
 
     return out[:op, :]
 
