@@ -934,6 +934,15 @@ def kanaan_box_mat(
     stack_val_len[sp] = -1  # will fill below
     #stack_vals unset here
 
+    # compute helper variable
+    # -----------------------
+    abssum = np.empty((linmat.shape[0],linmat.shape[1]+1), np.int64)
+    for j in range(abssum.shape[0]):
+        abssum[j,0] = 0#abs(linmat[j,0])
+
+        for i in range(dim):
+            abssum[j,i+1] = abssum[j,i] + abs(abs(linmat[j,i]))
+
     # process stack until empty
     # -------------------------
     while sp >= 0:
@@ -987,13 +996,7 @@ def kanaan_box_mat(
                     # known vec[k]
                     known += linmat[j,k]*vec[k]
 
-                abssum = 0
-                for k in range(i):
-                    # worst unknown vec[k]
-                    abssum += abs(linmat[j,k])*B
-
-                bound1 = linmin - known - abssum
-                #bound2 = linmin - known + abssum
+                bound1 = linmin - known - B*abssum[j,i]
 
                 if linmat[j,i]>0:
                     #print('.')
