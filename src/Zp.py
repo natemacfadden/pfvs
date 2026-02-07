@@ -40,6 +40,7 @@ def pvecs(
     min_N_pts: int = None,
     max_deg: int = None,
     min_deg: int = 0,
+    max_Linf: int = None,
     deg_window: int = 1,
     max_window_i: int = 10_000,
     max_time: float = 120, # 2 min...
@@ -127,7 +128,9 @@ def pvecs(
 
     # define a constraint-programming model to solve
     model  = cp_model.CpModel()
-    max_pi = cp_model.INT32_MAX - 1
+    if max_Linf is None:
+        print("PLEASE set max_Linf")
+        max_pi = cp_model.INT32_MAX - 1
 
     p_vars = [model.NewIntVar(-max_pi, max_pi, f'x{i}') for i in\
                                                         range(H.shape[1])]
@@ -890,7 +893,7 @@ def coniZpM(
                     for gcd in range(1,ellipsoid_dilation+1):
                         Bgcd = Kperp_gcd_lattice(data, Z, Binter, gcd)
                         
-                        vs, vQs = lattice.fp_iterative_lincut(
+                        vs, vQs = lattice.fp_iterative(
                             # ellipsoid definition
                             L=np.linalg.cholesky(Bgcd.T@mat@Bgcd),
                             Q=gcd*Qmax,
