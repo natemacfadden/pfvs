@@ -870,12 +870,12 @@ def fp_iterative_mat(
 @njit
 def _kanaan_box_mat_set_coord_candidates(
     sp,
-    remQ,
-    ci_offset,
-    L_diag_inv,
+    B,
+    linmat,
+    stack_partial_sum,
+    abssum,
     stack_vals,
     stack_val_len,
-    eps,
     COORD_BUFF_SIZE) -> int:
     """
     ***For use only in kanaan_box_mat.***
@@ -885,39 +885,41 @@ def _kanaan_box_mat_set_coord_candidates(
     ***For use only in kanaan_box_mat.***
 
     **Description:**
-    Sets the candidate values for vec[i], bound by constraints on Q. Operates as
-    follows.
-
-    Feasible integer bounds for vec[i] (let R = sqrt(remQ)):
-        -R                      <= c[i]          <= R
-        -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
-        (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
-    where we used that the diagonal is positive.
+    Sets the candidate values for vec[i], bound by constraints on ...
 
     **Arguments:**
     - `sp`:              Stack pointer. For writing our outputs.
-    - `remQ`:            The remaining amount of Q that we have to work with.
-    - `ci_offset`:       The offset to the vector vec[i] from vec[j>i]
-                         contributions.
-    - `L_diag_inv`:      The value 1/L[i,i] for setting bounds.
+
     - `stack_vals`:      The output array to store candidate vec[i] values to.
     - `stack_val_len`:   How many candidate vec[i] values exist.
-    - `max_N_out`:       The maximum number of output allowed.
-    - `eps`:             A small number used for correctly setting bounds
-                         despite floating point errors.
     - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
                          of vec[i].
 
     **Returns:**
     The number of candidate values, stack_val_len[sp].
     """
-    return -1 # NOT YET IMPLEMENTED!!!
-    if remQ < 0:
-        remQ = 0
-    R = np.sqrt(remQ)
+    lo = -B
+    hi = B
 
-    lo = int(np.ceil(( -R - ci_offset) * L_diag_inv - eps))
-    hi = int(np.floor(( R - ci_offset) * L_diag_inv + eps))
+    for j in range(linmat.shape[0]):
+        if linmat[j,i] == 0:
+            continue
+
+        tmp = linmin - stack_partial_sum[sp,j] - B*abssum[j,i]
+
+        if linmat[j,i]>0:
+            #print('.')
+            lo = max(
+                lo,
+                int(np.ceil(tmp/linmat[j,i]))
+            )
+        else:
+            hi = min(
+                hi,
+                int(np.floor(tmp/linmat[j,i]))
+            )
+
+        #print(vec[i+1:], lo, hi, bound1, linmat[j,i])
 
     # values of veci to iterate over
     k = 0
@@ -927,7 +929,8 @@ def _kanaan_box_mat_set_coord_candidates(
 
     # kill node if no valid veci values
     if k == 0:
-        return k
+        sp -= 1
+        continue
     # kill execution if there are too many values
     elif k>COORD_BUFF_SIZE:
         msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
@@ -1157,7 +1160,6 @@ def _coni_kernel_set_coord_candidates(
     - `L_diag_inv`:      The value 1/L[i,i] for setting bounds.
     - `stack_vals`:      The output array to store candidate vec[i] values to.
     - `stack_val_len`:   How many candidate vec[i] values exist.
-    - `max_N_out`:       The maximum number of output allowed.
     - `eps`:             A small number used for correctly setting bounds
                          despite floating point errors.
     - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
