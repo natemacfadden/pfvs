@@ -870,8 +870,10 @@ def fp_iterative_mat(
 @njit
 def _kanaan_box_mat_set_coord_candidates(
     sp,
+    i,
     B,
     linmat,
+    linmin,
     stack_partial_sum,
     abssum,
     stack_vals,
@@ -919,8 +921,6 @@ def _kanaan_box_mat_set_coord_candidates(
                 int(np.floor(tmp/linmat[j,i]))
             )
 
-        #print(vec[i+1:], lo, hi, bound1, linmat[j,i])
-
     # values of veci to iterate over
     k = 0
     for v in range(lo,hi+1):
@@ -929,8 +929,7 @@ def _kanaan_box_mat_set_coord_candidates(
 
     # kill node if no valid veci values
     if k == 0:
-        sp -= 1
-        continue
+        return k
     # kill execution if there are too many values
     elif k>COORD_BUFF_SIZE:
         msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
@@ -984,6 +983,15 @@ def kanaan_box_mat(
     # internal vector that gets built/written to output
     vec = np.zeros(dim, dtype=np.int64)
 
+    # compute helper variable
+    # -----------------------
+    abssum = np.empty((linmat.shape[0],linmat.shape[1]+1), np.int64)
+    for j in range(abssum.shape[0]):
+        abssum[j,0] = 0#abs(linmat[j,0])
+
+        for i in range(dim):
+            abssum[j,i+1] = abssum[j,i] + abs(abs(linmat[j,i]))
+
     # stack variables
     # ---------------
     # stack pointer
@@ -1009,17 +1017,18 @@ def kanaan_box_mat(
     stack_i[sp]    = dim-1
     stack_pos[sp]  = 0
 
-    stack_val_len[sp] = -1  # will fill below
-    #stack_vals unset here
-
-    # compute helper variable
-    # -----------------------
-    abssum = np.empty((linmat.shape[0],linmat.shape[1]+1), np.int64)
-    for j in range(abssum.shape[0]):
-        abssum[j,0] = 0#abs(linmat[j,0])
-
-        for i in range(dim):
-            abssum[j,i+1] = abssum[j,i] + abs(abs(linmat[j,i]))
+    _kanaan_box_mat_set_coord_candidates(
+        sp,
+        dim-1,
+        B,
+        linmat,
+        linmin,
+        stack_partial_sum,
+        abssum,
+        stack_vals,
+        stack_val_len,
+        COORD_BUFF_SIZE
+    )
 
     # process stack until empty
     # -------------------------
@@ -1120,6 +1129,22 @@ def kanaan_box_mat(
 
         for j in range(linmat.shape[0]):
             stack_partial_sum[sp,j] = stack_partial_sum[sp-1,j] + linmat[j,i]*vec[i]
+
+        """
+        if i >= 1:
+            _kanaan_box_mat_set_coord_candidates(
+                sp,
+                i-1,
+                B,
+                linmat,
+                linmin,
+                stack_partial_sum,
+                abssum,
+                stack_vals,
+                stack_val_len,
+                COORD_BUFF_SIZE
+            )
+        """
 
     return out[:op, :]
 
