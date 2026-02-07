@@ -40,6 +40,8 @@ def pvecs(
     min_N_pts: int,
     verbosity: int = 0) -> "ArrayLike":
 
+    max_N_iter = 10_000*min_N_pts
+
     # read hyperplanes
     if data.coni:
         H = data.H_cob
@@ -50,20 +52,30 @@ def pvecs(
     Bs_fit   = []
     Npts_fit = []
 
+    i = -1
     B = 1
+    Nlast = 0
     while True:
+        i += 1
         if verbosity >= 1:
-            print(B)
-        pts = lattice.kanaan_box_mat(
+            print('pre ',data.coni_curve,i,B,flush=True)
+        pts, Niter = lattice.kanaan_box_mat(
             B=B,
             linmat=H,
             linmin=1,
-            max_N_out=10*min_N_pts
+            max_N_out=10*min_N_pts,
+            max_N_iter=max_N_iter,
         )
+        if Niter >= max_N_iter:
+            print(f"TOO MANY (>={max_N_iter}) ITERATIONS",flush=True)
+            break
         N = len(pts)
         if N >= min_N_pts:
             break
-        if N > 0:
+        if verbosity >= 1:
+            print('post',data.coni_curve,i, B, Nlast, N, flush=True)
+        if N > Nlast:
+            Nlast = N
             Bs_fit.append(np.log(B))
             Npts_fit.append(np.log(N))
 
@@ -72,12 +84,19 @@ def pvecs(
         # y1-y0 = m(x1-x0)
         if len(Bs_fit) > 1:
             m = (Npts_fit[-1]-Npts_fit[-2])/(Bs_fit[-1]-Bs_fit[-2])
+            m *= 1.5
+
             Bguess = (np.log(min_N_pts)-Npts_fit[-1])/m + Bs_fit[-1]
-            Bguess = int(np.ceil(np.exp(Bguess)))
-            assert Bguess > B
-            B += min(5,Bguess-B)
+            Bguess = np.exp(Bguess)
+            if N <= 200:
+                Bstep  = min(Bguess - B, 0.05*B)
+            else:
+                Bstep = Bguess - B
+            Bstep = int(np.ceil(Bstep))
+            assert Bstep > 0
+            B += Bstep
         else:
-            B += 1
+            B += min(3, int(np.ceil(0.05*B)))
 
     return pts
 
@@ -151,7 +170,7 @@ def pvecs_cpsat(
                 print(f"Have {N_ps} p-vectors for degrees <{_min}", end=' '*20 + '\r')
 
             # compute new p-vectors, save them
-            new_ps = pvecs(
+            new_ps = pvecs_cpsat(
                 data,
                 min_deg = _min,
                 max_deg = _max,
@@ -356,7 +375,6 @@ def allow_gcds(Ks, Ms, Qmax, h11):
 
 # non-coni Zp
 # ===========
-print("NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")
 def ZpM(
     data: "cydata",
     ps: "ArrayLike",
@@ -378,6 +396,7 @@ def ZpM(
 
     returns a list of Ks and Ms
     """
+    print("NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")
     assert not data.coni
 
     # misc
@@ -525,6 +544,7 @@ def ZpK(
 
     returns a list of Ks and Ms
     """
+    print("NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")
     assert not data.coni
 
     # misc

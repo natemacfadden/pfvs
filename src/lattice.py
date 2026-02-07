@@ -935,7 +935,8 @@ def kanaan_box_mat(
         B: int,
         linmat: "ArrayLike",
         linmin: int,
-        max_N_out: int = 10_000_000,
+        max_N_out: int = 1_000_000,
+        max_N_iter: int = 1_000_000_000,
         eps: float = 1e-4,
         COORD_BUFF_SIZE: int = 2048) -> "ArrayLike":
     """
@@ -962,6 +963,14 @@ def kanaan_box_mat(
     The vectors `vec` in the ellipsoid.
     """
     dim        = linmat.shape[1]
+
+    # sort the columns of linmat so stricter components come first
+    # ------------------------------------------------------------
+    col_l1_norm = np.sum(np.abs(linmat), axis=0)
+    sort_inds   = np.argsort(col_l1_norm)
+    undo_sort   = np.argsort(sort_inds)
+
+    linmat = linmat[:,sort_inds]
 
     # output object
     # -------------
@@ -1022,7 +1031,11 @@ def kanaan_box_mat(
 
     # process stack until empty
     # -------------------------
+    Niter = 0
     while sp >= 0:
+        Niter += 1
+        if Niter >= max_N_iter:
+            break
         # read values
         i    = stack_i[sp]
         pos  = stack_pos[sp]
@@ -1077,7 +1090,7 @@ def kanaan_box_mat(
                 COORD_BUFF_SIZE
             )
 
-    return out[:op, :]
+    return out[:op, undo_sort], Niter
 
 # FP-style methods but tailored to coniZpM
 # ----------------------------------------
