@@ -19,6 +19,12 @@ static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
     // min allowed gcd,shifted
     int min_allowed_gcd_shifted = min_allowed_gcd >> shift;
 
+    // cut if current bound on gcd is below allowed value
+    // current upper bound is u << shift
+    if (u < min_allowed_gcd_shifted) {
+        return -1;
+    }
+
     // gcd(u,v) = gcd(|u-v|, min(u,v))
     // just keep u < v so this is gcd(v-u, u)
     do {
@@ -34,12 +40,14 @@ static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
         v ^= t;
         */
 
-        // v -> v-u
-        v -= u;
-
+        // cut if current bound on gcd is below allowed value
+        // current upper bound is u << shift
         if (u < min_allowed_gcd_shifted) {
             return -1;
         }
+
+        // v -> v-u
+        v -= u;
     } while (v);
 
     return u << shift;
