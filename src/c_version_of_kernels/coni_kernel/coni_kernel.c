@@ -163,7 +163,7 @@ int coni_kernel(
                     dst[j] = vec[j];
                 //memcpy(&out[op * dim], vec, dim * sizeof(int32_t));
                 
-                Qs[op] = Q_upper-remQ;
+                Qs[op] = Qsave;
                 op ++;
             }
             // kill node
