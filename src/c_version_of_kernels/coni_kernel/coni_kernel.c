@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+// Stein's algorithm for GCD
 static inline int gcd(int u, int v)
 {
     if (u == 0) return abs(v);
@@ -29,6 +30,7 @@ static inline int gcd(int u, int v)
     return u << shift;
 }
 
+// Custom methods
 static inline int set_bounds(
     int sp,
     double remQ,
