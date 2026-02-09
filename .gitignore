@@ -17,11 +17,22 @@ dist/
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
 
-# Images
-*.svg
+# C / Cython build artifacts
+*.so
+*.pyd
+*.dll
+*.dylib
+*.o
+*.obj
+*.a
+*.lib
+
+# Optional: Cython-generated C files
+*.c
+*.cpp
+
+# Debug / IDE files
+*.dSYM/
 
 # Custom data types
 PFVSTRINGS-*
-
-# C stuff
-*.dSYM/
