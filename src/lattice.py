@@ -1100,7 +1100,7 @@ def _coni_kernel_set_coord_candidates(
     remQ,
     ci_offset,
     L_diag_inv,
-    stack_vals,
+    stack_val_min,
     stack_val_len,
     eps,
     COORD_BUFF_SIZE) -> int:
@@ -1127,8 +1127,8 @@ def _coni_kernel_set_coord_candidates(
     - `ci_offset`:       The offset to the vector vec[i] from vec[j>i]
                          contributions.
     - `L_diag_inv`:      The value 1/L[i,i] for setting bounds.
-    - `stack_vals`:      The output array to store candidate vec[i] values to.
-    - `stack_val_len`:   How many candidate vec[i] values exist.
+    - `stack_val_min`:   Container for the minimum value of vec[i] permissible.
+    - `stack_val_len`:   Container for how many candidate vec[i] values exist.
     - `eps`:             A small number used for correctly setting bounds
                          despite floating point errors.
     - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
@@ -1153,8 +1153,7 @@ def _coni_kernel_set_coord_candidates(
         msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
         raise ValueError(msg)
 
-    for t in range(k):
-        stack_vals[sp, t] = lo + t
+    stack_val_min[sp] = lo
     stack_val_len[sp] = k
 
     return k
@@ -1255,7 +1254,7 @@ def coni_kernel(
     
     # vec[i] candidate arrays per depth (preallocate maximum possible size)
     stack_val_len= np.zeros(MAX_DEPTH, np.int64) # number of candidates
-    stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # candidates
+    stack_val_min= np.empty(MAX_DEPTH, np.int64) # minimum value for vec[stack_i[sp]]
 
     # offsets for ci
     # c[i] = L[i,i]*vec[i] + sum_{j>i} L[j,i]*vec[j]
@@ -1275,7 +1274,7 @@ def coni_kernel(
         Q_upper,
         0,
         L_diag_inv[dim-1],
-        stack_vals,
+        stack_val_min,
         stack_val_len,
         eps,
         COORD_BUFF_SIZE)
@@ -1322,7 +1321,7 @@ def coni_kernel(
 
         # pick candidate veci
         # -------------------
-        veci   = stack_vals[sp, pos]
+        veci   = stack_val_min[sp] + pos
         vec[i] = veci
 
         stack_pos[sp] += 1 # advance pos for next iteration
@@ -1392,7 +1391,7 @@ def coni_kernel(
             new_rem,
             ci_offset,
             L_diag_inv[i-1],
-            stack_vals,
+            stack_val_min,
             stack_val_len,
             eps,
             COORD_BUFF_SIZE)
