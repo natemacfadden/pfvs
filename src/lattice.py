@@ -1095,15 +1095,14 @@ def kanaan_box_mat(
 # FP-style methods but tailored to coniZpM
 # ----------------------------------------
 @njit
-def _coni_kernel_set_coord_candidates(
+def _coni_kernel_set_bounds(
     sp,
     remQ,
     ci_offset,
     L_diag_inv,
     stack_val_min,
     stack_val_len,
-    eps,
-    COORD_BUFF_SIZE) -> int:
+    eps) -> int:
     """
     ***For use only in coni_kernel.***
     ***For use only in coni_kernel.***
@@ -1131,8 +1130,6 @@ def _coni_kernel_set_coord_candidates(
     - `stack_val_len`:   Container for how many candidate vec[i] values exist.
     - `eps`:             A small number used for correctly setting bounds
                          despite floating point errors.
-    - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
-                         of vec[i].
 
     **Returns:**
     The number of candidate values, stack_val_len[sp].
@@ -1144,19 +1141,12 @@ def _coni_kernel_set_coord_candidates(
     lo = int(np.ceil(( -R - ci_offset) * L_diag_inv - eps))
     hi = int(np.floor(( R - ci_offset) * L_diag_inv + eps))
 
-    # compute the number of veci to iterate over
-    k = hi - lo + 1
-    if k <= 0:
-        stack_val_len[sp] = 0
-        return 0
-    if k > COORD_BUFF_SIZE:
-        msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
-        raise ValueError(msg)
-
+    # store the data to recreate the interval
+    num = hi - lo + 1
     stack_val_min[sp] = lo
-    stack_val_len[sp] = k
+    stack_val_len[sp] = num
 
-    return k
+    return num
 
 @njit
 def coni_kernel(
@@ -1170,8 +1160,7 @@ def coni_kernel(
         H: "ArrayLike",
         # misc:
         max_N_out: int,
-        eps: float = 1e-4,
-        COORD_BUFF_SIZE: int = 2048) -> ("ArrayLike", "ArrayLike"):
+        eps: float = 1e-4) -> ("ArrayLike", "ArrayLike"):
     """
     **Description:**
     Adaptation of the (iterative) Fincke-Pohst algorithm for utility in
@@ -1204,8 +1193,6 @@ def coni_kernel(
     - `max_N_out`:       The maximum number of output allowed.
     - `eps`:             A small number used for correctly setting bounds
                          despite floating point errors.
-    - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
-                         of vec[i].
 
     **Returns:**
     The vectors `vec` in the ellipsoid and obeying the extra constraints.
@@ -1269,15 +1256,14 @@ def coni_kernel(
     stack_M0[sp]   = 0
     stack_gcd[sp]  = 0
 
-    k = _coni_kernel_set_coord_candidates(
+    k = _coni_kernel_set_bounds(
         sp,
         Q_upper,
         0,
         L_diag_inv[dim-1],
         stack_val_min,
         stack_val_len,
-        eps,
-        COORD_BUFF_SIZE)
+        eps)
     if k == 0:
         print("ERROR NO VECTORS")
         return out[:op, :], Qs[:op]
@@ -1371,30 +1357,25 @@ def coni_kernel(
         stack_M0[sp]      = M0
         stack_gcd[sp]     = new_gcd
         
-        # compute the new ci offset value for i-1 using this vector
+        # compute the new ci, Hvec_i offset value for i-1 using this vector
         ci_offset = 0.0
+        Hvec_i = 0
         for j in range(i, dim):
             ci_offset += L[j,i-1] * vec[j]
+            Hvec_i += H[i-1,j] * vec[j]
 
         stack_ci_offset[sp] = ci_offset
-
-        # compute the new Hvec_i offset value for i-1 using this vector
-        Hvec_i = 0
-        for k in range(i, dim):
-            Hvec_i += H[i-1,k] * vec[k]
-
         stack_Hveci[sp] = Hvec_i
 
         # set candidate values of vec[i-1]
-        _coni_kernel_set_coord_candidates(
+        _coni_kernel_set_bounds(
             sp,
             new_rem,
             ci_offset,
             L_diag_inv[i-1],
             stack_val_min,
             stack_val_len,
-            eps,
-            COORD_BUFF_SIZE)
+            eps)
     # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
     # HOT LOOP HOT LOOP HOT LOOP HOT LOOP
     # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

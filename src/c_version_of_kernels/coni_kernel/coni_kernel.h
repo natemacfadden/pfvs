@@ -1,22 +1,21 @@
-#ifndef ENUMERATE_FP_H
-#define ENUMERATE_FP_H
+#ifndef CONI_KERNEL_H
+#define CONI_KERNEL_H
 
 #include <stdint.h>
 
-int enumerate_fp_c(
+int coni_kernel(
     int32_t * restrict out, // shape: [max_N_out, dim]
-    float * restrict Qs,    // shape: [max_N_out,]
+    double * restrict Qs,    // shape: [max_N_out,]
     int * restrict N_out,   // number of rows written
     int max_N_out,
     int dim,
-    float * restrict L,
+    double * restrict L,
     int Q,
-    float dilation,
+    double dilation,
     int * restrict linvec,
-    float linmin,
+    double linmin,
     int * restrict H,
-    float eps,
-    int COORD_BUFF_SIZE
+    double eps
 );
 
 #endif

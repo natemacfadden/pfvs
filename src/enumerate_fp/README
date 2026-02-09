@@ -1,4 +1,0 @@
-Compile either like this
-clang -O3 -march=native -mtune=native -funroll-loops enumerate_box/*.c -o enum
-or maybe like this (may be slower?)
-clang -O3 enumerate_box/*.c -o enum

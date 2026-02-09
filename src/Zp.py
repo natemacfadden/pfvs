@@ -989,6 +989,9 @@ def coniZpM(
 
             if verbosity >= 1:
                 print(f"found {len(lattice_points)} lattice points...")
+                if verbosity >= 10:
+                    print("they were:")
+                    print(lattice_points)
 
         except Exception as e:
             print("ERROR!!!")
