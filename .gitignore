@@ -27,10 +27,6 @@ dist/
 *.a
 *.lib
 
-# Optional: Cython-generated C files
-*.c
-*.cpp
-
 # Debug / IDE files
 *.dSYM/
 
