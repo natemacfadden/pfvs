@@ -6,27 +6,36 @@
 #include <string.h>
 
 // Stein's algorithm for GCD
-static inline int gcd(int u, int v, double min_allowed_gcd)
+static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
 {
     // ensure positive values
-    if (u == 0) return abs(v);
-    if (v == 0) return abs(u);
-
-    u = abs(u);
-    v = abs(v);
+    if (u == 0) return v;
+    if (v == 0) return u;
 
     // remove factors of 2
     int shift = __builtin_ctz(u | v);
     u >>= __builtin_ctz(u);
 
+    // min allowed gcd,shifted
+    int min_allowed_gcd_shifted = min_allowed_gcd >> shift;
+
     // gcd(u,v) = gcd(|u-v|, min(u,v))
     // just keep u < v so this is gcd(v-u, u)
     do {
+        // remove factors of 2 from v
         v >>= __builtin_ctz(v);
-        if (u > v) { int t = v; v = u; u = t; }  // ensure u <= v
+        
+        // ensure u <= v
+        //if (u > v) { int t = v; v = u; u = t; }
+        uint32_t mask = -(u > v); // mask is 0xFFFFFFFF if u>v, else 0
+        uint32_t t = mask & (u ^ v);
+        u ^= t;
+        v ^= t;
+
+        // v -> v-u
         v -= u;
 
-        if ((u << shift) < min_allowed_gcd) {
+        if (u < min_allowed_gcd_shifted) {
             return -1;
         }
     } while (v);
@@ -84,7 +93,7 @@ int coni_kernel(
     int32_t stack_pos[MAX_DEPTH];
     double  stack_remQ[MAX_DEPTH];
     int32_t stack_M0[MAX_DEPTH];
-    int32_t stack_gcd[MAX_DEPTH];
+    uint32_t stack_gcd[MAX_DEPTH];
 
     int32_t stack_val_len[MAX_DEPTH];
     int32_t stack_val_min[MAX_DEPTH];
@@ -208,17 +217,17 @@ int coni_kernel(
 
         // check if we violated K'>0 constraints
         // -------------------------------------
-        double required_dilation = (Q_upper-new_rem)/Q - eps;
+        uint32_t required_dilation = (uint32_t)floor((Q_upper-new_rem)/Q - eps);
 
         // first try a simpler-to-compute upper
-        int new_gcd = stack_gcd[sp];
+        uint32_t new_gcd = stack_gcd[sp];
         if ((new_gcd > 0) && (new_gcd < required_dilation)) {
             continue;
         }
 
         // do the real computation
         if (new_gcd != 1) {
-            int Hvec_i  = stack_Hveci[sp] + H[i*dim+i]*veci;
+            uint32_t Hvec_i  = abs(stack_Hveci[sp] + H[i*dim+i]*veci);
             new_gcd = gcd(new_gcd, Hvec_i, required_dilation);
 
             if (new_gcd == -1) {
