@@ -34,7 +34,7 @@ static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
         // ensure u <= v
         if (u > v) { int t = v; v = u; u = t; }
         /*
-        uint32_t mask = -(u > v); // mask is 0xFFFFFFFF if u>v, else 0
+        uint32_t mask = -(u > v);
         uint32_t t = mask & (u ^ v);
         u ^= t;
         v ^= t;
