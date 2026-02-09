@@ -189,7 +189,7 @@ int coni_kernel(
         }
 
         // check if we exhausted values for this component
-        if (stack_pos[sp] == stack_val_len[sp]) {
+        if (pos == stack_val_len[sp]) {
             sp--;
             continue;
         }
