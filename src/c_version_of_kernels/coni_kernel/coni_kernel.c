@@ -6,25 +6,29 @@
 #include <string.h>
 
 // Stein's algorithm for GCD
-static inline int gcd(int u, int v)
+static inline int gcd(int u, int v, double min_allowed_gcd)
 {
+    // ensure positive values
     if (u == 0) return abs(v);
     if (v == 0) return abs(u);
 
     u = abs(u);
     v = abs(v);
 
+    // remove factors of 2
     int shift = __builtin_ctz(u | v);
     u >>= __builtin_ctz(u);
 
+    // gcd(u,v) = gcd(|u-v|, min(u,v))
+    // just keep u < v so this is gcd(v-u, u)
     do {
         v >>= __builtin_ctz(v);
-        if (u > v) {
-            int t = v;
-            v = u;
-            u = t;
-        }
+        if (u > v) { int t = v; v = u; u = t; }  // ensure u <= v
         v -= u;
+
+        if ((u << shift) < min_allowed_gcd) {
+            return -1;
+        }
     } while (v);
 
     return u << shift;
@@ -215,9 +219,11 @@ int coni_kernel(
         // do the real computation
         if (new_gcd != 1) {
             int Hvec_i  = stack_Hveci[sp] + H[i*dim+i]*veci;
-            new_gcd = gcd(new_gcd, Hvec_i);
+            new_gcd = gcd(new_gcd, Hvec_i, required_dilation);
 
-            if ((new_gcd > 0) && (new_gcd < required_dilation)) {
+            if (new_gcd == -1) {
+                continue;
+            } else if ((new_gcd > 0) && (new_gcd < required_dilation)) {
                 continue;
             }
         }
