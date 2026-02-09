@@ -26,11 +26,13 @@ static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
         v >>= __builtin_ctz(v);
         
         // ensure u <= v
-        //if (u > v) { int t = v; v = u; u = t; }
+        if (u > v) { int t = v; v = u; u = t; }
+        /*
         uint32_t mask = -(u > v); // mask is 0xFFFFFFFF if u>v, else 0
         uint32_t t = mask & (u ^ v);
         u ^= t;
         v ^= t;
+        */
 
         // v -> v-u
         v -= u;
