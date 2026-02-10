@@ -10,9 +10,9 @@ from libc.stdlib cimport malloc, free
 # -------------------------------
 cdef extern from "coni_kernel.h":
     int _coni_kernel_c(
-        int32_t *out,       # shape [max_N_out, dim]
-        double *Qs,         # shape [max_N_out]
-        int *N_out,         # number of rows written
+        int32_t *out,
+        double *Qs,
+        int *N_out,
         int dim,
         double *U,
         int Q,
