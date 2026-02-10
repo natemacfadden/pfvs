@@ -127,6 +127,7 @@ int _coni_kernel_c(
     double eps)
 {
     /*
+    **Description:**
     Adaptation of the (iterative) Fincke-Pohst algorithm for utility in
     constructing coni-PFVs. I.e., solves
         0 <= vec^T @ mat     @ vec <= dilation*Q.
@@ -141,6 +142,8 @@ int _coni_kernel_c(
 
     Any `vec` satisfying all of the above can generate a coni-PFV, as long as
     det(N) != 0.
+
+    Most of the work is in writing to `out`, `Qs`, and `N_out`.
 
     **Arguments:**
     - `out`:       A container for the lattice points vec.
@@ -164,8 +167,7 @@ int _coni_kernel_c(
                    floating point errors.
 
     **Returns:**
-    The vectors `vec` in the ellipsoid and obeying the extra constraints.
-    The valuation `vec^T @ mat @ vec`.
+    A status code.
     */
     // define arrays
     #define MAX_DIM dim
