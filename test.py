@@ -33,9 +33,9 @@ max_N_out = 100000000
 # -----------------------
 for dilation in [10_000*i for i in range(1,20+1)]:
     tic = time.time()
-    out, Qs, N_out, status = coni_kernel(
+    out, Qs, status = coni_kernel(
         U, Q, dilation, linvec, linmin, H, max_N_out
     )
     toc = time.time()
     
-    print(f"dilation = {dilation}; found {N_out} vectors in {toc-tic}s...")
+    print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s...")

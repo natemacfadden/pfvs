@@ -1,17 +1,18 @@
 # coni_kernel.pyx
 # Cython wrapper for coni_kernel
 
-# --- Import C types ---
+# import C types
+# --------------
 from libc.stdint cimport int32_t
 from libc.stdlib cimport malloc, free
 
-# --- Declare the external C function ---
+# declare the external C function
+# -------------------------------
 cdef extern from "coni_kernel.h":
     int _coni_kernel_c(
         int32_t *out,       # shape [max_N_out, dim]
         double *Qs,         # shape [max_N_out]
         int *N_out,         # number of rows written
-        int max_N_out,
         int dim,
         double *U,
         int Q,
@@ -19,10 +20,12 @@ cdef extern from "coni_kernel.h":
         int *linvec,
         double linmin,
         int *H,
+        int max_N_out,
         double eps
     )
 
-# --- Python-exposed wrapper ---
+# Python-exposed wrapper
+# ----------------------
 def coni_kernel(double[:] U,
                 int Q,
                 double dilation,
@@ -32,15 +35,53 @@ def coni_kernel(double[:] U,
                 int max_N_out,
                 double eps = 1e-12):
     """
-    Python wrapper for coni_kernel.
-    U: square 1D array of length dim*dim (row-major)
-    linvec: 1D int array of length dim
-    H: 1D int array of length dim*dim (row-major)
-    Returns:
-        out: 2D int array [N_out, dim]
-        Qs: 1D double array [N_out]
-        N_out: int
-        status: int (return code from C function)
+    **Description:**
+    Adaptation of the (iterative) Fincke-Pohst algorithm for utility in
+    constructing coni-PFVs. I.e., solves
+        0 <= vec^T @ mat     @ vec <= dilation*Q.
+        0 <= vec^T @ (U.T@U) @ vec <= dilation*Q
+    as well as (M[0] cuts)
+        linmin <= dot(linvec, vec)
+    as well as (K'>0 cuts)
+        (vec^T @ mat @ vec)//Q <= gcd(Kperp)
+                                = gcd([0, 1]@Z@Binter@vec)
+                                = gcd(H@vec)
+    for H the row-HNF of [0, 1]@Z@Binter (this matrix computes Kperp from vec).
+
+    Any `vec` satisfying all of the above can generate a coni-PFV, as long as
+    det(N) != 0.
+
+    Most of the work is in writing to `out`, `Qs`, and `N_out`.
+
+    **Arguments:**
+    // output objects
+    - `out`:       A container for the lattice points vec.
+    - `Qs`:        A container for the valuations of vec^T @ mat @ vec of the
+                   outputs.
+    - `N_out`:     An integer we write to, indicating the number of outputs.
+    // ellipsoid def
+    - `dim`      : The dimension of the problem.
+    - `U`:         The upper triangular matrix such that mat = U.T@L
+    - `Q`:         The ellipsoid bound.
+    - `dilation`:  The maximum allowed dilation to allow... As long as
+                   gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec can
+                   still define coni-PFV.
+    // M0 cuts
+    - `linvec`:    Binter[0,:]. The vector such that dot(linvec,vec)=M0. BEST TO
+                   ORDER COLUMNS OF BINTER SUCH THAT linvec HAS A LARGE NUMBER
+                   OF LEADING 0s.
+    - `linmin`:    The minimum value of M0 permitted. Inclusive.
+    // Kprime cuts
+    - `H`:         Let G be the matrix such that Kperp = G@vec. Then H = HNF(G).
+    // misc specs
+    - `max_N_out`: The maximum number of output allowed.
+    - `eps`:       A small number used for correctly setting bounds despite
+                   floating point errors.
+
+    **Returns:**
+    The vectors `vec` in the ellipsoid and obeying the extra constraints.
+    The valuation `vec^T @ mat @ vec`.
+    A status code.
     """
     cdef int dim = linvec.shape[0]
     cdef int N_out = 0
@@ -60,7 +101,6 @@ def coni_kernel(double[:] U,
         c_out,
         c_Qs,
         &N_out,
-        max_N_out,
         dim,
         &U[0],
         Q,
@@ -68,13 +108,14 @@ def coni_kernel(double[:] U,
         &linvec[0],
         linmin,
         &H[0],
+        max_N_out,
         eps
     )
 
     # Convert outputs to Python arrays
     import numpy as np
     out = np.empty((N_out, dim), dtype=np.int32)
-    Qs = np.empty(N_out, dtype=np.float64)
+    Qs  = np.empty(N_out, dtype=np.float64)
 
     # Copy results
     for i in range(N_out):
@@ -86,4 +127,4 @@ def coni_kernel(double[:] U,
     free(c_out)
     free(c_Qs)
 
-    return out, Qs, N_out, status
+    return out, Qs, status
