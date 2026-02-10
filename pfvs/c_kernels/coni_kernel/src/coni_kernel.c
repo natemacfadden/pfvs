@@ -22,7 +22,7 @@ static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
     // cut if current bound on gcd is below allowed value
     // current upper bound is u << shift
     if (u < min_allowed_gcd_shifted) {
-        return u << shift;
+        return 1;
     }
 
     // gcd(u,v) = gcd(|u-v|, min(u,v))
@@ -43,8 +43,7 @@ static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
         // cut if current bound on gcd is below allowed value
         // current upper bound is u << shift
         if (u < min_allowed_gcd_shifted) {
-            //printf("%d\n",u<<shift);
-            return u << shift;
+            return 1;
         }
 
         // v -> v-u
@@ -230,30 +229,42 @@ int _coni_kernel_c(
         // -------------------------------------
         uint32_t required_dilation = (uint32_t)floor((Q_upper-new_rem)/Q - eps);
 
-        // first try a simpler-to-compute upper
-        uint32_t new_gcd = stack_gcd[sp];
-        if ((new_gcd > 0) && (new_gcd < required_dilation)) {
+        // first try a simpler-to-compute upper... compute new_gcd only if needed
+        uint32_t new_gcd = stack_gcd[sp]; // upper bound
+        if (new_gcd == 0) {
+            // gcd was 0... update it to whatever abs(Hvec_i) is....
+            uint32_t Hvec_i  = abs(stack_Hveci[sp] + H[i*dim+i]*veci);
+            new_gcd          = Hvec_i;
+
+            if (new_gcd == 0) {
+                // still 0... can't do jack with this
+                goto write_stack;
+            }
+
+        } else if (new_gcd < required_dilation) {
+            // bad! we can't get back under tadpole...
+            // (we check here to avoid a gcd call...)
+            continue;
+
+        } else if (new_gcd != 1) {
+            // only other case where we can nontrivially change the gcd
+            uint32_t Hvec_i  = abs(stack_Hveci[sp] + H[i*dim+i]*veci);
+            new_gcd          = gcd(new_gcd, Hvec_i, required_dilation);
+        }
+
+        // here, the gcd is nonzero and may newly violate tadpole
+        if (new_gcd < required_dilation) {
             continue;
         }
 
-        // do the real computation
-        if (new_gcd != 1) {
-            uint32_t Hvec_i  = abs(stack_Hveci[sp] + H[i*dim+i]*veci);
-            new_gcd = gcd(new_gcd, Hvec_i, required_dilation);
-
-            if ((new_gcd > 0) && (new_gcd < required_dilation)) {
-                //printf("skipped!\n");
-                continue;
-            }
-        }
-
         // passes cuts -> push next depth :)
-        sp += 1;
-        stack_i[sp]       = i-1;
-        stack_pos[sp]     = 0;
-        stack_remQ[sp]    = new_rem;
-        stack_M0[sp]      = M0;
-        stack_gcd[sp]     = new_gcd;
+        write_stack:
+            sp += 1;
+            stack_i[sp]       = i-1;
+            stack_pos[sp]     = 0;
+            stack_remQ[sp]    = new_rem;
+            stack_M0[sp]      = M0;
+            stack_gcd[sp]     = new_gcd;
 
         // compute the new ci, Hvec_i offset value for i-1 using this vector
         double ci_offset = 0.0;
