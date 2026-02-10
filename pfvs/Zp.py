@@ -59,7 +59,7 @@ def pvecs(
         i += 1
         if verbosity >= 1:
             print('pre ',data.coni_curve,i,B,flush=True)
-        pts, Niter = lattice.kanaan_box_mat(
+        pts, Niter = lattice.kannan_box_mat(
             B=B,
             linmat=H,
             linmin=1,

@@ -868,7 +868,7 @@ def fp_iterative_mat(
     return out[:op, :], Qs[:op]
 
 @njit
-def _kanaan_box_mat_set_coord_candidates(
+def _kannan_box_mat_set_coord_candidates(
     sp,
     i,
     B,
@@ -880,11 +880,11 @@ def _kanaan_box_mat_set_coord_candidates(
     stack_val_len,
     COORD_BUFF_SIZE) -> int:
     """
-    ***For use only in kanaan_box_mat.***
-    ***For use only in kanaan_box_mat.***
-    ***For use only in kanaan_box_mat.***
-    ***For use only in kanaan_box_mat.***
-    ***For use only in kanaan_box_mat.***
+    ***For use only in kannan_box_mat.***
+    ***For use only in kannan_box_mat.***
+    ***For use only in kannan_box_mat.***
+    ***For use only in kannan_box_mat.***
+    ***For use only in kannan_box_mat.***
 
     **Description:**
     Sets the candidate values for vec[i], bound by constraints on ...
@@ -931,7 +931,7 @@ def _kanaan_box_mat_set_coord_candidates(
     return k
 
 @njit
-def kanaan_box_mat(
+def kannan_box_mat(
         B: int,
         linmat: "ArrayLike",
         linmin: int,
@@ -1016,7 +1016,7 @@ def kanaan_box_mat(
     stack_i[sp]    = dim-1
     stack_pos[sp]  = 0
 
-    _kanaan_box_mat_set_coord_candidates(
+    _kannan_box_mat_set_coord_candidates(
         sp,
         dim-1,
         B,
@@ -1077,7 +1077,7 @@ def kanaan_box_mat(
             stack_partial_sum[sp,j] = stack_partial_sum[sp-1,j] + linmat[j,i]*vec[i]
 
         if i >= 1:
-            _kanaan_box_mat_set_coord_candidates(
+            _kannan_box_mat_set_coord_candidates(
                 sp,
                 i-1,
                 B,
