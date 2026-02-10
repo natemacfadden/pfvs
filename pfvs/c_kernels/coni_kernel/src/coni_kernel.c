@@ -5,10 +5,23 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Stein's algorithm for GCD
+// GCD helper
 static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
 {
-    // ensure positive values
+    /*
+    **Description:**
+    Modification of Stein's binary GCD algorithm gcd(u,v) with an explicit
+    minum allowed GCD. If gcd(u,v) < min_allowed_gcd, then quit early, returning
+    1.
+
+    **Arguments:**
+    - `u`:               One integer.
+    - `v`:               The other integer.
+    - `min_allowed_gcd`: The minimum allowed GCD to return.
+
+    **Returns:**
+    gcd(u,v) if it is >=min_allowed_gcd. Otherwise, 1.
+    */
     if (u == 0) return v;
     if (v == 0) return u;
 
@@ -53,7 +66,7 @@ static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
     return u << shift;
 }
 
-// Custom methods
+// FP vec[i] bound setting helper
 static inline int set_bounds(
     int sp,
     double remQ,
@@ -63,6 +76,26 @@ static inline int set_bounds(
     int32_t * restrict stack_val_len,
     double eps)
 {
+    /*
+    **Description:**
+    Defines the bounds to iterate vec[i] over in the next FP iteration.
+
+    Most of the work is in writing to `stack_val_min` and `stack_val_len`.
+
+    **Arguments:**
+    - `sp`:            A pointer to the current stack element.
+    - `remQ`:          The remaining slack for the norm squared.
+    - `ci_offset`:     A constant shift in the value vec[i] when computing norm.
+    - `U_diag_inv`:    1/diag(U) for U the upper-triangular matrix (from
+                       Cholesky).
+    - `stack_val_min`: The minimum value to try for vec[i].
+    - `stack_val_len`: The number of candidates to try for vec[i].
+    - `eps`:           A small number eps used for ensuring the bounds contain
+                       all possible values of vec[i].
+
+    **Returns:**
+    The number of candidates to try, `stack_val_len[sp]`.
+    */
     if (remQ < 0)
         remQ = 0;
     double R = sqrt(remQ);
@@ -78,6 +111,7 @@ static inline int set_bounds(
     return num;
 }
 
+// custom FP code for coniPFVs
 int _coni_kernel_c(
     int32_t * restrict out,
     double * restrict Qs,
@@ -92,6 +126,47 @@ int _coni_kernel_c(
     int * restrict H,
     double eps)
 {
+    /*
+    Adaptation of the (iterative) Fincke-Pohst algorithm for utility in
+    constructing coni-PFVs. I.e., solves
+        0 <= vec^T @ mat     @ vec <= dilation*Q.
+        0 <= vec^T @ (U.T@U) @ vec <= dilation*Q
+    as well as (M[0] cuts)
+        linmin <= dot(linvec, vec)
+    as well as (K'>0 cuts)
+        (vec^T @ mat @ vec)//Q <= gcd(Kperp)
+                                = gcd([0, 1]@Z@Binter@vec)
+                                = gcd(H@vec)
+    for H the row-HNF of [0, 1]@Z@Binter (this matrix computes Kperp from vec).
+
+    Any `vec` satisfying all of the above can generate a coni-PFV, as long as
+    det(N) != 0.
+
+    **Arguments:**
+    - `out`:       A container for the lattice points vec.
+    - `Qs`:        A container for the valuations of vec^T @ mat @ vec of the
+                   outputs.
+    - `N_out`:     An integer we write to, indicating the number of outputs.
+
+    - `max_N_out`: The maximum number of output allowed.
+    - `dim`      : The dimension of the problem.
+    - `U`:         The upper triangular matrix such that mat = U.T@L
+    - `Q`:         The ellipsoid bound.
+    - `dilation`:  The maximum allowed dilation to allow... As long as
+                   gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec can
+                   still define coni-PFV.
+    - `linvec`:    Binter[0,:]. The vector such that dot(linvec,vec)=M0. BEST TO
+                   ORDER COLUMNS OF BINTER SUCH THAT linvec HAS A LARGE NUMBER
+                   OF LEADING 0s.
+    - `linmin`:    The minimum value of M0 permitted. Inclusive.
+    - `H`:         Let G be the matrix such that Kperp = G@vec. Then H = HNF(G).
+    - `eps`:       A small number used for correctly setting bounds despite
+                   floating point errors.
+
+    **Returns:**
+    The vectors `vec` in the ellipsoid and obeying the extra constraints.
+    The valuation `vec^T @ mat @ vec`.
+    */
     // define arrays
     #define MAX_DIM dim
     #define MAX_DEPTH (MAX_DIM + 1)
@@ -160,7 +235,6 @@ int _coni_kernel_c(
     }
 
     // iterate over the stack
-
     int i;
     int pos;
     double remQ;
@@ -229,7 +303,7 @@ int _coni_kernel_c(
         // -------------------------------------
         uint32_t required_dilation = (uint32_t)floor((Q_upper-new_rem)/Q - eps);
 
-        // first try a simpler-to-compute upper... compute new_gcd only if needed
+        // first try a simple upper bound... compute new_gcd only if needed
         uint32_t new_gcd = stack_gcd[sp]; // upper bound
         if (new_gcd == 0) {
             // gcd was 0... update it to whatever abs(Hvec_i) is....
