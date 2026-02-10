@@ -1,1 +1,1 @@
-from .coni_kernel import py_coni_kernel
+from .coni_kernel import coni_kernel

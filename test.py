@@ -1,7 +1,10 @@
 import numpy as np
-from pfvs.c_kernels.coni_kernel import py_coni_kernel
+import time
 
-# --- Example inputs ---
+from pfvs.c_kernels import coni_kernel
+
+# Manwe from dSv1
+# ---------------
 dim = 7
 U = np.array([
     19.131126469708992,-2.50900019274872,-12.022292590254283,9.408750722807701,10.97687584327565,8.363333975829066,24.77637690339361,
@@ -25,19 +28,14 @@ H = np.array([
 ], dtype=np.int32)
 
 max_N_out = 100000000
-eps = 1e-4
 
-# --- Call the Cython wrapper ---
-import time
-tic = time.time()
-out, Qs, N_out, status = py_coni_kernel(
-    U, Q, 200_000, linvec, linmin, H, max_N_out, eps
-)
-toc = time.time()
-print(toc-tic,'s')
-
-print("status =", status)
-print("N_out =", N_out)
-if N_out > 0:
-    print("First vector:", out[0])
-    print("First Qs:", Qs[0])
+# call the Cython wrapper
+# -----------------------
+for dilation in [10_000*i for i in range(1,20+1)]:
+    tic = time.time()
+    out, Qs, N_out, status = coni_kernel(
+        U, Q, dilation, linvec, linmin, H, max_N_out
+    )
+    toc = time.time()
+    
+    print(f"dilation = {dilation}; found {N_out} vectors in {toc-tic}s...")

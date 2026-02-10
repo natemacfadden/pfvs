@@ -79,7 +79,7 @@ static inline int set_bounds(
     return num;
 }
 
-int coni_kernel(
+int _coni_kernel_c(
     int32_t * restrict out,
     double * restrict Qs,
     int * restrict N_out,

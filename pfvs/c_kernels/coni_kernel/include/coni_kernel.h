@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-int coni_kernel(
+int _coni_kernel_c(
     int32_t * restrict out, // shape: [max_N_out, dim]
     double * restrict Qs,    // shape: [max_N_out,]
     int * restrict N_out,   // number of rows written

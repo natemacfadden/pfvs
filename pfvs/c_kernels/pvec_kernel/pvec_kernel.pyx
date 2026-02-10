@@ -7,7 +7,7 @@ from libc.stdlib cimport malloc, free
 
 # --- Declare the external C function ---
 cdef extern from "coni_kernel.h":
-    int coni_kernel(
+    int _coni_kernel_c(
         int32_t *out,       # shape [max_N_out, dim]
         double *Qs,         # shape [max_N_out]
         int *N_out,         # number of rows written
@@ -23,14 +23,14 @@ cdef extern from "coni_kernel.h":
     )
 
 # --- Python-exposed wrapper ---
-def py_coni_kernel(double[:] U,
-                   int Q,
-                   double dilation,
-                   int[:] linvec,
-                   double linmin,
-                   int[:] H,
-                   int max_N_out,
-                   double eps = 1e-12):
+def coni_kernel(double[:] U,
+                int Q,
+                double dilation,
+                int[:] linvec,
+                double linmin,
+                int[:] H,
+                int max_N_out,
+                double eps = 1e-12):
     """
     Python wrapper for coni_kernel.
     U: square 1D array of length dim*dim (row-major)
@@ -56,7 +56,7 @@ def py_coni_kernel(double[:] U,
         raise MemoryError("Failed to allocate c_Qs")
 
     # Call the C function
-    status = coni_kernel(
+    status = _coni_kernel_c(
         c_out,
         c_Qs,
         &N_out,
