@@ -44,7 +44,19 @@ int main(int argc, char *argv[])
     int N_out = 0;
 
     clock_t start = clock();
-    int rc = _coni_kernel_c(out, Qs, &N_out, max_N_out, dim, U, Q, 1.0*dilation, linvec, linmin, H, eps);
+    int rc = _coni_kernel_c(
+        out,
+        Qs,
+        &N_out,
+        dim,
+        U,
+        Q,
+        1.0*dilation,
+        linvec,
+        linmin,
+        H,
+        max_N_out,
+        eps);
     clock_t end = clock();
     double eval_time = (double)(end - start) / CLOCKS_PER_SEC;
     

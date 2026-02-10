@@ -218,11 +218,11 @@ int _coni_kernel_c(
     int sp = 0;
 
     // initialize stack
-    stack_i[sp]       = dim-1;
-    stack_pos[sp]     = 0;
-    stack_remQ[sp]    = Q_upper;
-    stack_M0[sp]      = 0;
-    stack_gcd[sp]     = 0;
+    stack_i[sp]         = dim-1;
+    stack_pos[sp]       = 0;
+    stack_remQ[sp]      = Q_upper;
+    stack_M0[sp]        = 0;
+    stack_gcd[sp]       = 0;
 
     stack_ci_offset[sp] = 0;
     stack_Hveci[sp]     = 0;

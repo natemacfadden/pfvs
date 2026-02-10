@@ -55,7 +55,7 @@ int _coni_kernel_c(
     double * restrict Qs,
     int * restrict N_out,
     int dim,
-    double * restrict L,
+    double * restrict U,
     int Q,
     double dilation,
     int * restrict linvec,

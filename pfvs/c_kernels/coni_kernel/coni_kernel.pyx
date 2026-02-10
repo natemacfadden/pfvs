@@ -83,6 +83,8 @@ def coni_kernel(double[:] U,
     The valuation `vec^T @ mat @ vec`.
     A status code.
     """
+    import numpy as np
+
     cdef int dim = linvec.shape[0]
     cdef int N_out = 0
     cdef int status
@@ -96,7 +98,7 @@ def coni_kernel(double[:] U,
         free(c_out)
         raise MemoryError("Failed to allocate c_Qs")
 
-    # Call the C function
+    # call the C function
     status = _coni_kernel_c(
         c_out,
         c_Qs,
@@ -112,18 +114,17 @@ def coni_kernel(double[:] U,
         eps
     )
 
-    # Convert outputs to Python arrays
-    import numpy as np
+    # convert outputs to Python arrays
     out = np.empty((N_out, dim), dtype=np.int32)
     Qs  = np.empty(N_out, dtype=np.float64)
 
-    # Copy results
+    # copy results
     for i in range(N_out):
         for j in range(dim):
             out[i, j] = c_out[i*dim + j]
         Qs[i] = c_Qs[i]
 
-    # Free C memory
+    # free C memory
     free(c_out)
     free(c_Qs)
 

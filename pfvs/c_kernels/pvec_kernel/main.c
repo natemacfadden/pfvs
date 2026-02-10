@@ -4,7 +4,7 @@
 #include <errno.h>
 #include <time.h>
 
-#include "enumerate_box.h"
+#include "pvec_kernel.h"
 
 int main(int argc, char *argv[])
 {
@@ -15,6 +15,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    return 0;
     // read bounds
     int32_t *bounds = malloc(dim * sizeof(int32_t));
     if (!bounds) {
@@ -53,7 +54,8 @@ int main(int argc, char *argv[])
     int N_out = 0;
 
     clock_t start = clock();
-    int rc = enumerate_box_c(bounds, dim, max_N, out, &N_out);
+    //int rc = enumerate_box_c(bounds, dim, max_N, out, &N_out);
+    int rc = 0;
     clock_t end = clock();
     float eval_time = (float)(end - start) / CLOCKS_PER_SEC;
     
