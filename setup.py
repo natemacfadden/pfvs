@@ -1,28 +1,41 @@
-# setup.py
-from setuptools import setup, Extension, find_packages
+from setuptools import setup, Extension
 from Cython.Build import cythonize
 import os
 
-package_dir = "pfvs/c_kernels"
-c_src_dir = os.path.join(package_dir, "c_code")
+kernels = [
+    {
+        "name": "coni_kernel",
+        "pyx": "coni_kernel.pyx",
+        "c": "src/coni_kernel.c",
+        "include": "include",
+    },
+    # Uncomment later when ready
+    # {
+    #     "name": "pvec_kernel",
+    #     "pyx": "pvec_kernel.pyx",
+    #     "c": "src/pvec_kernel.c",
+    #     "include": "include",
+    # },
+]
 
-extensions = [
-    Extension(
-        name=f"pfvs.c_kernels.coni_kernel",
-        sources=[os.path.join(package_dir, "coni_kernel.pyx"),
-                 os.path.join(c_src_dir, "coni_kernel.c")],
-        include_dirs=[c_src_dir],
+extensions = []
+package_path = "pfvs/c_kernels"
+
+for k in kernels:
+    ext = Extension(
+        f"pfvs.c_kernels.{k['name']}",
+        sources=[
+            os.path.join(package_path, k['name'], k['pyx']),
+            os.path.join(package_path, k['name'], k['c']),
+        ],
+        include_dirs=[os.path.join(package_path, k['name'], k['include'])],
         language="c",
         extra_compile_args=["-O3"],
     )
-]
+    extensions.append(ext)
 
 setup(
-    name="coni_kernel",
-    packages=find_packages(),
-    ext_modules=cythonize(
-        extensions,
-        compiler_directives={"language_level": "3"},
-    ),
-    zip_safe=False,
+    name="c_kernels",
+    packages=["pfvs", "pfvs.c_kernels"],
+    ext_modules=cythonize(extensions, compiler_directives={"language_level": "3"}),
 )
