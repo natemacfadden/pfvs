@@ -16,11 +16,12 @@ static inline int set_bounds(
     int sp,
     int i,
     int dim,
+    int numhyps,
     int B,
     int * restrict linmat,
     int linmin,
-    int32_t (* restrict stack_partial_sum)[dim],
-    int    (* restrict abssum)[dim],
+    int32_t * restrict stack_partial_sum,
+    int * restrict abssum,
     int32_t * restrict stack_val_min,
     int32_t * restrict stack_val_len)
 {
@@ -44,24 +45,26 @@ static inline int set_bounds(
     int hi =  B;
 
     // cut by each hyperplane
-    for (int j=0; j<dim; ++j) {
-        if (linmat[j*dim + i] == 0){
+    for (int j=0; j<numhyps; ++j) {
+        int h = linmat[j*dim + i];
+        if (h == 0){
             continue;
         }
 
-        int numer = linmin - stack_partial_sum[sp][j] - B*abssum[j][i];
-        int h     = linmat[j*dim + i];
+        int numer = linmin - stack_partial_sum[sp*numhyps + j] - B*abssum[j*(dim+1) + i];
 
         if (h>0){
             lo = max_int(lo, (int)ceil(1.0*numer/h));
         } else {
             hi = min_int(hi, (int)floor(1.0*numer/h));
         }
-
     }
 
     // store the data to recreate the interval
-    int num = hi - lo + 1;
+    int num = 0;
+    if (hi >= lo) {
+        num = hi - lo + 1;
+    }
     stack_val_min[sp] = lo;
     stack_val_len[sp] = num;
 
@@ -77,9 +80,8 @@ int _pvec_kernel_c(
     int * restrict linmat,
     int linmin,
     int numhyps,
-    int max_N_out,
-    int max_N_iter,
-    double eps)
+    long max_N_out,
+    long max_N_iter)
 {
     /*
     **Description:**
@@ -103,12 +105,12 @@ int _pvec_kernel_c(
     // misc specs
     - `max_N_out`:  The maximum number of output allowed.
     - `max_N_iter`: The maximum number of iterations allowed.
-    - `eps`:        A small number used for correctly setting bounds despite
-                    floating point errors.
 
     **Returns:**
     A status code.
     */
+    int status = 0;
+
     // define arrays
     #define MAX_DIM dim
     #define MAX_DEPTH (MAX_DIM + 1)
@@ -121,7 +123,7 @@ int _pvec_kernel_c(
     int32_t stack_val_len[MAX_DEPTH];
     int32_t stack_val_min[MAX_DEPTH];
 
-    int32_t stack_partial_sum[MAX_DEPTH][MAX_DIM];
+    int32_t stack_partial_sum[numhyps*MAX_DEPTH];
     memset(stack_partial_sum, 0, sizeof(stack_partial_sum));
 
     // define variables
@@ -131,14 +133,14 @@ int _pvec_kernel_c(
     int sp = 0;
 
     // compute helper variable
-    int abssum[numhyps][MAX_DIM+1];
+    int abssum[numhyps*(dim+1)];
     for (int j=0; j<numhyps; ++j) {
-        abssum[j][0] = 0;
+        abssum[j*(dim+1) + 0] = 0;
 
-        for (int i=0; i<dim; ++i) {
-            abssum[j][i+1] = abssum[j][i] + abs(linmat[j*dim + i]);
+        for (int k=0; k<dim; ++k) {
+            abssum[j*(dim+1) + k+1] = abssum[j*(dim+1) + k] + abs(linmat[j*dim + k]);
         }
-    }       
+    }
 
     // initialize stack
     stack_i[sp]   = dim-1;
@@ -148,6 +150,7 @@ int _pvec_kernel_c(
             sp,
             dim-1,
             dim,
+            numhyps,
             B,
             linmat,
             linmin,
@@ -157,9 +160,9 @@ int _pvec_kernel_c(
             stack_val_len);
     if (k == 0) {
         printf("ERROR NO VECTORS");
-        return -5;
+        status = -5;
+        goto end;
     }
-
     // iterate over the stack
     int i;
     int pos;
@@ -179,8 +182,10 @@ int _pvec_kernel_c(
         // save if node is complete
         // if i==-1, then we have fully written vec
         if (i == -1) {
-            if (op >= max_N_out)
-                return -2;
+            if (op >= max_N_out) {
+                status = -2;
+                goto end;
+            }
 
             int32_t *dst = &out[op * dim];
 
@@ -216,7 +221,7 @@ int _pvec_kernel_c(
 
         // update the partial sums
         for (int j = 0; j<numhyps; ++j) {
-            stack_partial_sum[sp][j] = stack_partial_sum[sp-1][j] + linmat[j*dim + i]*veci;
+            stack_partial_sum[sp*numhyps+j] = stack_partial_sum[(sp-1)*numhyps + j] + linmat[j*dim + i]*veci;
         }
 
         if (i >= 1) {
@@ -224,6 +229,7 @@ int _pvec_kernel_c(
                 sp,
                 i-1,
                 dim,
+                numhyps,
                 B,
                 linmat,
                 linmin,
@@ -234,7 +240,7 @@ int _pvec_kernel_c(
         }
     }
 
-    *N_out = op;
-
-    return 0;
+    end:
+        *N_out = op;
+        return status;
 }

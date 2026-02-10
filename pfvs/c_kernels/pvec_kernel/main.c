@@ -8,45 +8,30 @@
 
 int main(int argc, char *argv[])
 {
-    // read dimension
-    int dim = argc - 1;
-    if (dim <= 0) {
-        fprintf(stderr, "Usage: %s b0 b1 ... b{d-1}\n", argv[0]);
-        return 1;
-    }
+    // Manwe:
+    int dim = 7;
+    int numhyps = 73;
+    int H[] = {0,-5,0,3,3,0,-1,0,0,0,0,-1,-2,-3,0,0,0,-1,0,-3,-5,0,0,1,0,-1,-2,-3,0,0,-1,-1,0,-3,-4,0,0,0,0,0,-1,-2,0,0,0,0,-1,-2,-3,0,0,0,-1,-1,-5,-8,0,0,1,0,0,0,-1,0,0,0,0,0,0,-1,0,0,0,-1,0,0,-2,0,1,0,-1,1,0,-1,-1,0,0,0,2,0,-1,0,-1,0,0,0,-4,-6,0,0,-4,-1,0,0,-2,-1,0,-2,0,0,0,-1,-1,0,0,0,0,-2,-3,0,0,-1,0,0,-2,-2,0,1,-1,-2,0,-4,-6,0,-1,1,0,0,0,-2,0,-3,0,1,3,0,-1,0,-1,0,0,3,0,-1,0,-1,0,0,0,-3,-4,0,-1,0,0,0,0,-2,0,-1,0,0,2,0,-1,0,0,0,-1,-1,0,-3,0,-1,1,0,0,-2,-4,0,0,0,0,0,0,-1,0,-1,-1,0,0,-2,-2,0,0,0,0,-1,0,-1,0,-1,0,0,0,-3,-5,-1,0,0,0,0,0,-1,0,0,0,0,1,0,-1,0,0,1,0,0,-2,-4,0,1,0,-1,0,-1,-2,0,0,0,0,-1,0,-1,0,0,0,-1,0,-4,-7,0,0,1,0,1,0,-1,0,-1,0,0,0,-2,-3,0,0,0,0,0,-1,-1,0,0,1,0,-1,-1,-2,0,0,1,0,2,0,-2,0,0,-1,0,0,0,0,0,0,0,0,-1,0,-1,-3,0,0,0,2,0,-1,0,-1,0,0,3,0,-2,5,0,0,-2,-2,0,-1,-1,-1,0,1,1,0,0,0,-1,0,0,4,0,-2,0,0,-1,0,0,-1,-1,0,0,1,0,1,0,-2,0,0,0,-1,0,0,-2,0,-1,0,0,0,0,-2,0,-1,-3,0,0,0,-2,0,0,1,0,0,-1,-3,0,0,0,-1,0,-4,-6,0,0,-1,-2,0,0,-4,0,1,0,-1,-1,-2,-3,0,0,-1,-1,3,0,-1,0,-1,-1,0,2,0,0,-1,0,0,0,0,0,-1,3,0,0,-1,-1,0,0,3,0,0,-2,0,0,-1,0,0,0,0,-1,-1,-1,0,0,0,-1,0,0,-2,0,0,-1,-2,0,-7,-11,0,0,1,0,0,-1,-2,5,0,0,-2,0,0,-1,0,0,0,0,0,-1,-1,0,0,-1,0,-1,0,-1,0,0,1,0,-1,0,-1,-1,0,0,0,1,0,0,0,0,0,-1,0,0,-3};
+    long max_N_out = 10000000000;
+    long max_N_iter = 1000000000000;
 
-    return 0;
-    // read bounds
-    int32_t *bounds = malloc(dim * sizeof(int32_t));
-    if (!bounds) {
-        perror("malloc bounds");
-        return 1;
-    }
+    // read box size B
+    int B = 1;
 
-    for (int i = 0; i < dim; ++i) {
-        char *endptr;
-        errno = 0;
-
-        long val = strtol(argv[i + 1], &endptr, 10);
-        if (errno || *endptr != '\0' || val < 0 || val > INT32_MAX) {
-            fprintf(stderr, "Invalid bound: %s\n", argv[i + 1]);
-            free(bounds);
+    if (argc > 1) {
+        char *end;
+        long val = strtol(argv[1], &end, 10);
+        if (*end != '\0' || val <= 0) {
+            fprintf(stderr, "Invalid B\n");
             return 1;
         }
-
-        bounds[i] = (int32_t)val;
+        B = (int)val;
     }
 
     // initialize output array
-    int max_N = 1;
-    for (int i =0; i < dim; ++i) {
-        max_N *= 2*bounds[i] + 1;
-    }
-
-    int32_t *out = malloc((size_t)max_N * dim * sizeof(int32_t));
+    int32_t *out = malloc((size_t)max_N_out * dim * sizeof(int32_t));
     if (!out) {
         perror("malloc out");
-        free(bounds);
         return 1;
     }
 
@@ -54,8 +39,16 @@ int main(int argc, char *argv[])
     int N_out = 0;
 
     clock_t start = clock();
-    //int rc = enumerate_box_c(bounds, dim, max_N, out, &N_out);
-    int rc = 0;
+    int rc = _pvec_kernel_c(
+        out,
+        &N_out,
+        dim,
+        B,
+        H,
+        1,
+        numhyps,
+        max_N_out,
+        max_N_iter);
     clock_t end = clock();
     float eval_time = (float)(end - start) / CLOCKS_PER_SEC;
     
@@ -67,6 +60,5 @@ int main(int argc, char *argv[])
 
     // free memory
     free(out);
-    free(bounds);
     return 0;
 }

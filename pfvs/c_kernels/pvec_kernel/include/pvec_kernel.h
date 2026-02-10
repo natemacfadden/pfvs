@@ -25,8 +25,6 @@ first.
 // misc specs
 - `max_N_out`:  The maximum number of output allowed.
 - `max_N_iter`: The maximum number of iterations allowed.
-- `eps`:        A small number used for correctly setting bounds despite
-                floating point errors.
 
 **Returns:**
 A status code.
@@ -39,9 +37,8 @@ int _pvec_kernel_c(
     int * restrict linmat,
     int linmin,
     int numhyps,
-    int max_N_out,
-    int max_N_iter,
-    double eps
+    long max_N_out,
+    long max_N_iter
 );
 
 #endif
