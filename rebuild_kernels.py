@@ -7,7 +7,7 @@ from pathlib import Path
 # paths
 repo_root = Path(__file__).parent.resolve()
 build_dir = repo_root / "build"
-package_so_dirs = repo_root.glob("pfvs/c_kernels/**/*.so")
+package_so_dirs = repo_root.glob("pfvs/c_kernels/*.so")
 
 def remove_old_builds():
     print("Cleaning old build directories...")

@@ -6,16 +6,15 @@ kernels = [
     {
         "name": "coni_kernel",
         "pyx": "coni_kernel.pyx",
-        "c": "src/coni_kernel.c",
-        "include": "include",
+        "include": ".",
+        "impl": "CONI_KERNEL_IMPLEMENTATION",
     },
-    # Uncomment later when ready
-    # {
-    #     "name": "pvec_kernel",
-    #     "pyx": "pvec_kernel.pyx",
-    #     "c": "src/pvec_kernel.c",
-    #     "include": "include",
-    # },
+    #{
+    #    "name": "pvec_kernel",
+    #    "pyx": "pvec_kernel.pyx",
+    #    "include": ".",
+    #    "impl": "PVEC_KERNEL_IMPLEMENTATION",
+    #},
 ]
 
 extensions = []
@@ -25,10 +24,14 @@ for k in kernels:
     ext = Extension(
         f"pfvs.c_kernels.{k['name']}",
         sources=[
-            os.path.join(package_path, k['name'], k['pyx']),
-            os.path.join(package_path, k['name'], k['c']),
+            os.path.join(package_path, k["pyx"]),
         ],
-        include_dirs=[os.path.join(package_path, k['name'], k['include'])],
+        include_dirs=[
+            os.path.join(package_path, k["include"]),
+        ],
+        define_macros=[
+            (k["impl"], None),
+        ],
         language="c",
         extra_compile_args=["-O3"],
     )
