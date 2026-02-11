@@ -1,3 +1,53 @@
+#ifndef PVEC_KERNEL_H
+#define PVEC_KERNEL_H
+
+// HEADER
+// ======
+#include <stdint.h>
+
+/*
+**Description:**
+Enumerate lattice points x obeying linmat@x >= linmin and |x_i| <= B using
+Kannan's algorithm.
+
+VERY preferable that you the columns of linmat so stricter components come
+first.
+
+**Arguments:**
+// output objects
+- `out`:        A container for the lattice points vec.
+- `N_out`:      An integer we write to, indicating the number of outputs.
+// box definition
+- `dim`:        The dimension of the problem.
+- `B`:          The upper triangular matrix such that mat = U.T@L
+// cone definition cuts
+- `linmat`:     The matrix defining the cone.
+- `linmin`:     The closest permitted distance to a hyperplane.
+- `numhyps`:    The number of hyperplane constraints.
+// misc specs
+- `max_N_out`:  The maximum number of output allowed.
+- `max_N_iter`: The maximum number of iterations allowed.
+
+**Returns:**
+A status code.
+*/
+int _pvec_kernel_c(
+    int32_t * restrict out,
+    uint32_t * restrict N_out,
+    int dim,
+    int B,
+    int * restrict linmat,
+    int linmin,
+    int numhyps,
+    long max_N_out,
+    long max_N_iter
+);
+
+
+// IMPLEMENTATION
+// ==============
+#ifdef PVEC_KERNEL_IMPLEMENTATION
+
 #include "pvec_kernel.h"
 #include <math.h>
 #include <stdio.h>
@@ -74,7 +124,7 @@ static inline int set_bounds(
 // custom Kannan code for p-vector generation
 int _pvec_kernel_c(
     int32_t * restrict out,
-    int * restrict N_out,
+    uint32_t * restrict N_out,
     int dim,
     int B,
     int * restrict linmat,
@@ -244,3 +294,7 @@ int _pvec_kernel_c(
         *N_out = op;
         return status;
 }
+
+#endif // PVEC_KERNEL_IMPL
+
+#endif // PVEC_KERNEL_H

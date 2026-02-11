@@ -3,7 +3,7 @@
 
 # import C types
 # --------------
-from libc.stdint cimport int32_t
+from libc.stdint cimport int32_t, uint32_t
 from libc.stdlib cimport malloc, free
 
 # declare the external C function
@@ -23,17 +23,16 @@ cdef extern from "pvec_kernel.h":
     )
 
 # --- Python-exposed wrapper ---
-def coni_kernel(B: int,
+def pvec_kernel(B: int,
                 int[:] linmat,
                 int linmin,
                 int max_N_out,
-                int max_N_iter = None,
+                int max_N_iter = -1,
                 double eps = 1e-12):
     import numpy as np
 
     cdef int numhyps = linmat.shape[0]
     cdef int dim = linmat.shape[1]
-    cdef int N_out = 0
     cdef int status
 
     # Allocate output arrays
@@ -46,9 +45,9 @@ def coni_kernel(B: int,
     sort_inds   = np.argsort(col_l1_norm)
     undo_sort   = np.argsort(sort_inds)
 
-    linmat = linmat[:,sort_inds]
+    linmat = np.transpose(linmat,sort_inds).ravel()
 
-    if max_N_iter is None:
+    if max_N_iter == -1:
         max_N_iter = 1000*max_N_out
 
     # call the C function
@@ -77,4 +76,4 @@ def coni_kernel(B: int,
     # free C memory
     free(c_out)
 
-    return out, N_out, status
+    return out, status

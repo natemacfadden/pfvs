@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <time.h>
 
+#define PVEC_KERNEL_IMPLEMENTATION
 #include "pvec_kernel.h"
 
 int main(int argc, char *argv[])
