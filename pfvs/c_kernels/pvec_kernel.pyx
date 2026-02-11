@@ -52,7 +52,11 @@ def pvec_kernel(B: int,
 
     **Returns:**
     The vectors `vec` in the ellipsoid and obeying the extra constraints.
-    A status code.
+    A status code according to following list:
+        0: success
+        -6: problem dimension too high (currently >256)
+        -5: no vectors
+        -2: exceed max_N_out outputs
     """
     import numpy as np
 

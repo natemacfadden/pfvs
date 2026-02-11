@@ -29,7 +29,11 @@ first.
 - `max_N_iter`: The maximum number of iterations allowed.
 
 **Returns:**
-A status code.
+A status code according to following list:
+        0: success
+        -6: problem dimension too high (currently >256)
+        -5: no vectors
+        -2: exceed max_N_out outputs
 */
 int _pvec_kernel_c(
     int32_t * restrict out,
@@ -157,7 +161,11 @@ int _pvec_kernel_c(
     - `max_N_iter`: The maximum number of iterations allowed.
 
     **Returns:**
-    A status code.
+    A status code according to following list:
+        0: success
+        -6: problem dimension too high (currently >256)
+        -5: no vectors
+        -2: exceed max_N_out outputs
     */
     // define variables
     // ----------------

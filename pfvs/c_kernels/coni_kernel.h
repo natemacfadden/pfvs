@@ -38,9 +38,9 @@ Most of the work is in writing to `out`, `Qs`, and `N_out`.
                gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec can
                still define coni-PFV.
 // M0 cuts
-- `linvec`:    Binter[0,:]. The vector such that dot(linvec,vec)=M0. BEST TO
-               ORDER COLUMNS OF BINTER SUCH THAT linvec HAS A LARGE NUMBER
-               OF LEADING 0s.
+- `linvec`:    Binter[0,:]. The vector such that dot(linvec,vec)=M0.
+               REQUIRED THAT COLUMNS OF BINTER ARE ORDERED S.T. ALL 0s OF
+               linvec ARE LEADING
 - `linmin`:    The minimum value of M0 permitted. Inclusive.
 // Kprime cuts
 - `H`:         Let G be the matrix such that Kperp = G@vec. Then H = HNF(G).
@@ -50,7 +50,13 @@ Most of the work is in writing to `out`, `Qs`, and `N_out`.
                floating point errors.
 
 **Returns:**
-A status code.
+A status code according to following list:
+    0: success
+    -6: problem dimension too high (currently >256)
+    -4: not all 0s of linvec are leading
+    -100: dilation overflows uint32_t
+    -5: no vectors
+    -2: exceed max_N_out outputs
 */
 int _coni_kernel_c(
     int32_t * restrict out,
@@ -233,9 +239,9 @@ int _coni_kernel_c(
                    gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec can
                    still define coni-PFV.
     // M0 cuts
-    - `linvec`:    Binter[0,:]. The vector such that dot(linvec,vec)=M0. BEST TO
-                   ORDER COLUMNS OF BINTER SUCH THAT linvec HAS A LARGE NUMBER
-                   OF LEADING 0s.
+    - `linvec`:    Binter[0,:]. The vector such that dot(linvec,vec)=M0.
+                   REQUIRED THAT COLUMNS OF BINTER ARE ORDERED S.T. ALL 0s OF
+                   linvec ARE LEADING
     - `linmin`:    The minimum value of M0 permitted. Inclusive.
     // Kprime cuts
     - `H`:         Let G be the matrix such that Kperp = G@vec. Then H = HNF(G).
@@ -245,7 +251,13 @@ int _coni_kernel_c(
                    floating point errors.
 
     **Returns:**
-    A status code.
+    A status code according to following list:
+        0: success
+        -6: problem dimension too high (currently >256)
+        -4: not all 0s of linvec are leading
+        -100: dilation overflows uint32_t
+        -5: no vectors
+        -2: exceed max_N_out outputs
     */
     // define variables
     // ----------------
