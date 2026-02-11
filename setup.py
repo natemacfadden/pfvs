@@ -9,12 +9,12 @@ kernels = [
         "include": ".",
         "impl": "CONI_KERNEL_IMPLEMENTATION",
     },
-    #{
-    #    "name": "pvec_kernel",
-    #    "pyx": "pvec_kernel.pyx",
-    #    "include": ".",
-    #    "impl": "PVEC_KERNEL_IMPLEMENTATION",
-    #},
+    {
+        "name": "pvec_kernel",
+        "pyx": "pvec_kernel.pyx",
+        "include": ".",
+        "impl": "PVEC_KERNEL_IMPLEMENTATION",
+    },
 ]
 
 extensions = []

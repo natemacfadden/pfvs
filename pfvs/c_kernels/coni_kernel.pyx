@@ -11,7 +11,7 @@ from libc.stdlib cimport malloc, free
 cdef extern from "coni_kernel.h":
     int _coni_kernel_c(
         int32_t *out,
-        double *Qs,
+        int *Qs,
         int *N_out,
         int dim,
         double *U,
@@ -26,12 +26,12 @@ cdef extern from "coni_kernel.h":
 
 # Python-exposed wrapper
 # ----------------------
-def coni_kernel(double[:] U,
+def coni_kernel(double[:, :] U,
                 int Q,
                 double dilation,
                 int[:] linvec,
                 double linmin,
-                int[:] H,
+                int[:, :] H,
                 int max_N_out,
                 double eps = 1e-12):
     """
@@ -61,7 +61,7 @@ def coni_kernel(double[:] U,
     - `N_out`:     An integer we write to, indicating the number of outputs.
     // ellipsoid def
     - `dim`      : The dimension of the problem.
-    - `U`:         The upper triangular matrix such that mat = U.T@L
+    - `U`:         The upper triangular matrix such that mat = U.T@U
     - `Q`:         The ellipsoid bound.
     - `dilation`:  The maximum allowed dilation to allow... As long as
                    gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec can
@@ -93,7 +93,7 @@ def coni_kernel(double[:] U,
     cdef int32_t *c_out = <int32_t *>malloc(max_N_out * dim * sizeof(int32_t))
     if c_out == NULL:
         raise MemoryError("Failed to allocate c_out")
-    cdef double *c_Qs = <double *>malloc(max_N_out * sizeof(double))
+    cdef int *c_Qs = <int *>malloc(max_N_out * sizeof(int))
     if c_Qs == NULL:
         free(c_out)
         raise MemoryError("Failed to allocate c_Qs")
@@ -104,19 +104,19 @@ def coni_kernel(double[:] U,
         c_Qs,
         &N_out,
         dim,
-        &U[0],
+        &U[0, 0],
         Q,
         dilation,
         &linvec[0],
         linmin,
-        &H[0],
+        &H[0, 0],
         max_N_out,
         eps
     )
 
     # convert outputs to Python arrays
     out = np.empty((N_out, dim), dtype=np.int32)
-    Qs  = np.empty(N_out, dtype=np.float64)
+    Qs  = np.empty(N_out, dtype=np.int32)
 
     # copy results
     for i in range(N_out):

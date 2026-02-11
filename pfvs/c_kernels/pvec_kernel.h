@@ -19,7 +19,7 @@ first.
 - `N_out`:      An integer we write to, indicating the number of outputs.
 // box definition
 - `dim`:        The dimension of the problem.
-- `B`:          The upper triangular matrix such that mat = U.T@L
+- `B`:          The bounds |x_i| <= B
 // cone definition cuts
 - `linmat`:     The matrix defining the cone.
 - `linmin`:     The closest permitted distance to a hyperplane.
@@ -33,7 +33,7 @@ A status code.
 */
 int _pvec_kernel_c(
     int32_t * restrict out,
-    uint32_t * restrict N_out,
+    int * restrict N_out,
     int dim,
     int B,
     int * restrict linmat,
@@ -124,7 +124,7 @@ static inline int set_bounds(
 // custom Kannan code for p-vector generation
 int _pvec_kernel_c(
     int32_t * restrict out,
-    uint32_t * restrict N_out,
+    int * restrict N_out,
     int dim,
     int B,
     int * restrict linmat,
@@ -147,7 +147,7 @@ int _pvec_kernel_c(
     - `N_out`:      An integer we write to, indicating the number of outputs.
     // box definition
     - `dim`:        The dimension of the problem.
-    - `B`:          The upper triangular matrix such that mat = U.T@L
+    - `B`:          The bounds |x_i| <= B.
     // cone definition cuts
     - `linmat`:     The matrix defining the cone.
     - `linmin`:     The closest permitted distance to a hyperplane.
@@ -159,6 +159,8 @@ int _pvec_kernel_c(
     **Returns:**
     A status code.
     */
+    // define variables
+    // ----------------
     int status = 0;
 
     // define arrays
@@ -176,14 +178,24 @@ int _pvec_kernel_c(
     int32_t stack_partial_sum[numhyps*MAX_DEPTH];
     memset(stack_partial_sum, 0, sizeof(stack_partial_sum));
 
-    // define variables
-    // ----------------
     // output/stack pointer
     int op = 0;
     int sp = 0;
 
-    // compute helper variable
+    // misc helpers
     int abssum[numhyps*(dim+1)];
+
+    // check dimensions are reasonable
+    // -------------------------------
+    #define MAX_SUPPORTED_DIM 256
+    if (dim > MAX_SUPPORTED_DIM) {
+        status = -6;
+        goto end;
+    }
+
+    // define variables
+    // ----------------
+    // compute helper variable
     for (int j=0; j<numhyps; ++j) {
         abssum[j*(dim+1) + 0] = 0;
 
@@ -193,6 +205,7 @@ int _pvec_kernel_c(
     }
 
     // initialize stack
+    // ----------------
     stack_i[sp]   = dim-1;
     stack_pos[sp] = 0;
 
@@ -213,7 +226,9 @@ int _pvec_kernel_c(
         status = -5;
         goto end;
     }
+
     // iterate over the stack
+    // ----------------------
     int i;
     int pos;
 

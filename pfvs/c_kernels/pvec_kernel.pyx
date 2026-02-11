@@ -1,9 +1,9 @@
-# coni_kernel.pyx
-# Cython wrapper for coni_kernel
+# pvec_kernel.pyx
+# Cython wrapper for pvec_kernel
 
 # import C types
 # --------------
-from libc.stdint cimport int32_t, uint32_t
+from libc.stdint cimport int32_t
 from libc.stdlib cimport malloc, free
 
 # declare the external C function
@@ -17,22 +17,48 @@ cdef extern from "pvec_kernel.h":
         int * linmat,
         int linmin,
         int numhyps,
-        int max_N_out,
-        int max_N_iter,
-        double eps
+        long max_N_out,
+        long max_N_iter
     )
 
-# --- Python-exposed wrapper ---
+# Python-exposed wrapper
+# ----------------------
 def pvec_kernel(B: int,
-                int[:] linmat,
+                int[:, :] linmat,
                 int linmin,
-                int max_N_out,
-                int max_N_iter = -1,
-                double eps = 1e-12):
+                long max_N_out,
+                long max_N_iter = -1):
+    """
+    Enumerate lattice points x obeying linmat@x >= linmin and |x_i| <= B using
+    Kannan's algorithm.
+
+    VERY preferable that you the columns of linmat so stricter components come
+    first.
+
+    **Arguments:**
+    // output objects
+    - `out`:        A container for the lattice points vec.
+    - `N_out`:      An integer we write to, indicating the number of outputs.
+    // box definition
+    - `dim`:        The dimension of the problem.
+    - `B`:          The bounds |x_i| <= B
+    // cone definition cuts
+    - `linmat`:     The matrix defining the cone.
+    - `linmin`:     The closest permitted distance to a hyperplane.
+    - `numhyps`:    The number of hyperplane constraints.
+    // misc specs
+    - `max_N_out`:  The maximum number of output allowed.
+    - `max_N_iter`: The maximum number of iterations allowed.
+
+    **Returns:**
+    The vectors `vec` in the ellipsoid and obeying the extra constraints.
+    A status code.
+    """
     import numpy as np
 
+    cdef int dim     = linmat.shape[1]
     cdef int numhyps = linmat.shape[0]
-    cdef int dim = linmat.shape[1]
+    cdef int N_out = 0
     cdef int status
 
     # Allocate output arrays
@@ -41,37 +67,40 @@ def pvec_kernel(B: int,
         raise MemoryError("Failed to allocate c_out")
 
     # ensure linmat is sorted
-    col_l1_norm = np.sum(np.abs(linmat), axis=0)
+    linmat_np   = np.asarray(linmat)
+    col_l1_norm = np.sum(np.abs(linmat_np), axis=0)
     sort_inds   = np.argsort(col_l1_norm)
     undo_sort   = np.argsort(sort_inds)
-
-    linmat = np.transpose(linmat,sort_inds).ravel()
+    linmat_np   = linmat_np[:, sort_inds]
+    linmat_np   = np.ascontiguousarray(linmat_np, dtype=np.int32)
+    
+    cdef int[:, ::1] linmat_view = linmat_np
+    cdef int *linmat_ptr = &linmat_view[0, 0]
 
     if max_N_iter == -1:
         max_N_iter = 1000*max_N_out
 
     # call the C function
     status = _pvec_kernel_c(
-        c_out
+        c_out,
         &N_out,
         dim,
         B,
-        &linmat[0],
+        linmat_ptr,
         linmin,
         numhyps,
-        max_N_iter,
         max_N_out,
-        eps
+        max_N_iter
     );
 
     # convert outputs to Python arrays
-    import numpy as np
     out = np.empty((N_out, dim), dtype=np.int32)
 
     # copy results
     for i in range(N_out):
         for j in range(dim):
             out[i, j] = c_out[i*dim + j]
+    out = out[:, undo_sort]
 
     # free C memory
     free(c_out)

@@ -32,7 +32,7 @@ Most of the work is in writing to `out`, `Qs`, and `N_out`.
 - `N_out`:     An integer we write to, indicating the number of outputs.
 // ellipsoid def
 - `dim`      : The dimension of the problem.
-- `U`:         The upper triangular matrix such that mat = U.T@L
+- `U`:         The upper triangular matrix such that mat = U.T@U
 - `Q`:         The ellipsoid bound.
 - `dilation`:  The maximum allowed dilation to allow... As long as
                gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec can
@@ -54,7 +54,7 @@ A status code.
 */
 int _coni_kernel_c(
     int32_t * restrict out,
-    double * restrict Qs,
+    int * restrict Qs,
     int * restrict N_out,
     int dim,
     double * restrict U,
@@ -120,6 +120,7 @@ static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
         // ensure u <= v
         if (u > v) { int t = v; v = u; u = t; }
         /*
+        // branchless but slower
         uint32_t mask = -(u > v);
         uint32_t t = mask & (u ^ v);
         u ^= t;
@@ -187,7 +188,7 @@ static inline int set_bounds(
 // custom FP code for coniPFVs
 int _coni_kernel_c(
     int32_t * restrict out,
-    double * restrict Qs,
+    int * restrict Qs,
     int * restrict N_out,
     int dim,
     double * restrict U,
@@ -226,7 +227,7 @@ int _coni_kernel_c(
     - `N_out`:     An integer we write to, indicating the number of outputs.
     // ellipsoid def
     - `dim`      : The dimension of the problem.
-    - `U`:         The upper triangular matrix such that mat = U.T@L
+    - `U`:         The upper triangular matrix such that mat = U.T@U
     - `Q`:         The ellipsoid bound.
     - `dilation`:  The maximum allowed dilation to allow... As long as
                    gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec can
@@ -246,6 +247,10 @@ int _coni_kernel_c(
     **Returns:**
     A status code.
     */
+    // define variables
+    // ----------------
+    int status = 0;
+
     // define arrays
     #define MAX_DIM dim
     #define MAX_DEPTH (MAX_DIM + 1)
@@ -265,8 +270,20 @@ int _coni_kernel_c(
     double  stack_ci_offset[MAX_DEPTH];
     int     stack_Hveci[MAX_DEPTH];
 
+    // output/stack pointer
+    int op = 0;
+    int sp = 0;
+
+    // check dimensions are reasonable
+    // -------------------------------
+    #define MAX_SUPPORTED_DIM 256
+    if (dim > MAX_SUPPORTED_DIM) {
+        status = -6;
+        goto end;
+    }
 
     // compute  useful variables
+    // -------------------------
     double Q_upper = Q*dilation;
     for (int j=0; j<dim; ++j)
         U_diag_inv[j] = 1.0 / U[j*dim + j];
@@ -276,21 +293,26 @@ int _coni_kernel_c(
     bool zeros = true;
     for (int j=0; j<dim; ++j){
         if (linvec[j] == 0) {
-            if (zeros == false)
-                return -4;
+            if (zeros == false) {
+                status = -4;
+                goto end;
+            }
             num_zeros += 1;
         } else {
             zeros = false;
         }
     }
 
-    // define variables
-    // ----------------
-    // output/stack pointer
-    int op = 0;
-    int sp = 0;
+    // check the dilation is reasonable
+    // --------------------------------
+    double required_dilation_dbl = Q_upper/Q;
+    if (required_dilation_dbl > UINT32_MAX) {
+        status = -100;
+        goto end;
+    }
 
     // initialize stack
+    // ----------------
     stack_i[sp]         = dim-1;
     stack_pos[sp]       = 0;
     stack_remQ[sp]      = Q_upper;
@@ -310,10 +332,12 @@ int _coni_kernel_c(
             eps);
     if (k == 0) {
         printf("ERROR NO VECTORS");
-        return -5;
+        status = -5;
+        goto end;
     }
 
     // iterate over the stack
+    // ----------------------
     int i;
     int pos;
     double remQ;
@@ -329,11 +353,13 @@ int _coni_kernel_c(
         // save if node is complete
         // if i==-1, then we have fully written vec
         if (i == -1) {
-            if (op >= max_N_out)
-                return -2;
+            if (op >= max_N_out) {
+                status = -2;
+                goto end;
+            }
 
-            int Qsave = Q_upper-remQ;
-            if (Qsave > eps) {
+            int Qsave = Q_upper-remQ + eps;
+            if (Qsave > 0) {
                 int32_t *dst = &out[op * dim];
 
                 #pragma unroll
@@ -440,9 +466,9 @@ int _coni_kernel_c(
             eps);
     }
 
-    *N_out = op;
-
-    return 0;
+    end:
+        *N_out = op;
+        return status;
 }
 
 #endif // CONI_KERNEL_IMPL
