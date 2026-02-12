@@ -694,7 +694,7 @@ def ZpK(
 
 # coni Zp
 # =======
-def coniMellipsoid(p, data):
+def coniMellipsoid(p, data, extra_checks=False):
     """
     **Description:**
     Compute the matrices defining the M-ellipsoid in coni-ZpM.
@@ -763,7 +763,10 @@ def coniMellipsoid(p, data):
         #       Mperp-term          Kperp-term
         mat = -(Binter.T @ proj.T) @ (proj @ (kappa@([0]+p)) )@Binter
 
-    if np.allclose(mat, np.round(mat)):
+    if extra_checks:
+        if np.allclose(mat, np.round(mat)):
+            mat = np.rint(mat).astype(int)
+    else:
         mat = np.rint(mat).astype(int)
 
     return mat, Z, Binter

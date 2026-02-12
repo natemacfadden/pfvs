@@ -3,7 +3,7 @@ import time
 
 from pfvs.c_kernels import pvec_kernel
 from pfvs.c_kernels import coni_kernel
-from pfvs.lattice import kannan_box_mat_njit
+from pfvs.lattice import kannan_box_mat_njit, coni_kernel_njit
 
 # pvec_kernel
 # ===========
@@ -92,4 +92,19 @@ for dilation in [10_000*i for i in range(1,20+1)]:
     )
     toc = time.time()
     
-    print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s...")
+    print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s using C code...")
+
+
+    tic = time.time()
+    out, Niter = coni_kernel_njit(
+        L=U.T,
+        Q=Q,
+        dilation=dilation,
+        Binter0=linvec,
+        M0min=linmin,
+        H=H,
+        max_N_out=max_N_out
+    )
+    toc = time.time()
+    
+    print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s using njit code...")
