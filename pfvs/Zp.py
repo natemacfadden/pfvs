@@ -59,7 +59,7 @@ def pvecs(
         i += 1
         if verbosity >= 1:
             print('pre ',data.coni_curve,i,B,flush=True)
-        pts, Niter = lattice.kannan_box_mat(
+        pts, Niter = lattice.kannan_box_mat_njit(
             B=B,
             linmat=H,
             linmin=1,
@@ -450,7 +450,7 @@ def ZpM(
 
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
-            lattice_points, _ = lattice.fp_ellipsoid(
+            lattice_points, _ = lattice.fp_ellipsoid_njit(
                 mat=mat,
                 Q=ellipsoid_dilation*Qmax,
                 max_N_out=max_N_pfvs,
@@ -592,7 +592,7 @@ def ZpK(
 
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
-            lattice_points, _ = lattice.fp_ellipsoid(
+            lattice_points, _ = lattice.fp_ellipsoid_njit(
                 mat,
                 ellipsoid_dilation*Qmax,
                 max_N_out=max_N_pfvs,
@@ -878,17 +878,8 @@ def coniZpM(
         # =========================================
         #lattice_points = rejection_ellipsoid(mat,tadpole_mult*Q)
         try:
-            # BOX METHOD
-            # ==========
-            if use_box:
-                # bounding box bounds
-                bounds_raw = lattice.boundingbox_bounds(
-                    mat,
-                    ellipsoid_dilation*Qmax
-                )
-                bounds = np.floor(bounds_raw).astype(int)
-
-                # get mat for gcd cutting
+            if not use_gcd_lattice:
+                # find relevant lattice points in ellipsoid c.T@mat@c <= Q
                 proj = np.hstack([
                     np.zeros((data.h11-1, 1), dtype=int),
                     np.eye(data.h11-1, dtype=int)
@@ -901,82 +892,47 @@ def coniZpM(
                 except Exception as e:
                     print("C long error :(")
                     raise e
-                
-                lattice_points, rawQs = lattice.coni_box_kernel(
-                        # ellipsoid definition
-                        bounds=bounds,
-                        L=np.linalg.cholesky(mat),
-                        Q=Qmax,
-                        dilation=ellipsoid_dilation,
-                        # M0 cuts:
-                        Binter0=Binter[0,:],
-                        M0min=M0min,
-                        # K' cuts:
-                        H = H,
-                        # misc:
-                        max_N_out=max_N_pfvs)
 
-            # ELLIPSOIDAL METHODS
-            # ===================
+                lattice_points, rawQs = lattice.coni_kernel_njit(
+                    # ellipsoid definition
+                    L=np.linalg.cholesky(mat),
+                    Q=Qmax,
+                    dilation=ellipsoid_dilation,
+                    # M0 cuts:
+                    Binter0=Binter[0,:],
+                    M0min=M0min,
+                    # K' cuts:
+                    H = H,
+                    # misc:
+                    max_N_out=max_N_pfvs)
+            
+            # use GCD lattices
+            # ----------------
             else:
+                # i.e., encode gcd(Kperp) == val as a lattice
+                # scan in each lattice
+                lattice_points = np.empty((0,Binter.shape[1]), dtype=int)
+                rawQs          = np.empty((0,), dtype=int)
 
-                # do the computation in the standard way...
-                 # -----------------------------------------
-                if not use_gcd_lattice:
-                    # find relevant lattice points in ellipsoid c.T@mat@c <= Q
-                    proj = np.hstack([
-                        np.zeros((data.h11-1, 1), dtype=int),
-                        np.eye(data.h11-1, dtype=int)
-                    ])
-                    G    = proj@ZBinter
-                    G_fl = flint.fmpz_mat(G.tolist())
-
-                    try:
-                        H    = np.array(G_fl.hnf().tolist()).astype(int)
-                    except Exception as e:
-                        print("C long error :(")
-                        raise e
-
-                    lattice_points, rawQs = lattice.coni_kernel(
+                for gcd in range(1,ellipsoid_dilation+1):
+                    Bgcd = Kperp_gcd_lattice(data, Z, Binter, gcd)
+                    
+                    vs, vQs = lattice.fp_iterative_njit(
                         # ellipsoid definition
-                        L=np.linalg.cholesky(mat),
-                        Q=Qmax,
-                        dilation=ellipsoid_dilation,
+                        L=np.linalg.cholesky(Bgcd.T@mat@Bgcd),
+                        Q=gcd*Qmax,
                         # M0 cuts:
-                        Binter0=Binter[0,:],
-                        M0min=M0min,
-                        # K' cuts:
-                        H = H,
+                        linvec = (Binter@Bgcd)[0],
+                        linmin = 13,
                         # misc:
                         max_N_out=max_N_pfvs)
-                
-                # use GCD lattices
-                # ----------------
-                else:
-                    # i.e., encode gcd(Kperp) == val as a lattice
-                    # scan in each lattice
-                    lattice_points = np.empty((0,Binter.shape[1]), dtype=int)
-                    rawQs          = np.empty((0,), dtype=int)
 
-                    for gcd in range(1,ellipsoid_dilation+1):
-                        Bgcd = Kperp_gcd_lattice(data, Z, Binter, gcd)
-                        
-                        vs, vQs = lattice.fp_iterative(
-                            # ellipsoid definition
-                            L=np.linalg.cholesky(Bgcd.T@mat@Bgcd),
-                            Q=gcd*Qmax,
-                            # M0 cuts:
-                            linvec = (Binter@Bgcd)[0],
-                            linmin = 13,
-                            # misc:
-                            max_N_out=max_N_pfvs)
-
-                        # concatenate
-                        lattice_points = np.vstack([
-                            lattice_points,
-                            vs@Bgcd.T
-                        ])
-                        rawQs = np.concatenate([rawQs, vQs])
+                    # concatenate
+                    lattice_points = np.vstack([
+                        lattice_points,
+                        vs@Bgcd.T
+                    ])
+                    rawQs = np.concatenate([rawQs, vQs])
 
             # clean Qs
             # --------
