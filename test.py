@@ -3,6 +3,7 @@ import time
 
 from pfvs.c_kernels import pvec_kernel
 from pfvs.c_kernels import coni_kernel
+from pfvs.lattice import kannan_box_mat_njit
 
 # pvec_kernel
 # ===========
@@ -16,6 +17,16 @@ H = np.array([
 max_N_out = 10000000000
 max_N_iter = 1000000000000
 
+# warm up njit
+out, Niter = kannan_box_mat_njit(
+        B=1,
+        linmat=H,
+        linmin=1,
+        max_N_out=max_N_out,
+        max_N_iter=max_N_iter
+    )
+
+# do the study
 for dilation in [i for i in range(1,10+1)]:
     tic = time.time()
     out, status = pvec_kernel(
@@ -27,7 +38,20 @@ for dilation in [i for i in range(1,10+1)]:
     )
     toc = time.time()
     
-    print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s...")
+    print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s using C code...")
+
+
+    tic = time.time()
+    out, Niter = kannan_box_mat_njit(
+        B=dilation,
+        linmat=H,
+        linmin=1,
+        max_N_out=max_N_out,
+        max_N_iter=max_N_iter
+    )
+    toc = time.time()
+    
+    print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s using njit code...")
 
 # coni_kernel
 # ===========
