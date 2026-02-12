@@ -5,6 +5,7 @@
 # --------------
 from libc.stdint cimport int32_t
 from libc.stdlib cimport malloc, free
+from libc.string cimport memcpy
 
 # declare the external C function
 # -------------------------------
@@ -74,12 +75,14 @@ def pvec_kernel(B: int,
     linmat_np   = np.asarray(linmat)
     col_l1_norm = np.sum(np.abs(linmat_np), axis=0)
     sort_inds   = np.argsort(col_l1_norm)
-    undo_sort   = np.argsort(sort_inds)
+    undo_sort_np= np.argsort(sort_inds).astype(np.int32)
     linmat_np   = linmat_np[:, sort_inds]
     linmat_np   = np.ascontiguousarray(linmat_np, dtype=np.int32)
     
     cdef int[:, ::1] linmat_view = linmat_np
     cdef int *linmat_ptr = &linmat_view[0, 0]
+
+    cdef int32_t[::1] undo_sort_view = undo_sort_np
 
     if max_N_iter == -1:
         max_N_iter = 1000*max_N_out
@@ -97,14 +100,23 @@ def pvec_kernel(B: int,
         max_N_iter
     );
 
-    # convert outputs to Python arrays
-    out = np.empty((N_out, dim), dtype=np.int32)
+    if N_out == 0:
+        free(c_out)
+        return np.empty((0, dim), dtype=np.int32), status
 
     # copy results
+    out_sorted = np.empty((N_out, dim), dtype=np.int32)
+    cdef int32_t[:, ::1] out_sorted_view = out_sorted
+    memcpy(&out_sorted_view[0, 0], c_out, N_out * dim * sizeof(int32_t))
+
+    # unsort
+    out = np.empty((N_out, dim), dtype=np.int32)
+    cdef int32_t[:, ::1] out_view = out
+    cdef int i, j
+
     for i in range(N_out):
         for j in range(dim):
-            out[i, j] = c_out[i*dim + j]
-    out = out[:, undo_sort]
+            out_view[i, undo_sort_view[j]] = out_sorted_view[i, j]
 
     # free C memory
     free(c_out)
