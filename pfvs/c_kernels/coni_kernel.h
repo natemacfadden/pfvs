@@ -68,8 +68,8 @@ int _coni_kernel_c(
     double dilation,
     int * restrict linvec,
     double linmin,
-    int * restrict H,
-    int max_N_out,
+    long * restrict H,
+    long max_N_out,
     double eps
 );
 
@@ -83,6 +83,12 @@ int _coni_kernel_c(
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef DEBUG
+    #define DEBUG_LOG(...) fprintf(stderr, __VA_ARGS__)
+#else
+    #define DEBUG_LOG(...) ((void)0)
+#endif
 
 // GCD helper
 static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
@@ -188,6 +194,12 @@ static inline int set_bounds(
     stack_val_min[sp] = lo;
     stack_val_len[sp] = num;
 
+    // debug print statement
+    DEBUG_LOG("R=%f, ci_offset=%f, U_diag_inv=%f, eps=%f\n", R, ci_offset, U_diag_inv, eps);
+    DEBUG_LOG("lo =  ceil(%f)\n", ( -R - ci_offset) * U_diag_inv - eps);
+    DEBUG_LOG("hi = floor(%f)\n", ( +R - ci_offset) * U_diag_inv + eps);
+    DEBUG_LOG("Set bounds for %d to %d->%d\n", sp, lo, lo+num-1);
+
     return num;
 }
 
@@ -202,8 +214,8 @@ int _coni_kernel_c(
     double dilation,
     int * restrict linvec,
     double linmin,
-    int * restrict H,
-    int max_N_out,
+    long * restrict H,
+    long max_N_out,
     double eps)
 {
     /*
@@ -362,6 +374,8 @@ int _coni_kernel_c(
         remQ = stack_remQ[sp];
         M0   = stack_M0[sp];
 
+        DEBUG_LOG("Setting component-%d for op=%d, sp=%d, pos=%d, remQ=%f, M0=%d\n", i, op, sp, pos, remQ, M0);
+
         // save if node is complete
         // if i==-1, then we have fully written vec
         if (i == -1) {
@@ -370,7 +384,7 @@ int _coni_kernel_c(
                 goto end;
             }
 
-            int Qsave = Q_upper-remQ + eps;
+            int Qsave = (int)(Q_upper-remQ + eps);
             if (Qsave > 0) {
                 int32_t *dst = &out[op * dim];
 
@@ -397,6 +411,8 @@ int _coni_kernel_c(
         int veci = stack_val_min[sp] + pos;
         vec[i] = veci;
 
+        DEBUG_LOG("Set   component-%d for op=%d, sp=%d, pos=%d, remQ=%f, M0=%d to %d\n", i, op, sp, pos, remQ, M0, veci);
+
         // advance pos for next iteration
         stack_pos[sp] += 1;
 
@@ -404,6 +420,8 @@ int _coni_kernel_c(
         // ------------------
         M0 = M0 + linvec[i]*veci;
         if ((i == num_zeros) & (M0 < linmin)) {
+            DEBUG_LOG("SKIPPED SINCE M0 VIOLATED BOUNDS %d < %f\n",M0,linmin);
+            DEBUG_LOG("linvec[i]=%d, veci=%d...\n",linvec[i],veci);
             continue;
         }
 
@@ -413,6 +431,7 @@ int _coni_kernel_c(
 
         // cut of no more Q left...
         if (new_rem < 0 - eps) {
+            DEBUG_LOG("SKIPPED SINCE TADPOLE %f < %f\n",new_rem,-eps);
             continue;
         }
 
@@ -424,7 +443,7 @@ int _coni_kernel_c(
         uint32_t new_gcd = stack_gcd[sp]; // upper bound
         if (new_gcd == 0) {
             // gcd was 0... update it to whatever abs(Hvec_i) is....
-            uint32_t Hvec_i  = abs(stack_Hveci[sp] + H[i*dim+i]*veci);
+            uint32_t Hvec_i  = labs(stack_Hveci[sp] + H[i*dim+i]*veci);
             new_gcd          = Hvec_i;
 
             if (new_gcd == 0) {
@@ -435,16 +454,18 @@ int _coni_kernel_c(
         } else if (new_gcd < required_dilation) {
             // bad! we can't get back under tadpole...
             // (we check here to avoid a gcd call...)
+            DEBUG_LOG("1SKIPPED BAD GCD %d < %d\n",new_gcd,required_dilation);
             continue;
 
         } else if (new_gcd != 1) {
             // only other case where we can nontrivially change the gcd
-            uint32_t Hvec_i  = abs(stack_Hveci[sp] + H[i*dim+i]*veci);
+            uint32_t Hvec_i  = labs(stack_Hveci[sp] + H[i*dim+i]*veci);
             new_gcd          = gcd(new_gcd, Hvec_i, required_dilation);
         }
 
         // here, the gcd is nonzero and may newly violate tadpole
         if (new_gcd < required_dilation) {
+            DEBUG_LOG("2SKIPPED BAD GCD %d < %d\n",new_gcd,required_dilation);
             continue;
         }
 
@@ -461,9 +482,12 @@ int _coni_kernel_c(
         double ci_offset = 0.0;
         int Hvec_i = 0;
         for (int j = i; j<dim; ++j) {
+            DEBUG_LOG("%d %d %f %d\n",i,j,U[(i-1)*dim + j],vec[j]);
             ci_offset += U[(i-1)*dim + j] * vec[j];
             Hvec_i += H[(i-1)*dim + j] * vec[j];
         }
+
+        DEBUG_LOG("%d %d %f\n", i, vec[i], ci_offset);
 
         stack_ci_offset[sp] = ci_offset;
         stack_Hveci[sp] = Hvec_i;

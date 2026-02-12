@@ -5,6 +5,7 @@
 # --------------
 from libc.stdint cimport int32_t
 from libc.stdlib cimport malloc, free
+import numpy as np
 
 # declare the external C function
 # -------------------------------
@@ -19,20 +20,20 @@ cdef extern from "coni_kernel.h":
         double dilation,
         int *linvec,
         double linmin,
-        int *H,
-        int max_N_out,
+        long *H,
+        long max_N_out,
         double eps
     )
 
 # Python-exposed wrapper
 # ----------------------
-def coni_kernel(double[:, :] U,
+def coni_kernel(U,
                 int Q,
                 double dilation,
-                int[:] linvec,
+                linvec,
                 double linmin,
-                int[:, :] H,
-                int max_N_out,
+                H,
+                long max_N_out,
                 double eps = 1e-12):
     """
     **Description:**
@@ -89,13 +90,18 @@ def coni_kernel(double[:, :] U,
         -5: no vectors
         -2: exceed max_N_out outputs
     """
-    import numpy as np
+    # convert inputs to C-contiguous arrays with correct dtype
+    # this ensures we always have the right memory layout
+    cdef double[:, ::1] U_c = np.ascontiguousarray(U, dtype=np.float64)
+    cdef int[::1] linvec_c = np.ascontiguousarray(linvec, dtype=np.int32)
+    cdef long[:, ::1] H_c = np.ascontiguousarray(H, dtype=np.int64)
 
-    cdef int dim = linvec.shape[0]
+    # read some inputs
+    cdef int dim = linvec_c.shape[0]
     cdef int N_out = 0
     cdef int status
 
-    # Allocate output arrays
+    # allocate output arrays
     cdef int32_t *c_out = <int32_t *>malloc(max_N_out * dim * sizeof(int32_t))
     if c_out == NULL:
         raise MemoryError("Failed to allocate c_out")
@@ -110,12 +116,12 @@ def coni_kernel(double[:, :] U,
         c_Qs,
         &N_out,
         dim,
-        &U[0, 0],
+        &U_c[0, 0],
         Q,
         dilation,
-        &linvec[0],
+        &linvec_c[0],
         linmin,
-        &H[0, 0],
+        &H_c[0, 0],
         max_N_out,
         eps
     )
