@@ -32,12 +32,14 @@ from tqdm.auto import tqdm
 
 # local imports
 from . import lattice, diagnostics
+from .c_kernels import pvec_kernel, coni_kernel
 
 # p-vectors
 # =========
 def pvecs(
     data: "CYData",
     min_N_pts: int,
+    use_njit: bool = False,
     verbosity: int = 0) -> "ArrayLike":
 
     max_N_iter = 10_000*min_N_pts
@@ -59,16 +61,36 @@ def pvecs(
         i += 1
         if verbosity >= 1:
             print('pre ',data.coni_curve,i,B,flush=True)
-        pts, Niter = lattice.kannan_box_mat_njit(
-            B=B,
-            linmat=H,
-            linmin=1,
-            max_N_out=10*min_N_pts,
-            max_N_iter=max_N_iter,
-        )
-        if Niter >= max_N_iter:
-            print(f"TOO MANY (>={max_N_iter}) ITERATIONS",flush=True)
-            break
+
+        if use_njit:
+            print("try the c-code if you'd like but I'm not your boss. To do so, set `use_njit=False`")
+            pts, Niter = lattice.kannan_box_mat_njit(
+                B=B,
+                linmat=H,
+                linmin=1,
+                max_N_out=10*min_N_pts,
+                max_N_iter=max_N_iter,
+            )
+
+            if Niter >= max_N_iter:
+                print(f"TOO MANY (>={max_N_iter}) ITERATIONS",flush=True)
+                break
+        else:
+            try:
+                pts, status = pvec_kernel(
+                    B=B,
+                    linmat=H.astype(np.int32),
+                    linmin=1,
+                    max_N_out=10*min_N_pts,
+                    max_N_iter=max_N_iter
+                )
+
+                if status != 0:
+                    print(f"KERNEL RETURNED STATUS {status}!!!",flush=True)
+            except Exception as e:
+                print("did you run the `rebuild_kernels.py` file? please do")
+                raise e
+
         N = len(pts)
         if N >= min_N_pts:
             break
@@ -831,6 +853,7 @@ def coniZpM(
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0,
     low_level_parallelism: bool = True,
+    use_njit: bool = False,
     return_formal_pfvs: bool = False,
     ) -> tuple["ArrayLike", "ArrayLike"]:
     """
@@ -859,6 +882,10 @@ def coniZpM(
     # ----------
     all_Ks = np.zeros((0,data.h11), dtype=np.int32)
     all_Ms = np.zeros((0,data.h11), dtype=np.int32)
+
+    # not currently true...
+    #if use_njit:
+    #    print("the c-code is 2x faster, or so ;) Turn `use_njit=False` to try it")
 
     # iterate over p-vectors
     if verbosity >= 0:
@@ -893,22 +920,58 @@ def coniZpM(
                     print("C long error :(")
                     raise e
 
-                lattice_points, rawQs = lattice.coni_kernel_njit(
-                    # ellipsoid definition
-                    L=np.linalg.cholesky(mat),
-                    Q=Qmax,
-                    dilation=ellipsoid_dilation,
-                    # M0 cuts:
-                    Binter0=Binter[0,:],
-                    M0min=M0min,
-                    # K' cuts:
-                    H = H,
-                    # misc:
-                    max_N_out=max_N_pfvs)
+                if use_njit:
+                    lattice_points, rawQs = lattice.coni_kernel_njit(
+                        # ellipsoid definition
+                        L=np.linalg.cholesky(mat),
+                        Q=Qmax,
+                        dilation=ellipsoid_dilation,
+                        # M0 cuts:
+                        Binter0=Binter[0,:],
+                        M0min=M0min,
+                        # K' cuts:
+                        H = H,
+                        # misc:
+                        max_N_out=max_N_pfvs)
+
+                    if len(lattice_points) >= max_N_pfvs:
+                        print(f"SATURATED (>={max_N_iter}) PFV COUNT",flush=True)
+                        break
+                else:
+                    try:
+                        lattice_points, rawQs, status = coni_kernel(
+                            U=np.ascontiguousarray(np.linalg.cholesky(mat).T),
+                            Q=Qmax,
+                            dilation=ellipsoid_dilation,
+                            linvec=np.ascontiguousarray(Binter[0,:].astype(np.int32)),
+                            linmin=M0min,
+                            H=H,
+                            max_N_out=max_N_pfvs,
+                            eps=1e-4
+                        )
+
+                        if status != 0:
+                            print(f"KERNEL RETURNED STATUS {status}!!!",flush=True)
+                    except Exception as e:
+                        print("did you run the `rebuild_kernels.py` file? please do")
+                        raise e
+
+                if not np.allclose(rawQs, np.sum(lattice_points*(lattice_points@mat.T),axis=1)):
+                    print(lattice_points.tolist())
+                    print(rawQs.tolist())
+                    print(mat.tolist())
+                    print(Qmax)
+                    print(ellipsoid_dilation),
+                    print(Binter[0,:].tolist()),
+                    print(H.tolist())
+                    print(max_N_pfvs)
+                    print(np.linalg.cholesky(mat).T.dtype, Binter[0,:].astype(np.int32).dtype, H.dtype)
+                    raise Exception
             
             # use GCD lattices
             # ----------------
             else:
+                print("LIKELY OLD CODE THAT COULD BE REFRESHED")
                 # i.e., encode gcd(Kperp) == val as a lattice
                 # scan in each lattice
                 lattice_points = np.empty((0,Binter.shape[1]), dtype=int)

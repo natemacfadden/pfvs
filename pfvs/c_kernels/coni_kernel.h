@@ -60,7 +60,7 @@ A status code according to following list:
 */
 int _coni_kernel_c(
     int32_t * restrict out,
-    int * restrict Qs,
+    float * restrict Qs,
     int * restrict N_out,
     int dim,
     double * restrict U,
@@ -206,7 +206,7 @@ static inline int set_bounds(
 // custom FP code for coniPFVs
 int _coni_kernel_c(
     int32_t * restrict out,
-    int * restrict Qs,
+    float * restrict Qs,
     int * restrict N_out,
     int dim,
     double * restrict U,
@@ -384,8 +384,8 @@ int _coni_kernel_c(
                 goto end;
             }
 
-            int Qsave = (int)(Q_upper-remQ + eps);
-            if (Qsave > 0) {
+            float Qsave = Q_upper-remQ;
+            if (Qsave > -eps) {
                 int32_t *dst = &out[op * dim];
 
                 #pragma unroll

@@ -12,7 +12,7 @@ import numpy as np
 cdef extern from "coni_kernel.h":
     int _coni_kernel_c(
         int32_t *out,
-        int *Qs,
+        float *Qs,
         int *N_out,
         int dim,
         double *U,
@@ -105,7 +105,7 @@ def coni_kernel(U,
     cdef int32_t *c_out = <int32_t *>malloc(max_N_out * dim * sizeof(int32_t))
     if c_out == NULL:
         raise MemoryError("Failed to allocate c_out")
-    cdef int *c_Qs = <int *>malloc(max_N_out * sizeof(int))
+    cdef float *c_Qs = <float *>malloc(max_N_out * sizeof(int))
     if c_Qs == NULL:
         free(c_out)
         raise MemoryError("Failed to allocate c_Qs")
