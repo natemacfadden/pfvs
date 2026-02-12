@@ -418,11 +418,12 @@ int _coni_kernel_c(
 
         // cut on M0 >= M0min
         // ------------------
-        M0 = M0 + linvec[i]*veci;
-        if ((i == num_zeros) & (M0 < linmin)) {
-            DEBUG_LOG("SKIPPED SINCE M0 VIOLATED BOUNDS %d < %f\n",M0,linmin);
-            DEBUG_LOG("linvec[i]=%d, veci=%d...\n",linvec[i],veci);
-            continue;
+        if (i == num_zeros) {
+            if (M0 + linvec[i]*veci < linmin) {
+                DEBUG_LOG("SKIPPED SINCE M0 VIOLATED BOUNDS %d < %f\n",M0+ linvec[i]*veci,linmin);
+                DEBUG_LOG("linvec[i]=%d, veci=%d...\n",linvec[i],veci);
+                continue;
+            }
         }
 
         // get ci, the new amount of remaining Q
@@ -475,7 +476,7 @@ int _coni_kernel_c(
             stack_i[sp]       = i-1;
             stack_pos[sp]     = 0;
             stack_remQ[sp]    = new_rem;
-            stack_M0[sp]      = M0;
+            stack_M0[sp]      = M0 + linvec[i]*veci;
             stack_gcd[sp]     = new_gcd;
 
         // compute the new ci, Hvec_i offset value for i-1 using this vector

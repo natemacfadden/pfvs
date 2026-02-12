@@ -854,10 +854,11 @@ def coniZpM(
     use_box: bool = False,
     use_gcd_lattice: bool = False,
     max_N_pfvs: int = 1_000_000_000,
-    verbosity: int = 0,
     low_level_parallelism: bool = True,
     use_njit: bool = False,
     return_formal_pfvs: bool = False,
+    extra_checks: bool = False,
+    verbosity: int = 0,
     ) -> tuple["ArrayLike", "ArrayLike"]:
     """
     A Python "Zp" implementation that takes in p-vectors and outputs PFVs.
@@ -886,9 +887,8 @@ def coniZpM(
     all_Ks = np.zeros((0,data.h11), dtype=np.int32)
     all_Ms = np.zeros((0,data.h11), dtype=np.int32)
 
-    # not currently true...
-    #if use_njit:
-    #    print("the c-code is 2x faster, or so ;) Turn `use_njit=False` to try it")
+    if use_njit:
+        print("the c-code is 2x faster, or so ;) Turn `use_njit=False` to try it")
 
     # iterate over p-vectors
     if verbosity >= 0:
@@ -899,7 +899,7 @@ def coniZpM(
         _0p = np.concatenate([[0],p])
 
         # construct the quadratic form defining the ellipsoid
-        mat, Z, Binter = coniMellipsoid(_0p, data)
+        mat, Z, Binter = coniMellipsoid(_0p, data, extra_checks=extra_checks)
 
         ZBinter = np.ascontiguousarray(Z@Binter)
         Binter  = np.ascontiguousarray(  Binter)
@@ -959,7 +959,7 @@ def coniZpM(
                         print("did you run the `rebuild_kernels.py` file? please do")
                         raise e
 
-                if not np.allclose(rawQs, np.sum(lattice_points*(lattice_points@mat.T),axis=1)):
+                if extra_checks and (not np.allclose(rawQs, np.sum(lattice_points*(lattice_points@mat.T),axis=1))):
                     print(lattice_points.tolist())
                     print(rawQs.tolist())
                     print(mat.tolist())

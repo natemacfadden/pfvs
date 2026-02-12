@@ -128,7 +128,7 @@ def coni_kernel(U,
 
     # convert outputs to Python arrays
     out = np.empty((N_out, dim), dtype=np.int32)
-    Qs  = np.empty(N_out, dtype=np.int32)
+    Qs  = np.empty(N_out, dtype=float)
 
     # copy results
     for i in range(N_out):
