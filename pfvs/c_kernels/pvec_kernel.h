@@ -58,6 +58,12 @@ int _pvec_kernel_c(
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef DEBUG
+    #define DEBUG_LOG(...) fprintf(stderr, __VA_ARGS__)
+#else
+    #define DEBUG_LOG(...) ((void)0)
+#endif
+
 static inline int max_int(int a, int b) {
     return a > b ? a : b;
 }
@@ -121,6 +127,9 @@ static inline int set_bounds(
     }
     stack_val_min[sp] = lo;
     stack_val_len[sp] = num;
+
+    // debug print statement
+    DEBUG_LOG("Set bounds for %d to %d->%d+%d\n", sp, lo, lo, num);
 
     return num;
 }
@@ -252,6 +261,9 @@ int _pvec_kernel_c(
         i    = stack_i[sp];
         pos  = stack_pos[sp];
 
+        // debug print statement
+        DEBUG_LOG("Setting component-%d for op=%d, sp=%d, pos=%d\n", i, op, sp, pos);
+
         // save if node is complete
         // if i==-1, then we have fully written vec
         if (i == -1) {
@@ -283,6 +295,8 @@ int _pvec_kernel_c(
         // set vec[sp]
         int veci = stack_val_min[sp] + pos;
         vec[i] = veci;
+
+        DEBUG_LOG("Set     component-%d for op=%d, sp=%d, pos=%d to %d\n", i, op, sp, pos, veci);
 
         // advance pos for next iteration
         stack_pos[sp] += 1;

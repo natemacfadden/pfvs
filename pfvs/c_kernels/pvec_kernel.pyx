@@ -6,6 +6,7 @@
 from libc.stdint cimport int32_t
 from libc.stdlib cimport malloc, free
 from libc.string cimport memcpy
+import numpy as np
 
 # declare the external C function
 # -------------------------------
@@ -25,7 +26,7 @@ cdef extern from "pvec_kernel.h":
 # Python-exposed wrapper
 # ----------------------
 def pvec_kernel(B: int,
-                int[:, :] linmat,
+                int[:, ::1] linmat,
                 int linmin,
                 long max_N_out,
                 long max_N_iter = -1):
@@ -59,14 +60,13 @@ def pvec_kernel(B: int,
         -5: no vectors
         -2: exceed max_N_out outputs
     """
-    import numpy as np
-
+    # read some inputs
     cdef int dim     = linmat.shape[1]
     cdef int numhyps = linmat.shape[0]
     cdef int N_out = 0
     cdef int status
 
-    # Allocate output arrays
+    # allocate output arrays
     cdef int32_t *c_out = <int32_t *>malloc(max_N_out * dim * sizeof(int32_t))
     if c_out == NULL:
         raise MemoryError("Failed to allocate c_out")
