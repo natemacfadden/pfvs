@@ -78,7 +78,7 @@ def pvec_kernel(B: int,
     undo_sort_np= np.argsort(sort_inds).astype(np.int32)
     linmat_np   = linmat_np[:, sort_inds]
     linmat_np   = np.ascontiguousarray(linmat_np, dtype=np.int32)
-    
+
     cdef int[:, ::1] linmat_view = linmat_np
     cdef int *linmat_ptr = &linmat_view[0, 0]
 
@@ -116,7 +116,7 @@ def pvec_kernel(B: int,
 
     for i in range(N_out):
         for j in range(dim):
-            out_view[i, undo_sort_view[j]] = out_sorted_view[i, j]
+            out_view[i, j] = out_sorted_view[i, undo_sort_view[j]]
 
     # free C memory
     free(c_out)
