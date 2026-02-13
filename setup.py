@@ -42,7 +42,7 @@ class build_ext(_build_ext):
         super().run()
 
 
-class DevelopCommand(develop):
+class _develop(develop):
     """Custom develop command to build extensions in-place."""
     def run(self):
         # Build extensions in-place before running develop
@@ -58,6 +58,6 @@ setup(
     ),
     cmdclass={
         'build_ext': build_ext,
-        'develop': DevelopCommand,
+        'develop': _develop,
     },
 )
