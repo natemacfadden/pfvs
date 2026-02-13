@@ -35,13 +35,6 @@ from numba.typed import Dict
 def lcm(a, b):
     return abs(a*b) // math.gcd(a, b)
 
-@njit
-def gcd_vec(vec):
-    g = abs(vec[0])
-    for v in vec[1:]:
-        g = math.gcd(g,v)
-    return g
-
 # misc lattice
 # ============
 # LLL-reduction
