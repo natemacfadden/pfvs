@@ -340,7 +340,7 @@ class CYData:
         """
         # already known
         if self._M_lattice is not None:
-            return self._M_lattice
+            return self._M_lattice.copy()
 
         # compute from scratch
         h11 = self.kappa.shape[0]
@@ -382,4 +382,6 @@ class CYData:
         if verify:
             assert np.all((self.a@out)%2 == 0)
             assert np.all((self.b.reshape(1,-1)@out)%24 == 0)
+        
+        self._M_lattice = out.copy()
         return out
