@@ -76,44 +76,73 @@ def lll_reduce(B: "ArrayLike") -> "ArrayLike":
     return B
 
 # orthogonal lattice
+@njit
+def extended_euclidean(a,b):
+    old_r, r = (a,b)
+    old_s, s = (1,0)
+    old_t, t = (0,1)
+
+    while r!=0:
+        q = old_r//r
+
+        old_r, r = (r, old_r - q*r)
+        old_s, s = (s, old_s - q*s)
+        old_t, t = (t, old_t - q*t)
+
+    return old_s, old_t, old_r
+
+@njit
 def orthogonal_lattice(p: "ArrayLike") -> "ArrayLike":
     """
     **Description:**
-    Computes a basis of the orthogonal lattice to some vector p, with columns
+    Computes a basis of the orthogonal lattice to some vector v, with columns
     as basis vectors.
 
-    Do so using the HNF (via Flint):
-    for a matrix A, the HNF is a matrix H and U such that H = U@A such that
-        - U is unimodular and square
-        - H upper triangular, with 'leading row coefficients' to the right of
-          those above it
-    in the case that A = p.T (as a column), then
-        - H.shape = [len(p),1]
-        - H[0, 0]!=0 (since U is unimodular and hence full-rank), so rank(H) = 1
-        - H[1:,0]=0 since there is nothing 'to the right' of H[0,0]
-    thus U[1:,:] is a basis of the null-space
-    
     **Arguments:**
-    - `p`: The orthogonal vector. Assumed to be integral
+    - `v`: The orthogonal vector. Assumed to be integral
 
     **Returns:**
-    A basis of the lattice orthogonal to p, as column vectors.
+    A basis of the lattice orthogonal to v, as column vectors.
     """
-    n = len(p)
+    n = p.shape[0]
+    U = np.eye(n, dtype=p.dtype)
 
-    # A = p as a column
-    A = flint.fmpz_mat([np.array(p).tolist()]).transpose()
+    w = p.copy()
+    for k in range(1,n):
+        # clear out w[k]
 
-    # H = U * A
-    U = A.hnf(transform=True)[1]
+        # already done :)
+        if w[k] == 0:
+            continue
 
-    # Extract bottom n-1 rows of U
-    B = flint.fmpz_mat(n-1, n)
-    for i in range(1, n):
-        for j in range(n):
-            B[i-1, j] = U[i, j]
+        # not done - compute the bezout coefficients
+        a,b   = w[0], w[k]
+        s,t,g = extended_euclidean(a,b)
 
-    return np.array(B.lll().tolist()).astype(int).T
+        M = [[s,t],[-b//g, a//g]]
+        # interpretation:
+        # det(M) = +/- 1
+        # M@(w[0],w[k]) = (g, 0)
+
+        # update w
+        w[0] = g
+        w[k] = 0
+
+        # update U
+        # think: U->\Tilde{M}@U
+        # for \Tilde{M} an extended version of M
+        # (specifically,
+        #                \Tilde{M}<-1
+        #                \Tilde{M}[[0,k],[0,k]] <- M)
+        # you can track the indices but this has the effect
+        #     U[[0,k],r] <- M@U[[0,k],r]
+        for r in range(n):
+            tmp1   = M[0][0]*U[0,r] + M[0][1]*U[k,r]
+            tmp2   = M[1][0]*U[0,r] + M[1][1]*U[k,r]
+            U[0,r] = tmp1
+            U[k,r] = tmp2
+        
+    return U[1:].T
 
 # dual lattice
 def dual_lattice(B: "ArrayLike") -> "ArrayLike":
