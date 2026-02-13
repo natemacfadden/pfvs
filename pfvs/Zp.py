@@ -34,6 +34,18 @@ from tqdm.auto import tqdm
 from . import lattice, diagnostics
 from .c_kernels import pvec_kernel, coni_kernel
 
+# global variables
+# ================
+# we often compute projection matrices that project out 0th component
+# these are used in matrix product, so mutability is not a concern
+# compute these once and for all using global variabls
+projs = [None]*30
+def get_proj(dim):
+    if projs[dim] is None:
+        projs[dim] = np.eye(dim, dtype=int)[1:,:]
+    
+    return projs[dim]
+
 # p-vectors
 # =========
 def pvecs(
@@ -737,13 +749,6 @@ def coniMellipsoid(p, data, extra_checks=False):
     # (doesn't seem to have a huge effect...)
     Binter = lattice.lll_reduce(Binter)
 
-    # enforce a maximal number of 0s in the 0th row
-    """
-    Bflint = flint.fmpz_mat(Binter.tolist()).transpose()
-    Binter = Bflint.hnf(transform=False).transpose().tolist()
-    Binter = np.array(Binter).astype(int)
-    """
-
     # sort Binter so columns which don't affect M0 come first
     Binter = Binter[:,np.argsort(Binter[0]!=0)]
 
@@ -759,7 +764,7 @@ def coniMellipsoid(p, data, extra_checks=False):
         # DOESN'T WORK!!!
         # ---------------
         # matrix to project out 0th component
-        proj = np.eye(data.h11, dtype=np.int32)[1:,:]
+        proj = get_proj(data.h11)
         #       Mperp-term          Kperp-term
         mat = -(Binter.T @ proj.T) @ (proj @ (kappa@([0]+p)) )@Binter
 
@@ -774,10 +779,7 @@ def coniMellipsoid(p, data, extra_checks=False):
 def Kperp_gcd_lattice(data, Z, Binter, gcd):
     # compute the matrix A such that Kperp = A@c
     # ------------------------------------------
-    proj = np.hstack([
-        np.zeros((data.h11-1,1), dtype=int),
-        np.eye(data.h11-1, dtype=int)
-    ])
+    proj = get_proj(data.h11)
     A = proj@Z@Binter
 
     # compute the basis B such that (A @ (B@d)) % gcd == 0
@@ -878,14 +880,16 @@ def coniZpM(
 
     # read data
     kappa  = data.kappa_cob
+    h11    = data.h11
+    proj    = get_proj(h11)
 
     if Qmax is None:
         Qmax = (data.h11+data.h21+2) + 2
 
     # the search
     # ----------
-    all_Ks = np.zeros((0,data.h11), dtype=np.int32)
-    all_Ms = np.zeros((0,data.h11), dtype=np.int32)
+    all_Ks = np.zeros((0,h11), dtype=np.int32)
+    all_Ms = np.zeros((0,h11), dtype=np.int32)
 
     if use_njit:
         print("the c-code is 2x faster, or so ;) Turn `use_njit=False` to try it")
@@ -910,10 +914,6 @@ def coniZpM(
         try:
             if not use_gcd_lattice:
                 # find relevant lattice points in ellipsoid c.T@mat@c <= Q
-                proj = np.hstack([
-                    np.zeros((data.h11-1, 1), dtype=int),
-                    np.eye(data.h11-1, dtype=int)
-                ])
                 G    = proj@ZBinter
                 G_fl = flint.fmpz_mat(G.tolist())
 
@@ -1106,8 +1106,8 @@ def coniZpM(
             # set K0s
             # (set to obey tadpole ranges, K'>0)
             # ----------------------------------
-            Ks = np.zeros((data.h11,0), dtype=np.int32)
-            Ms = np.zeros((data.h11,0), dtype=np.int32)
+            Ks = np.zeros((h11,0), dtype=np.int32)
+            Ms = np.zeros((h11,0), dtype=np.int32)
 
             if Kperps.shape[1]:
                 for Kperp_gcd in range(1,max_Kperp_gcd+1):
