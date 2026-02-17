@@ -1,0 +1,9 @@
+name: pfvs
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.8
+  - numpy
+  - cython
+  - gmp
+  - setuptools
