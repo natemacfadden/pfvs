@@ -745,8 +745,8 @@ def coniMellipsoid(p, data=None, kappa=None, Mbasis=None, extra_checks=False):
     # thus just need c in the orthogonal lattice to Mbasis.T @ T
     # (the output will be lattice generators of such cs... we'll want
     #  lattice generators of valid Ms so we multiply on left by Mbasis)
-    #Binter = Mbasis@lattice.lll_reduce(lattice.orthogonal_lattice(p=T.T@Mbasis))
-    Binter = Mbasis@lattice.orthogonal_lattice(p=T.T@Mbasis)
+    Binter = Mbasis@lattice.lll_reduce(lattice.orthogonal_lattice(p=T.T@Mbasis))
+    #Binter = Mbasis@lattice.orthogonal_lattice(p=T.T@Mbasis)
 
     # lll-reduce Binter
     # (doesn't seem to have a huge effect...)
