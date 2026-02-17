@@ -938,13 +938,22 @@ def coniZpM(
                         H = np.array([[int(x) for x in row] for row in H_list], dtype=object)
                     except Exception as e:
                         print(f"C long error for p={p.tolist()} :(",flush=True)
+                        print(e)
+                        continue
                         #print(G_fl.hnf().tolist(),flush=True)
                         #raise e
+
+                    try:
+                        L = np.linalg.cholesky(mat)
+                    except Exception as e:
+                        print(f"couldn't compute cholesky decomposition of mat for p={p.tolist()} :(",flush=True)
+                        print(e)
+                        continue
 
                     if use_njit:
                         lattice_points, rawQs = lattice.coni_kernel_njit(
                             # ellipsoid definition
-                            L=np.linalg.cholesky(mat),
+                            L=L,
                             Q=Qmax,
                             dilation=ellipsoid_dilation,
                             # M0 cuts:
@@ -961,7 +970,7 @@ def coniZpM(
                     else:
                         try:
                             lattice_points, rawQs, status = coni_kernel(
-                                U=np.ascontiguousarray(np.linalg.cholesky(mat).T),
+                                U=np.ascontiguousarray(L.T),
                                 Q=Qmax,
                                 dilation=ellipsoid_dilation,
                                 linvec=np.ascontiguousarray(Binter[0,:].astype(np.int32)),
