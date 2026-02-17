@@ -58,6 +58,7 @@ int _pvec_kernel_c(
 #include <stdlib.h>
 #include <string.h>
 
+//#define DEBUG
 #ifdef DEBUG
     #define DEBUG_LOG(...) fprintf(stderr, __VA_ARGS__)
 #else
@@ -175,6 +176,7 @@ int _pvec_kernel_c(
         -6: problem dimension too high (currently >256)
         -5: no vectors
         -2: exceed max_N_out outputs
+        -3: exceed max_N_iter iterations
     */
     // define variables
     // ----------------
@@ -254,7 +256,9 @@ int _pvec_kernel_c(
         // quit it too many iterations
         Niter += 1;
         if (Niter >= max_N_iter) {
-            break;
+            DEBUG_LOG("QUITTING DUE TO TOO MANY ITERATIONS\n");
+            status = -3;
+            goto end;
         }
 
         // read from the stack
@@ -311,7 +315,7 @@ int _pvec_kernel_c(
             stack_partial_sum[sp*numhyps+j] = stack_partial_sum[(sp-1)*numhyps + j] + linmat[j*dim + i]*veci;
         }
 
-        if (i >= 1) {
+        if (i > 0) {
             set_bounds(
                 sp,
                 i-1,
@@ -326,6 +330,8 @@ int _pvec_kernel_c(
                 stack_val_len);
         }
     }
+
+    DEBUG_LOG("DONE\n");
 
     end:
         *N_out = op;
