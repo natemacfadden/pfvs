@@ -54,7 +54,7 @@ def pvecs(
     use_njit: bool = False,
     verbosity: int = 0) -> "ArrayLike":
 
-    max_N_iter = 10_000*min_N_pts
+    max_N_iter = 1_000_000*min_N_pts
 
     # read hyperplanes
     if data.coni:
@@ -745,6 +745,7 @@ def coniMellipsoid(p, data=None, kappa=None, Mbasis=None, extra_checks=False):
     # thus just need c in the orthogonal lattice to Mbasis.T @ T
     # (the output will be lattice generators of such cs... we'll want
     #  lattice generators of valid Ms so we multiply on left by Mbasis)
+    #Binter = Mbasis@lattice.lll_reduce(lattice.orthogonal_lattice(p=T.T@Mbasis))
     Binter = Mbasis@lattice.orthogonal_lattice(p=T.T@Mbasis)
 
     # lll-reduce Binter
@@ -933,10 +934,12 @@ def coniZpM(
                     G_fl = flint.fmpz_mat(G.tolist())
 
                     try:
-                        H    = np.array(G_fl.hnf().tolist()).astype(int)
+                        H_list = G_fl.hnf().tolist()
+                        H = np.array([[int(x) for x in row] for row in H_list], dtype=object)
                     except Exception as e:
-                        print("C long error :(")
-                        raise e
+                        print(f"C long error for p={p.tolist()} :(",flush=True)
+                        #print(G_fl.hnf().tolist(),flush=True)
+                        #raise e
 
                     if use_njit:
                         lattice_points, rawQs = lattice.coni_kernel_njit(
@@ -948,7 +951,7 @@ def coniZpM(
                             Binter0=Binter[0,:],
                             M0min=M0min,
                             # K' cuts:
-                            H = H,
+                            H = H.astype(int),
                             # misc:
                             max_N_out=max_N_pfvs)
 
