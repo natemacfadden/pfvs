@@ -4,12 +4,26 @@ from setuptools.command.build_ext import build_ext as _build_ext
 from Cython.Build import cythonize
 import os
 
+def get_gmp_paths():
+    """Find GMP from conda environment or system."""
+    conda_prefix = os.environ.get('CONDA_PREFIX')
+    
+    if conda_prefix:
+        return {
+            'include': os.path.join(conda_prefix, 'include'),
+            'library': os.path.join(conda_prefix, 'lib'),
+        }
+    
+    # Fallback to system default paths (empty = use system defaults)
+    return None
+
 kernels = [
     {
         "name": "coni_kernel",
         "pyx": "coni_kernel.pyx",
         "include": ".",
         "impl": "CONI_KERNEL_IMPLEMENTATION",
+        "libraries": ["gmp"],
     },
     {
         "name": "pvec_kernel",
@@ -21,14 +35,25 @@ kernels = [
 
 extensions = []
 package_path = "pfvs/c_kernels"
+gmp_paths = get_gmp_paths()
 
 for k in kernels:
+    include_dirs = [os.path.join(package_path, k["include"])]
+    library_dirs = []
+    
+    # Add GMP paths if needed and available
+    if "gmp" in k.get("libraries", []) and gmp_paths:
+        include_dirs.append(gmp_paths['include'])
+        library_dirs.append(gmp_paths['library'])
+    
     extensions.append(
         Extension(
             f"pfvs.c_kernels.{k['name']}",
             sources=[os.path.join(package_path, k["pyx"])],
-            include_dirs=[os.path.join(package_path, k["include"])],
+            include_dirs=include_dirs,
+            library_dirs=library_dirs,
             define_macros=[(k["impl"], None)],
+            libraries=k.get("libraries", []),
             language="c",
             extra_compile_args=["-O3"],
         )
