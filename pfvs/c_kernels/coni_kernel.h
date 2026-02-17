@@ -4,6 +4,7 @@
 // HEADER
 // ======
 #include <stdint.h>
+#include <gmp.h>
 
 /*
 **Description:**
@@ -68,7 +69,7 @@ int _coni_kernel_c(
     double dilation,
     int * restrict linvec,
     double linmin,
-    long * restrict H,
+    mpz_t * restrict H,
     long max_N_out,
     double eps
 );
@@ -84,6 +85,7 @@ int _coni_kernel_c(
 #include <stdlib.h>
 #include <string.h>
 
+//#define DEBUG
 #ifdef DEBUG
     #define DEBUG_LOG(...) fprintf(stderr, __VA_ARGS__)
 #else
@@ -91,7 +93,7 @@ int _coni_kernel_c(
 #endif
 
 // GCD helper
-static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
+static inline uint64_t gcd(uint64_t u, uint64_t v, uint64_t min_allowed_gcd)
 {
     /*
     **Description:**
@@ -115,11 +117,11 @@ static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
     u >>= __builtin_ctz(u);
 
     // min allowed gcd,shifted
-    uint32_t min_allowed_gcd_shifted = min_allowed_gcd >> shift;
+    uint64_t min_allowed_gcd_shifted = min_allowed_gcd >> shift;
 
     // cut if current bound on gcd is below allowed value
     // current upper bound is u << shift
-    if (u < min_allowed_gcd_shifted) {
+    if ((u < min_allowed_gcd_shifted) || (v < min_allowed_gcd_shifted)) {
         return 1;
     }
 
@@ -130,7 +132,7 @@ static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
         v >>= __builtin_ctz(v);
         
         // ensure u <= v
-        if (u > v) { int t = v; v = u; u = t; }
+        if (u > v) { uint64_t t = v; v = u; u = t; }
         /*
         // branchless but slower
         uint32_t mask = -(u > v);
@@ -150,6 +152,39 @@ static inline uint32_t gcd(uint32_t u, uint32_t v, uint32_t min_allowed_gcd)
     } while (v);
 
     return u << shift;
+}
+
+static inline void gcd_gmp(mpz_t result, mpz_t u, mpz_t v, const mpz_t min_allowed_gcd)
+{
+    // take absolute values
+    mpz_abs(u, u);
+    mpz_abs(v, v);
+
+    // check if values fit in 64 bits
+    if (mpz_sizeinbase(u, 2) <= 64 && 
+        mpz_sizeinbase(v, 2) <= 64 && 
+        mpz_sizeinbase(min_allowed_gcd, 2) <= 64) {
+        
+        uint64_t u_u64 = mpz_get_ui(u);
+        uint64_t v_u64 = mpz_get_ui(v);
+        uint64_t min_u64 = mpz_get_ui(min_allowed_gcd);
+        
+        uint64_t res = gcd(u_u64, v_u64, min_u64);
+        mpz_set_ui(result, res);
+        return;
+    }
+    
+    // fallback to GMP for large values
+    if ((mpz_cmp(u, min_allowed_gcd) < 0) || (mpz_cmp(v, min_allowed_gcd) < 0)) {
+        mpz_set_ui(result, 1);
+        return;
+    }
+    
+    mpz_gcd(result, u, v);
+    
+    if (mpz_cmp(result, min_allowed_gcd) < 0) {
+        mpz_set_ui(result, 1);
+    }
 }
 
 // FP vec[i] bound setting helper
@@ -214,7 +249,7 @@ int _coni_kernel_c(
     double dilation,
     int * restrict linvec,
     double linmin,
-    long * restrict H,
+    mpz_t * restrict H,
     long max_N_out,
     double eps)
 {
@@ -286,17 +321,29 @@ int _coni_kernel_c(
     int32_t stack_pos[MAX_DEPTH];
     double  stack_remQ[MAX_DEPTH];
     int32_t stack_M0[MAX_DEPTH];
-    uint32_t stack_gcd[MAX_DEPTH];
+    mpz_t   stack_gcd[MAX_DEPTH];
+    mpz_t   veci_gmp, temp_gcd, temp_hvec, temp_required, temp_hvec_abs;
 
     int32_t stack_val_len[MAX_DEPTH];
     int32_t stack_val_min[MAX_DEPTH];
 
     double  stack_ci_offset[MAX_DEPTH];
-    int     stack_Hveci[MAX_DEPTH];
+    mpz_t   stack_Hveci[MAX_DEPTH];
 
     // output/stack pointer
     int op = 0;
     int sp = 0;
+
+    // initialize GMP variables
+    for (int i = 0; i < MAX_DEPTH; i++) {
+        mpz_init(stack_gcd[i]);
+        mpz_init(stack_Hveci[i]);
+    }
+    mpz_init(veci_gmp);
+    mpz_init(temp_gcd);
+    mpz_init(temp_hvec);
+    mpz_init(temp_required);
+    mpz_init(temp_hvec_abs);
 
     // check dimensions are reasonable
     // -------------------------------
@@ -341,10 +388,10 @@ int _coni_kernel_c(
     stack_pos[sp]       = 0;
     stack_remQ[sp]      = Q_upper;
     stack_M0[sp]        = 0;
-    stack_gcd[sp]       = 0;
+    mpz_set_ui(stack_gcd[sp], 0);
 
     stack_ci_offset[sp] = 0;
-    stack_Hveci[sp]     = 0;
+    mpz_set_ui(stack_Hveci[sp], 0);
     
     int k = set_bounds(
             sp,
@@ -438,35 +485,45 @@ int _coni_kernel_c(
 
         // check if we violated K'>0 constraints
         // -------------------------------------
-        uint32_t required_dilation = (uint32_t)floor((Q_upper-new_rem)/Q - eps);
+        double required_dilation_dbl = floor((Q_upper - new_rem) / Q - eps);
+        mpz_set_d(temp_required, required_dilation_dbl);
+
+        // convert veci to GMP for H multiplication
+        mpz_set_si(veci_gmp, veci);
 
         // first try a simple upper bound... compute new_gcd only if needed
-        uint32_t new_gcd = stack_gcd[sp]; // upper bound
-        if (new_gcd == 0) {
+        mpz_set(temp_gcd, stack_gcd[sp]); // upper bound
+        if (mpz_cmp_ui(temp_gcd, 0) == 0) {
             // gcd was 0... update it to whatever abs(Hvec_i) is....
-            uint32_t Hvec_i  = labs(stack_Hveci[sp] + H[i*dim+i]*veci);
-            new_gcd          = Hvec_i;
+            mpz_set(temp_hvec, stack_Hveci[sp]);
+            mpz_addmul(temp_hvec, H[i*dim + i], veci_gmp);
+            mpz_abs(temp_hvec_abs, temp_hvec);
+            mpz_set(temp_gcd, temp_hvec_abs);
 
-            if (new_gcd == 0) {
+            if (mpz_cmp_ui(temp_gcd, 0) == 0) {
                 // still 0... can't do jack with this
                 goto write_stack;
             }
 
-        } else if (new_gcd < required_dilation) {
+        } else if (mpz_cmp(temp_gcd, temp_required) < 0) {
             // bad! we can't get back under tadpole...
             // (we check here to avoid a gcd call...)
-            DEBUG_LOG("1SKIPPED BAD GCD %d < %d\n",new_gcd,required_dilation);
+            DEBUG_LOG("1SKIPPED BAD GCD\n");
+            //gmp_fprintf(stderr, "  temp_gcd = %Zd, temp_required = %Zd\n", temp_gcd, temp_required);
             continue;
 
-        } else if (new_gcd != 1) {
+        } else if (mpz_cmp_ui(temp_gcd, 1) != 0) {
             // only other case where we can nontrivially change the gcd
-            uint32_t Hvec_i  = labs(stack_Hveci[sp] + H[i*dim+i]*veci);
-            new_gcd          = gcd(new_gcd, Hvec_i, required_dilation);
+            mpz_set(temp_hvec, stack_Hveci[sp]);
+            mpz_addmul(temp_hvec, H[i*dim + i], veci_gmp);
+            mpz_abs(temp_hvec_abs, temp_hvec);
+            gcd_gmp(temp_gcd, temp_gcd, temp_hvec_abs, temp_required);
         }
 
         // here, the gcd is nonzero and may newly violate tadpole
-        if (new_gcd < required_dilation) {
-            DEBUG_LOG("2SKIPPED BAD GCD %d < %d\n",new_gcd,required_dilation);
+        if (mpz_cmp(temp_gcd, temp_required) < 0) {
+            DEBUG_LOG("2SKIPPED BAD GCD\n");
+            //gmp_fprintf(stderr, "  temp_gcd = %Zd, temp_required = %Zd\n", temp_gcd, temp_required);
             continue;
         }
 
@@ -477,21 +534,25 @@ int _coni_kernel_c(
             stack_pos[sp]     = 0;
             stack_remQ[sp]    = new_rem;
             stack_M0[sp]      = M0 + linvec[i]*veci;
-            stack_gcd[sp]     = new_gcd;
+            mpz_set(stack_gcd[sp], temp_gcd);
 
         // compute the new ci, Hvec_i offset value for i-1 using this vector
         double ci_offset = 0.0;
-        int Hvec_i = 0;
-        for (int j = i; j<dim; ++j) {
-            DEBUG_LOG("%d %d %f %d\n",i,j,U[(i-1)*dim + j],vec[j]);
-            ci_offset += U[(i-1)*dim + j] * vec[j];
-            Hvec_i += H[(i-1)*dim + j] * vec[j];
+        mpz_set_ui(stack_Hveci[sp], 0);
+        if (i > 0) {
+            for (int j = i; j<dim; ++j) {
+                DEBUG_LOG("%d %d %f %d\n",i,j,U[(i-1)*dim + j],vec[j]);
+                ci_offset += U[(i-1)*dim + j] * vec[j];
+
+                // Hvec_i += H[(i-1)*dim + j] * vec[j]
+                mpz_set_si(veci_gmp, vec[j]);
+                mpz_addmul(stack_Hveci[sp], H[(i-1)*dim + j], veci_gmp);
+            }
+
+            DEBUG_LOG("%d %d %f\n", i, vec[i], ci_offset);
+
+            stack_ci_offset[sp] = ci_offset;
         }
-
-        DEBUG_LOG("%d %d %f\n", i, vec[i], ci_offset);
-
-        stack_ci_offset[sp] = ci_offset;
-        stack_Hveci[sp] = Hvec_i;
         
         set_bounds(
             sp,
@@ -503,7 +564,21 @@ int _coni_kernel_c(
             eps);
     }
 
+    DEBUG_LOG("DONE\n");
+
     end:
+        // clean up GMP variables
+        for (int i = 0; i < MAX_DEPTH; i++) {
+            mpz_clear(stack_gcd[i]);
+            mpz_clear(stack_Hveci[i]);
+        }
+        mpz_clear(veci_gmp);
+        mpz_clear(temp_gcd);
+        mpz_clear(temp_hvec);
+        mpz_clear(temp_required);
+        mpz_clear(temp_hvec_abs);
+
+        // return
         *N_out = op;
         return status;
 }

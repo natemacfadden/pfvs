@@ -7,6 +7,18 @@ from libc.stdint cimport int32_t
 from libc.stdlib cimport malloc, free
 import numpy as np
 
+# declare GMP types
+cdef extern from "gmp.h":
+    ctypedef struct __mpz_struct:
+        pass
+    ctypedef __mpz_struct mpz_t[1]
+    
+    void mpz_init(mpz_t)
+    void mpz_clear(mpz_t)
+    void mpz_set_si(mpz_t, long)
+    void mpz_import(mpz_t, size_t, int, size_t, int, size_t, const void*)
+    void mpz_neg(mpz_t, mpz_t)
+
 # declare the external C function
 # -------------------------------
 cdef extern from "coni_kernel.h":
@@ -20,7 +32,7 @@ cdef extern from "coni_kernel.h":
         double dilation,
         int *linvec,
         double linmin,
-        long *H,
+        mpz_t *H,
         long max_N_out,
         double eps
     )
@@ -94,36 +106,64 @@ def coni_kernel(U,
     # this ensures we always have the right memory layout
     cdef double[:, ::1] U_c = np.ascontiguousarray(U, dtype=np.float64)
     cdef int[::1] linvec_c = np.ascontiguousarray(linvec, dtype=np.int32)
-    cdef long[:, ::1] H_c = np.ascontiguousarray(H, dtype=np.int64)
+
+    H_obj = np.ascontiguousarray(H, dtype=object)
 
     # read some inputs
     cdef int dim = linvec_c.shape[0]
     cdef int N_out = 0
     cdef int status
+    cdef int i, j
+
+    # allocate GMP array for H
+    cdef mpz_t *H_gmp = <mpz_t *>malloc(dim * dim * sizeof(mpz_t))
+    if H_gmp == NULL:
+        raise MemoryError("Failed to allocate H_gmp")
+
+    # initialize and set GMP integers
+    for i in range(dim):
+        for j in range(dim):
+            mpz_init(H_gmp[i * dim + j])
+            
+            # Get Python int
+            val = H_obj[i, j]
+            
+            # Convert to GMP
+            # For values that fit in unsigned long
+            if abs(val) < 2**63:
+                mpz_set_si(H_gmp[i * dim + j], <long> val)
+            else:
+                # For larger values, convert via bytes
+                # Handle sign separately
+                is_negative = (val < 0)
+                abs_val = abs(val)
+                
+                val_bytes = abs_val.to_bytes((abs_val.bit_length() + 7) // 8, 'little')
+                mpz_import(H_gmp[i * dim + j], len(val_bytes), -1, 1, 0, 0, 
+                          <const void*><char*>val_bytes)
+                
+                if is_negative:
+                    mpz_neg(H_gmp[i * dim + j], H_gmp[i * dim + j])
 
     # allocate output arrays
     cdef int32_t *c_out = <int32_t *>malloc(max_N_out * dim * sizeof(int32_t))
     if c_out == NULL:
+        for i in range(dim * dim):
+            mpz_clear(H_gmp[i])
+        free(H_gmp)
         raise MemoryError("Failed to allocate c_out")
     cdef float *c_Qs = <float *>malloc(max_N_out * sizeof(int))
     if c_Qs == NULL:
+        for i in range(dim * dim):
+            mpz_clear(H_gmp[i])
+        free(H_gmp)
         free(c_out)
         raise MemoryError("Failed to allocate c_Qs")
 
     # call the C function
     status = _coni_kernel_c(
-        c_out,
-        c_Qs,
-        &N_out,
-        dim,
-        &U_c[0, 0],
-        Q,
-        dilation,
-        &linvec_c[0],
-        linmin,
-        &H_c[0, 0],
-        max_N_out,
-        eps
+        c_out, c_Qs, &N_out, dim, &U_c[0, 0], Q, dilation,
+        &linvec_c[0], linmin, H_gmp, max_N_out, eps
     )
 
     # convert outputs to Python arrays
@@ -137,6 +177,9 @@ def coni_kernel(U,
         Qs[i] = c_Qs[i]
 
     # free C memory
+    for i in range(dim * dim):
+        mpz_clear(H_gmp[i])
+    free(H_gmp)
     free(c_out)
     free(c_Qs)
 
