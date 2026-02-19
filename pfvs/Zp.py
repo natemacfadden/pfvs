@@ -39,7 +39,7 @@ from .c_kernels import pvec_kernel, coni_kernel
 # we often compute projection matrices that project out 0th component
 # these are used in matrix product, so mutability is not a concern
 # compute these once and for all using global variabls
-projs = [None]*30
+projs = [None]*100
 def get_proj(dim):
     if projs[dim] is None:
         projs[dim] = np.eye(dim, dtype=int)[1:,:]
@@ -102,6 +102,11 @@ def pvecs(
             except Exception as e:
                 print("did you run the `rebuild_kernels.py` file? please do")
                 raise e
+
+        # remove points with nontrivial GCDs
+        gcds = np.gcd.reduce(pts,axis=1)
+        primitive = (gcds == 1)
+        pts = pts[primitive]
 
         N = len(pts)
         if N >= min_N_pts:
