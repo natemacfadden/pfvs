@@ -100,7 +100,7 @@ def orthogonal_lattice(p: "ArrayLike") -> "ArrayLike":
     dim = p.shape[1]
 
     # speeds up following computations if p is primitive
-    p = p//np.gcd.reduce(p)
+    #p = p//np.gcd.reduce(p,axis=1)
 
     # compute null space
     mat_fl = flint.fmpz_mat(p.tolist())
