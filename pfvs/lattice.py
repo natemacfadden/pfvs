@@ -84,8 +84,41 @@ def extended_euclidean(a,b):
 
     return old_s, old_t, old_r
 
-@njit
 def orthogonal_lattice(p: "ArrayLike") -> "ArrayLike":
+    """
+    **Description:**
+    Computes a basis of the orthogonal lattice to some vector v, with columns
+    as basis vectors.
+
+    **Arguments:**
+    - `v`: The orthogonal vector. Assumed to be integral
+
+    **Returns:**
+    A basis of the lattice orthogonal to v, as column vectors.
+    """
+    p = np.array(p).reshape(1,-1)
+    dim = p.shape[1]
+
+    mat_fl = flint.fmpz_mat(p.tolist())
+    null, nullity = mat_fl.nullspace()
+    null = null.transpose().hnf().transpose()
+
+    gcds = np.array([np.gcd.reduce([null[i,j] for i in range(dim)]) for j in range(nullity)])
+
+    #print(dim, nullity, null)
+
+    out = np.zeros((dim,nullity), dtype=int)
+    for j in range(nullity):
+        for i in range(dim):
+            out[i,j] =  null[i,j]
+
+    # reduce by gcd
+    out = out // gcds
+
+    return out
+
+@njit
+def orthogonal_lattice_custom(p: "ArrayLike") -> "ArrayLike":
     """
     **Description:**
     Computes a basis of the orthogonal lattice to some vector v, with columns
