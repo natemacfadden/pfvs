@@ -705,7 +705,7 @@ def ZpK(
 
 # coni Zp
 # =======
-def coniMellipsoid(p, data=None, kappa=None, Mbasis=None, extra_checks=False):
+def coniMellipsoid(p, data=None, kappa=None, Mbasis=None, extra_lll_reduction=True, extra_checks=False):
     """
     **Description:**
     Compute the matrices defining the M-ellipsoid in coni-ZpM.
@@ -751,12 +751,9 @@ def coniMellipsoid(p, data=None, kappa=None, Mbasis=None, extra_checks=False):
     # (the output will be lattice generators of such cs... we'll want
     #  lattice generators of valid Ms so we multiply on left by Mbasis)
     orthog = lattice.orthogonal_lattice(p=T.T@Mbasis)
-    #print(orthog)
-    orthog = lattice.lll_reduce(orthog)
-    #print(orthog)
-    #print((T.T@Mbasis) @ orthog)
+    if extra_lll_reduction:
+        orthog = lattice.lll_reduce(orthog)
     Binter = Mbasis@orthog
-    #Binter = Mbasis@lattice.orthogonal_lattice(p=T.T@Mbasis)
 
     # lll-reduce Binter
     # (doesn't seem to have a huge effect...)
@@ -874,6 +871,7 @@ def coniZpM(
     n_jobs: int = -1,
     # misc
     extra_checks: bool = False,
+    extra_lll_reduction: bool = True,
     # output/verbosity
     max_N_pfvs: int = 1_000_000_000,
     return_formal_pfvs: bool = False,
@@ -929,7 +927,7 @@ def coniZpM(
             _0p = np.concatenate([[0],p])
 
             # construct the quadratic form defining the ellipsoid
-            mat, Z, Binter = coniMellipsoid(_0p, kappa=kappa, Mbasis=Mbasis, extra_checks=extra_checks)
+            mat, Z, Binter = coniMellipsoid(_0p, kappa=kappa, Mbasis=Mbasis, extra_lll_reduction=extra_lll_reduction, extra_checks=extra_checks)
 
             ZBinter = np.ascontiguousarray(Z@Binter)
             Binter  = np.ascontiguousarray(  Binter)
