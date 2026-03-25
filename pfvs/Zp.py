@@ -97,7 +97,7 @@ def pvecs(
                     max_N_iter=max_N_iter
                 )
 
-                if status != 0:
+                if (status != 0) and (status != -5):
                     print(f"KERNEL RETURNED STATUS {status}!!!",flush=True)
             except Exception as e:
                 print("did you run the `rebuild_kernels.py` file? please do")
@@ -121,7 +121,7 @@ def pvecs(
         # guess the B to scale it to
         # y = mx + b
         # y1-y0 = m(x1-x0)
-        if len(Bs_fit) > 1:
+        if len(Bs_fit) > 2:
             m = (Npts_fit[-1]-Npts_fit[-2])/(Bs_fit[-1]-Bs_fit[-2])
             m *= 1.5
 
@@ -786,6 +786,18 @@ def coniMellipsoid(p, data=None, kappa=None, Mbasis=None, extra_lll_reduction=Tr
 
     return mat, Z, Binter
 
+def coniHmatrix(ZBinter, proj = None):
+    if proj is None:
+        proj = get_proj(ZBinter.shape[0])
+
+    H    = proj@ZBinter
+    H_fl = flint.fmpz_mat(H.tolist())
+
+    H_list = H_fl.hnf().tolist()
+    H = np.array([[int(x) for x in row] for row in H_list], dtype=object)
+
+    return H
+
 def Kperp_gcd_lattice(data, Z, Binter, gcd):
     # compute the matrix A such that Kperp = A@c
     # ------------------------------------------
@@ -938,18 +950,12 @@ def coniZpM(
             try:
                 if not use_gcd_lattice:
                     # find relevant lattice points in ellipsoid c.T@mat@c <= Q
-                    G    = proj@ZBinter
-                    G_fl = flint.fmpz_mat(G.tolist())
-
                     try:
-                        H_list = G_fl.hnf().tolist()
-                        H = np.array([[int(x) for x in row] for row in H_list], dtype=object)
+                        H = coniHmatrix(ZBinter, proj)
                     except Exception as e:
                         print(f"C long error for p={p.tolist()} :(",flush=True)
                         print(e)
                         continue
-                        #print(G_fl.hnf().tolist(),flush=True)
-                        #raise e
 
                     try:
                         L = np.linalg.cholesky(mat)
