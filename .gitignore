@@ -1,3 +1,8 @@
+# custom
+pfvs/c_kernels/*.c
+PFVSTRINGS-*
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -30,5 +35,3 @@ dist/
 # Debug / IDE files
 *.dSYM/
 
-# Custom data types
-PFVSTRINGS-*
