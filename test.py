@@ -27,6 +27,8 @@ out, Niter = kannan_box_mat_njit(
     )
 
 # do the study
+print("PVEC TESTING")
+print("------------")
 for dilation in [i for i in range(1,10+1)]:
     tic = time.time()
     out, status = pvec_kernel(
@@ -52,6 +54,7 @@ for dilation in [i for i in range(1,10+1)]:
     toc = time.time()
     
     print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s using njit code...")
+print()
 
 # coni_kernel
 # ===========
@@ -85,6 +88,8 @@ max_N_out = 100000000
 
 # call the Cython wrapper
 # -----------------------
+print("CONI-PFV TESTING")
+print("----------------")
 for dilation in [10_000*i for i in range(1,20+1)]:
     tic = time.time()
     out, Qs, status = coni_kernel(
