@@ -52,6 +52,12 @@ There are two general classes of algorithms
 1. 'box-style algorithms': enumerate $K$ and $M$ satisfying constraints #1, #2, #5, and #6. This involves rejection sampling for constraint #6. Then, compute $p$ using #7 and then check constraints #3 and #4.
 2. 'Zp-style algorithms': enumerate $\hat{p} \in \mathbb{Z}^{h^{1,1}}$ obeying #3. Define $p = \hat{p}/p_{denom}$ for some $p\_{denom} \in \mathbb{Z}\_{>0}$. Use #7 to rewrite constraint #5 as an ellipsoidal constraint either on $M$ (defining the ZpM algorithm) or on $K$ (defining the ZpK) algorithm. The size of this ellipsoid is controlled by $p_{denom}$. This ellipsoid can be made to include all constraints other than #6, which would still be checked via rejection sampling.
 
+The Zp-style is generally more efficient, although one has to appropriately handle $p_{denom}$ for this method to be useful. There are two primary approaches
+1. set a max $p_{denom}$ value and run ZpM with the ellipsoid dilated by this amount or
+2. (for non-coni PFVs) run ZpM and ZpK for an undilated ellipsoid - this can be shown to be sensitive to any $p_{denom}$.
+
+The choice between the two approaches depends on the maximum $p_{denom}$ that one is interested in: ZpK is fairly expensive but ZpM empirically scales approximately linearly with the max allowed $p_{denom}$. If one is curious about non-coni PFVs with truly large $p_{denom}$, then the first approach is better. Otherwise, the second approach is likely more efficient.
+
 ## Generation
 See the demo notebooks, specifically the Manwe demo, for a dmeo of coni PFV searches...
 
