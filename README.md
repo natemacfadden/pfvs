@@ -41,7 +41,7 @@ More information than just the CY is required to define a coniPFV. Additionally,
 6. $\det((\kappa M)_{1:,1:}) \neq 0$, and
 7. $K\_{1:} = (\kappa M)\_{1:,1:} p\_{1:}$.
 
-In some ways, the problem of enumerating coniPFVs is easier since, e.g., $p$ lives in a lower-dimensional cone. One component of $p$ is fixed. In other ways, coniPFVs are more complicated than PFVs: a specification of $M$ and $p$ does not uniquely define $K$... $K_0$ is left semi-free (up to constraint #5).
+In some ways, the problem of enumerating coniPFVs is easier since, e.g., $p$ lives in a lower-dimensional cone... $p_0$ is fixed. In other ways, coniPFVs are more complicated than PFVs: a specification of $M$ and $p$ does not uniquely define $K$... $K_0$ is left semi-free (up to constraint #5).
 
 In either case, for PFVs or coniPFVs, specification of $K$ and $M$ suffices to define the object. This will be the standard output.
 
