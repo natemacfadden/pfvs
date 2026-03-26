@@ -11,7 +11,7 @@ The goal will be to construct many (coni-)PFVs for an input Calabi-Yau manifold.
 - hodge numbers $h^{1,1}\in\mathbb{Z}\_{\geq 1}$ and $h^{2,1}\in\mathbb{Z}\_{\geq 1}$,
 - triple intersection numbers $\kappa\in\mathbb{Z}^{h^{1,1},h^{1,1},h^{1,1}}$ which are totally symmetric (invariant under transposition of any two axes),
 - second chern class $c_2\in\mathbb{Z}^{h^{1,1}}$, and
-- a pointed Kähler cone $\{x : Hx\geq 0\}$ for some $H\in\mathbb{Z}^{N,h^{1,1}}$ with $\text{gcd}(\hat{n})=1$ for any row $\hat{n}$ of $H$.
+- a pointed Kähler cone $\\{x : Hx\geq 0\\}$ for some $H\in\mathbb{Z}^{N,h^{1,1}}$ with $\text{gcd}(\hat{n})=1$ for any row $\hat{n}$ of $H$.
 
 We will also define two auxiliary variables from these fixed data
 - the tadpole $Q = h^{1,1} + h^{2,1} + 2 \in\mathbb{Z}$ and
