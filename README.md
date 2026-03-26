@@ -41,7 +41,16 @@ More information than just the CY is required to define a coniPFV. Additionally,
 6. $\det((\kappa M)_{1:,1:}) \neq 0$, and
 7. $K\_{1:} = (\kappa M)\_{1:,1:} p\_{1:}$.
 
-In some ways, the problem of enumerating coniPFVs is easier since, e.g., $p$ lives in a lower-dimensional cone. In other ways it is harder, notably because one can't use constraint #7 to define $K_0$.
+In some ways, the problem of enumerating coniPFVs is easier since, e.g., $p$ lives in a lower-dimensional cone. One component of $p$ is fixed. In other ways, coniPFVs are more complicated than PFVs: a specification of $M$ and $p$ does not uniquely define $K$... $K_0$ is left semi-free (up to constraint #5).
+
+In either case, for PFVs or coniPFVs, specification of $K$ and $M$ suffices to define the object. This will be the standard output.
+
+## Algorithm
+We will not contain a detailed algorithm in this README. The algorithm is visible in the code and will be described in detail in an upcoming (as of March 2026) paper. We provide a very brief description here, however.
+
+Some constraints such as #1 and #2 can be viewed as saying one variable (in this case $M$) lives in a certain lattice. By writing a basis for this lattice, one can thus trivialize these constraints. Whenever such a strategy is possible, it is generally valuable. There are two general classes of algorithms
+1. 'box-style algorithms': enumerate $K$ and $M$ satisfying constraints #1, #2, #5, and #6. This involves rejection sampling for constraint #6. Then, compute $p$ using #7 and then check constraints #3 and #4.
+2. 'Zp-style algorithms': enumerate $\hat{p} \in \mathbb{Z}^{h^{1,1}}$ obeying #3. Define $p = \hat{p}/p_{denom}$ for some $p\_{denom} \in \mathbb{Z}\_{>0}$. Use #7 to rewrite constraint #5 as an ellipsoidal constraint either on $M$ (defining the ZpM algorithm) or on $K$ (defining the ZpK) algorithm. The size of this ellipsoid is controlled by $p_{denom}$. This ellipsoid can be made to include all constraints other than #6, which would still be checked via rejection sampling.
 
 ## Generation
 See the demo notebooks, specifically the Manwe demo, for a dmeo of coni PFV searches...
