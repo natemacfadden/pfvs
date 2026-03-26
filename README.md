@@ -63,6 +63,7 @@ The demos are currently in demo_notebooks/. This will be modified soon.
 
 ## Organization
 
+```
 pfvs/
 ├── pfvs/
 │   ├── c_kernels/               # "kernels"* written in C
@@ -78,6 +79,7 @@ pfvs/
 ├── environment.yml
 ├── pyproject.toml
 └── setup.py
+```
 
 *: This C code originally was the bottleneck/core of the problem, hence the name 'kernel'. In the current state, unless one is studying large $p_{denom}$, these kernels represent a relatively small fracton of the total computation
 
