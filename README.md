@@ -36,7 +36,7 @@ More information than just the CY is required to define a coniPFV. Additionally,
 1. $\tilde{a}M \in\mathbb{Z}^{h^{1,1}}$,
 2. $(c\_2 + (1,0,\dots,0)) \cdot M \in 24\mathbb{Z}$,
 3. $p_0 = 0$ and $(H\setminus\hat{n})p>0$,
-4. $K\cdot p=0$,
+4. $K_{1:}\cdot p_{1:}=0$,
 5. $0 \leq -K\cdot M \leq Q$,
 6. $\det((\kappa M)_{1:,1:}) \neq 0$, and
 7. $K\_{1:} = (\kappa M)\_{1:,1:} p\_{1:}$.
