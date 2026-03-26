@@ -4,7 +4,7 @@ Tools for computing/verifying perturbatively flat vacua (PFVs). For some referen
 - [Small Cosmological Constants in String Theory](https://arxiv.org/abs/1912.10047) by Mehmet Demirtas, Manki Kim, Liam McAllister, Jakob Moritz, Andres Rios-Tascon, and
 - [Candidate de Sitter Vacua](https://arxiv.org/abs/2406.13751) by Liam McAllister, Jakob Moritz, Richard Nally, Andreas Schachner,
 
-as well as their references. This repo focuses solely on PFVs as a combinatorial problem abstracted from the physics. In this light, there are unpublished notes by Mehmet Demirtas/Richard Nally that are especially valuable. The relevant aspects of such notes will be briefly restated below
+as well as their references. This repo focuses solely on PFVs as a combinatorial problem abstracted from the physics. In this light, there are also unpublished notes by Mehmet Demirtas/Richard Nally that much of this builds off of. The relevant aspects of such notes will be briefly restated below
 
 ## Problem Statement
 Let $X$ be a CY. $X$ has some derived quantities, including
