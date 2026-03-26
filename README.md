@@ -46,9 +46,9 @@ In some ways, the problem of enumerating coniPFVs is easier since, e.g., $p$ liv
 In either case, for PFVs or coniPFVs, specification of $K$ and $M$ suffices to define the object. This will be the standard output.
 
 ## Algorithm
-We will not contain a detailed algorithm in this README. The algorithm is visible in the code and will be described in detail in an upcoming (as of March 2026) paper. We provide a very brief description here, however.
+We will not contain a detailed algorithm in this README. The algorithm is visible in the code and will be described in detail in an upcoming (as of March 2026) paper. We provide a very brief description here, however. First, as a general strategy, some constraints such as #1 and #2 can be viewed as saying one variable (in this case $M$) lives in a certain lattice. By writing a basis for this lattice, one can thus trivialize these constraints. Whenever such a strategy is possible, it is generally valuable.
 
-Some constraints such as #1 and #2 can be viewed as saying one variable (in this case $M$) lives in a certain lattice. By writing a basis for this lattice, one can thus trivialize these constraints. Whenever such a strategy is possible, it is generally valuable. There are two general classes of algorithms
+There are two general classes of algorithms
 1. 'box-style algorithms': enumerate $K$ and $M$ satisfying constraints #1, #2, #5, and #6. This involves rejection sampling for constraint #6. Then, compute $p$ using #7 and then check constraints #3 and #4.
 2. 'Zp-style algorithms': enumerate $\hat{p} \in \mathbb{Z}^{h^{1,1}}$ obeying #3. Define $p = \hat{p}/p_{denom}$ for some $p\_{denom} \in \mathbb{Z}\_{>0}$. Use #7 to rewrite constraint #5 as an ellipsoidal constraint either on $M$ (defining the ZpM algorithm) or on $K$ (defining the ZpK) algorithm. The size of this ellipsoid is controlled by $p_{denom}$. This ellipsoid can be made to include all constraints other than #6, which would still be checked via rejection sampling.
 
