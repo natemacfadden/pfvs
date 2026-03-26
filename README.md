@@ -7,7 +7,7 @@ Tools for computing/verifying perturbatively flat vacua (PFVs). For some referen
 as well as their references. This repo focuses solely on PFVs as a combinatorial problem abstracted from the physics. In this light, there are also unpublished notes by Richard Nally/Mehmet Demirtas that much of this builds off of. The relevant aspects of such notes will be briefly restated below.
 
 ## Problem Statement
-The goal will be to construct many (coni-)PFVs for an input Calabi-Yau manifold. The relevant (fixed) data from the CY includes
+The goal will be to construct many (coni)PFVs for an input Calabi-Yau manifold. The relevant (fixed) data from the CY includes
 - hodge numbers $h^{1,1}\in\mathbb{Z}\_{\geq 1}$ and $h^{2,1}\in\mathbb{Z}\_{\geq 1}$,
 - triple intersection numbers $\kappa\in\mathbb{Z}^{h^{1,1},h^{1,1},h^{1,1}}$ which are totally symmetric (invariant under transposition of any two axes),
 - second chern class $c_2\in\mathbb{Z}^{h^{1,1}}$, and
