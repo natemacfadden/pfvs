@@ -1,5 +1,5 @@
 # pfvs
-Tools for computing/verify perturbatively flat vacua (PFVs). For some references on PFVs, see
+Tools for computing/verifying perturbatively flat vacua (PFVs). For some references on PFVs, see
 - [Vacua with Small Flux Superpotential](https://arxiv.org/abs/1912.10047) by Mehmet Demirtas, Manki Kim, Liam McAllister, Jakob Moritz
 - [Small Cosmological Constants in String Theory](https://arxiv.org/abs/1912.10047) by Mehmet Demirtas, Manki Kim, Liam McAllister, Jakob Moritz, Andres Rios-Tascon, and
 - [Candidate de Sitter Vacua](https://arxiv.org/abs/2406.13751) by Liam McAllister, Jakob Moritz, Richard Nally, Andreas Schachner,
