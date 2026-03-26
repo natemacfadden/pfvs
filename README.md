@@ -4,7 +4,7 @@ Tools for computing/verifying perturbatively flat vacua (PFVs). For some referen
 - [Small Cosmological Constants in String Theory](https://arxiv.org/abs/1912.10047) by Mehmet Demirtas, Manki Kim, Liam McAllister, Jakob Moritz, Andres Rios-Tascon, and
 - [Candidate de Sitter Vacua](https://arxiv.org/abs/2406.13751) by Liam McAllister, Jakob Moritz, Richard Nally, Andreas Schachner,
 
-as well as their references. This repo focuses solely on PFVs as a combinatorial problem abstracted from the physics. In this light, there are also unpublished notes by Mehmet Demirtas/Richard Nally that much of this builds off of. The relevant aspects of such notes will be briefly restated below.
+as well as their references. This repo focuses solely on PFVs as a combinatorial problem abstracted from the physics. In this light, there are also unpublished notes by Richard Nally/Mehmet Demirtas that much of this builds off of. The relevant aspects of such notes will be briefly restated below.
 
 ## Problem Statement
 The goal will be to construct many (coni-)PFVs for an input Calabi-Yau manifold. The relevant (fixed) data from the CY includes
@@ -30,7 +30,7 @@ Given a CY, a *PFV* is a triple $(K,M,p)\in(\mathbb{Z}^{h^{1,1}}, \mathbb{Z}^{h^
 6. $\det(\kappa M) \neq 0$, and
 7. $K = (\kappa M) p$.
 
-This parameterization is redundant. E.g., with $M$ and $p$ one can compute $K$.
+This parameterization is redundant. E.g., with $M$ and $p$ one can compute $K$. This concludes the definition of a non-coni PFV.
 
 More information than just the CY is required to define a coniPFV. Additionally, one needs a hyperplane $\hat{n}\in H$ corresponding to a conifold-curve (also computable using CYTools). It is canonical to choose a basis for this problem such that $\hat{n} = (1,0,\dots,0)$. This requires representing the other input data in this basis. In this basis a *coniPFV* is a triple $(K,M,p)\in(\mathbb{Z}^{h^{1,1}}, \mathbb{Z}^{h^{1,1}}, \mathbb{Q}^{h^{1,1}})$ satisfying the following constraints
 1. $\tilde{a}M \in\mathbb{Z}^{h^{1,1}}$,
