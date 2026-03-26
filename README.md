@@ -58,8 +58,28 @@ The Zp-style is generally more efficient than box, although one has to appropria
 
 Generally option 1 is preferred. While ZpM scales with the max allowed $p_{denom}$, the scaling is fairly gentle (approximately linear in time) and the observed $p_{denom}$ are generally modest ($\leq 1000$). ZpK would enable searches for truly large $p_{denom}$ but the cost of ZpK is significant and this would only work for non-coni PFVs.
 
-## Generation
-See the demo notebooks, specifically the Manwe demo, for a dmeo of coni PFV searches...
+## Demos
+The demos are currently in demo_notebooks/. This will be modified soon.
+
+## Organization
+
+pfvs/
+├── pfvs/
+│   ├── c_kernels/               # "kernels"* written in C
+│   │   ├── testing_benchmarks/  # C-code testing/benchmarks
+│   │   ├── pvec_kernel.h        # generates vectors in the strict interior of a cone
+│   │   └── coni_kernel.h        # generates coniPFVs
+│   ├── lattice.py               # lattice-related utilities
+|   ├── cydata.py                # simple class holding CY-related data
+|   ├── Zp.py                    # main methods for generating PFVs
+|   └── diagnostics.py           # validation/verification class for PFVs
+├── tests/
+│   └─ FILL IN
+├── environment.yml
+├── pyproject.toml
+└── setup.py
+
+*: This C code originally was the bottleneck/core of the problem, hence the name 'kernel'. In the current state, unless one is studying large $p_{denom}$, these kernels represent a relatively small fracton of the total computation
 
 ## Installation
 
