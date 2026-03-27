@@ -76,7 +76,7 @@ int main(int argc, char *argv[])
     if (rc != 0) {
         fprintf(stderr, "_coni_kernel_c failed (%d)\n", rc);
     } else {
-        printf("Generated %d vectors if %fs\n", N_out, eval_time);
+        printf("Generated %d vectors in %fs\n", N_out, eval_time);
         for (int i=0; i<N_out; ++i) {
             for (int j=0; j<dim; ++j) {
                 printf("%d,", out[i*dim + j]);

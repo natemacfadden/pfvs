@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
     if (rc != 0) {
         fprintf(stderr, "enumerate_box_c failed (%d)\n", rc);
     } else {
-        printf("Generated %d vectors if %fs\n", N_out, eval_time);
+        printf("Generated %d vectors in %fs\n", N_out, eval_time);
     }
 
     // free memory
