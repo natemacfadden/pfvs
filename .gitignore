@@ -1,6 +1,7 @@
 # custom
 pfvs/c_kernels/*.c
 PFVSTRINGS-*
+enum
 
 
 # Byte-compiled / optimized / DLL files
