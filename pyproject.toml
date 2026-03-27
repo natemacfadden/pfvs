@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 name = "pfvs"
 version = "0.0.1"
 description = "A software package for constructing/verifying PFVs"
-authors = [{ name = "Liam McAllister Group" }]
+authors = [{ name = "Nate MacFadden for the Liam McAllister Group" }]
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
 classifiers = [
