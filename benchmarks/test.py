@@ -90,7 +90,7 @@ max_N_out = 100000000
 # -----------------------
 print("CONI-PFV TESTING")
 print("----------------")
-for dilation in [10_000*i for i in range(1,20+1)]:
+for dilation in [1,2,10,20] + [10_000*i for i in range(1,20+1)]:
     tic = time.time()
     out, Qs, status = coni_kernel(
         U, Q, dilation, linvec, linmin, H, max_N_out
