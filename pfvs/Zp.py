@@ -16,29 +16,28 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  This module contains methods for constructing PFVs using the
-#               "Zp" style algorithms. These operate by fixing some p-vectors
-#               and then searching for lattice points in an ellipsoid, one
-#               for each p-vector.
+# Description:  This module contains methods for constructing non-coni PFVs
+#               using the "Zp" style algorithms. These operate by fixing some
+#               p-vectors and then searching for lattice points in an ellipsoid,
+#               one for each p-vector.
 # -----------------------------------------------------------------------------
 
 # external imports
-import flint
-import joblib
-import math
-import numba
 import numpy as np
-import os
+
+from numpy.typing import ArrayLike
 
 # local imports
-from . import lattice, diagnostics
-from .c_kernels import coni_kernel
+from . import lattice
+from .cydata import CYData
 
 # Zp helpers
 # ==========
 # generic
 # -------
-def check_singular(Ns, rtol=1e-12):
+def check_singular(Ns: ArrayLike, rtol: float=1e-12):
+    # for a length-n stack of mxm matrices Ns (shape nxmxm), return a length-n
+    # vector whose ith value is 1 iff Ns[i] is singular
     svals = np.linalg.svdvals(Ns)
     singular = svals[:,-1] <= rtol * svals[:,0]
 
@@ -46,16 +45,17 @@ def check_singular(Ns, rtol=1e-12):
 
 # non-coni
 # --------
-def allow_gcds(Ks, Ms, Qmax, h11):
-    """
-    Introduce nontrivial GCDs into (K,M) pairs
-    """
+def allow_gcds(Ks: ArrayLike, Ms: ArrayLike, Qmax: int, h11: int):
+    # non-coni PFVs naturally operate on primitive K,M (i.e., gcd(K)=gcd(M)=1)
+    # allow re-introduction of nontrivial GCDs (up to the tadpole constraint)
+
     num_input = len(Ks)
     if num_input == 0:
         return np.zeros((0,h11),dtype=int), np.zeros((0,h11),dtype=int)
 
+    # add the GCDs
+    # (don't think there should be duplicates but cheap to do this in a set...)
     KMs_out = set()
-    
     for K,M in zip(Ks,Ms):
         Qtmp = -np.dot(K,M)
 
@@ -71,32 +71,31 @@ def allow_gcds(Ks, Ms, Qmax, h11):
         Ks.append(KM[:h11])
         Ms.append(KM[h11:])
 
+    # return
     if len(Ks):
         return np.vstack(Ks), np.vstack(Ms)
     else:
-        raise ValueError(f"#input = {num_input}")
-        return np.zeros((0,h11),dtype=int), np.zeros((0,h11),dtype=int)
+        msg = f"Found 0 PFVs after introducing GCDs... #input = {num_input}"
+        raise ValueError(msg)
 
 # non-coni Zp
 # ===========
 def ZpM(
-    data: "cydata",
-    ps: "ArrayLike",
+    data: CYData,
+    ps: ArrayLike,
     Qmax: int = None,
     Qmin: int = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
     fp_recursive: bool = False,
     max_N_pfvs: int = 1_000_000_000,
     verbosity: int = 0
-    ) -> tuple["ArrayLike", "ArrayLike"]:
+    ) -> tuple[ArrayLike, ArrayLike]:
     """
     A Python "Zp" implementation that takes in p-vectors and outputs PFVs.
 
     Operates by constructing a lattice of valid M-vectors and writing the
     K-vector in terms of M and p. Then the tadpole constraint 0 <= -K.M <= Q
     defines an ellipsoid of M-vectors
-
-    filter_Ninvertible = whether the PFV has a invertible N matrix
 
     returns a list of Ks and Ms
     """

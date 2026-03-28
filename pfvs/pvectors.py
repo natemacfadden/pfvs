@@ -21,10 +21,13 @@
 #               The exact definition of H varies between coni and non-coni.
 # -----------------------------------------------------------------------------
 
+# external imports
 import numpy as np
-from numpy.typing import ArrayLike
 from ortools.sat.python import cp_model
 
+from numpy.typing import ArrayLike
+
+# local imports
 from .c_kernels import pvec_kernel
 from .cydata import CYData
 

@@ -16,10 +16,10 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  This module contains methods for constructing PFVs using the
-#               "Zp" style algorithms. These operate by fixing some p-vectors
-#               and then searching for lattice points in an ellipsoid, one
-#               for each p-vector.
+# Description:  This module contains methods for constructing coni PFVs
+#               using the "Zp" style algorithms. These operate by fixing some
+#               p-vectors and then searching for lattice points in an ellipsoid,
+#               one for each p-vector.
 # -----------------------------------------------------------------------------
 
 # external imports
@@ -30,13 +30,18 @@ import numba
 import numpy as np
 import os
 
+from numpy.typing import ArrayLike
+
 # local imports
 from . import lattice, diagnostics
 from .c_kernels import coni_kernel
+from .cydata import CYData
 
 # coniZp helpers
 # ==============
-def check_singular(Ns, rtol=1e-12):
+def check_singular(Ns: ArrayLike, rtol: float=1e-12):
+    # for a length-n stack of mxm matrices Ns (shape nxmxm), return a length-n
+    # vector whose ith value is 1 iff Ns[i] is singular
     svals = np.linalg.svdvals(Ns)
     singular = svals[:,-1] <= rtol * svals[:,0]
 
@@ -47,12 +52,10 @@ def check_singular(Ns, rtol=1e-12):
 # compute these once and for all using global variabls
 projs = [None]*100
 def get_proj(dim):
-    """
-    Get a projection matrix, projecting out the 0th component.
-    """
+    # Get a dim->(dim-1) projection matrix, projecting out the 0th component.
     if projs[dim] is None:
         projs[dim] = np.eye(dim, dtype=int)[1:,:]
-    
+
     return projs[dim]
 
 # very coni-specific helpers
@@ -228,8 +231,8 @@ def gcd_of_matmul(A, C):
 print("IDK if K'>0 cut works for max_Kperp_gcd>1")
 def coniZpM(
     # problem definition
-    data: "cydata",
-    ps: "ArrayLike",
+    data: CYData,
+    ps: ArrayLike,
     Qmax: int = None,
     M0min: int = 13,
     max_Kperp_gcd: int = 1,
