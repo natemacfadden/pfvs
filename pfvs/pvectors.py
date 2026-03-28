@@ -17,7 +17,7 @@
 #
 # -----------------------------------------------------------------------------
 # Description:  This module contains methods for constructing p-vectors. These
-#               are vectors p such that Hp>0 for H defined by the Kahler cone.
+#               are vectors p such that H@p>0 for H defined by the Kahler cone.
 #               The exact definition of H varies between coni and non-coni.
 # -----------------------------------------------------------------------------
 
@@ -36,16 +36,16 @@ def pvecs(
     min_N_pts: int,
     verbosity: int = 0) -> ArrayLike:
     """
-    Generate primitive p-vectors using a branch-and-bound search.
+    Generate primitive p-vectors using a branch-and-bound search (Kannan).
 
-    I.e., Finds integral vectors p satisfying Hp > 0, where H are the
+    I.e., finds integral vectors p satisfying H @ p > 0, where H are the
     hyperplanes of the associated Kahler cone (for non-coni PFVs) or the
     hyperplanes of a particular facet of this Kahler cone (for coniPFVs). Only
-    primitive vectors (gcd of components = 1) are returned.
+    primitive vectors (GCD(p) = 1) are returned.
 
     Wraps `pvec_kernel`, which searches within an L-inf box |p_i| <= B.
     Iteratively increases B until at least `min_N_pts` p-vectors are found,
-    using a log-linear extrapolation to estimate the required B.
+    using a log-log extrapolation to estimate the required B.
 
     Parameters
     ----------
@@ -88,11 +88,12 @@ def pvecs(
             B=B,
             linmat=H.astype(np.int32),
             linmin=1,
-            max_N_out=10*min_N_pts,
+            max_N_out=10*min_N_pts, # give room in case more pvecs are found
             max_N_iter=max_N_iter
         )
 
         if (status != 0) and (status != -5):
+            # status -5 means no vectors are found
             print(f"KERNEL RETURNED STATUS {status}!!!",flush=True)
 
         # remove points with nontrivial GCDs
@@ -116,15 +117,17 @@ def pvecs(
             Npts_fit.append(np.log(N))
 
         # guess the B to scale it to
-        # y = mx + b
-        # y1-y0 = m(x1-x0)
+        # log(N) = m log(B) + b
+        # log(N1)-log(N0) = m(log(B1)-log(B0))
+        # (ensure there are at least 3x data points. Otherwise, fit empirically
+        #  untrustworthy)
         if len(Bs_fit) > 2:
             m = (Npts_fit[-1]-Npts_fit[-2])/(Bs_fit[-1]-Bs_fit[-2])
-            m *= 1.5
+            m *= 1.5 # overestimate the slope so as to underestimate B
 
             Bguess = (np.log(min_N_pts)-Npts_fit[-1])/m + Bs_fit[-1]
             Bguess = np.exp(Bguess)
-            if N <= 200:
+            if N <= 200: # be very conservative with B if we have few pvecs
                 Bstep  = min(Bguess - B, 0.05*B)
             else:
                 Bstep = Bguess - B
@@ -151,7 +154,7 @@ def pvecs_cpsat(
     Generate primitive p-vectors using CP-SAT (OR-Tools). NOT recommended --
     use `pvecs` instead, which is significantly faster.
 
-    Same goal as `pvecs`: finds integral vectors p satisfying Hp > 0, where H
+    Same goal as `pvecs`: finds integral vectors p satisfying H @ p > 0, where H
     are the hyperplanes of the Kahler cone (non-coni) or a particular facet of
     the Kahler cone (coni).
 
@@ -160,11 +163,11 @@ def pvecs_cpsat(
     data : CYData
         The CY geometry, providing the hyperplane matrix H (or H_cob for coni).
     min_N_pts : int, optional
-        Minimum number of p-vectors to return. Mutually exclusive with
-        `max_deg`.
+        Minimum number of p-vectors to return. Inclusive. Mutually exclusive
+        with `max_deg`.
     max_deg : int, optional
-        Maximum degree to enumerate p-vectors to. Mutually exclusive with
-        `min_N_pts`.
+        Maximum degree to enumerate p-vectors to. Inclusive. Mutually exclusive
+        with `min_N_pts`.
     min_deg : int, optional
         Minimum degree for p-vectors. Default is 0.
     max_Linf : int, optional
@@ -189,7 +192,7 @@ def pvecs_cpsat(
     """
     # check inputs
     if (max_deg is None) ^ (min_N_pts is None):
-        pass
+        pass # good - exactly one of max_deg or min_N_pts was set
     else:
         raise ValueError("Either `max_deg` or `min_N_pts` must be set...")
 
@@ -272,12 +275,8 @@ def pvecs_cpsat(
         pass
     elif status == cp_model.UNKNOWN:
         print("LIKELY HIT TIME LIMIT!!!")
-        print("LIKELY HIT TIME LIMIT!!!")
-        print("LIKELY HIT TIME LIMIT!!!")
         print(min_deg, max_deg)
     elif status != cp_model.INFEASIBLE:
-        print("UNKNOWN ERROR")
-        print("UNKNOWN ERROR")
         print("UNKNOWN ERROR")
         print(min_deg, max_deg, status)
 
@@ -297,8 +296,12 @@ def mindeg_pvec_gurobi(
     max_deg: int=None,
     verbosity: int = 0) -> ArrayLike:
     """
-    Generate the minimum-degree (relative to grading vector sum(H,axis=0))
-    p-vector using Gurobi. See `pvecs` for more detail.
+    Generate the minimum-degree (relative to grading vector sum(H,axis=0) / GCD)
+    p-vector using Gurobi. See `pvecs` docstring for more detail on what
+    p-vectors are.
+
+    If max_deg = None, gives the single smallest-degree p-vector. Otherwise, it
+    gives (a non-exhaustive) list of p-vectors up to the stated max_deg.
 
     Parameters
     ----------
@@ -315,9 +318,9 @@ def mindeg_pvec_gurobi(
         Array of p-vectors satisfying H @ p > 0. Shape (h11,) if max_deg=None,
         in which case this is the minimum degree vector. Shape (N,h11) if
         max_deg!=None, in which case these are some low degree p-vectors up to
-        the minimum degree. No certificate that this is comprehensive...
+        the maximum degree. No certificate that this is comprehensive...
     """
-    # import gurobi
+    # import gurobi (only needed for this function)
     import gurobipy as gp
 
     # setup
@@ -346,7 +349,7 @@ def mindeg_pvec_gurobi(
         constant=0,
         xc=p,
         sense=gp.GRB.MINIMIZE)
-    model.addMConstr(H, p, '>', np.full(len(H),0.5))
+    model.addMConstr(H, p, '>', np.full(len(H),0.5)) # equiv to H@p>0 for int p
     if max_deg is not None:
         model.addMConstr(grading.reshape(1,-1), p, '<=', [max_deg])
 
@@ -375,4 +378,4 @@ def mindeg_pvec_gurobi(
     if len(sols) == 1:
         return sols[0]
     else:
-        return sols
+        return np.array(sols)
