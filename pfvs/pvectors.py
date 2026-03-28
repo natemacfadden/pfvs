@@ -59,9 +59,9 @@ def pvecs(
 
     Returns
     -------
-    pts : ndarray of shape (N, n)
-        Array of primitive p-vectors, where N >= `min_N_pts` and n is the number
-        of Kahler moduli. Each row is an integer vector satisfying H @ p > 0.
+    pts : ndarray of shape (N, h11)
+        Array of primitive p-vectors, where N >= `min_N_pts`. Each row is an
+        integer vector satisfying H @ p > 0.
     """
     # pvec_kernel has a safety max # of iterations. Set this to a large number
     max_N_iter = 1_000_000*min_N_pts
@@ -184,9 +184,8 @@ def pvecs_cpsat(
 
     Returns
     -------
-    pts : ndarray of shape (N, n)
-        Array of p-vectors satisfying H @ p > 0, where n is the number of
-        Kahler moduli.
+    pts : ndarray of shape (N, h11)
+        Array of p-vectors satisfying H @ p > 0.
     """
     # check inputs
     if (max_deg is None) ^ (min_N_pts is None):
@@ -312,12 +311,11 @@ def mindeg_pvec_gurobi(
 
     Returns
     -------
-    pts : ndarray of shape (n,) or (N, n)
-        Array of p-vectors satisfying H @ p > 0, where n is the number of
-        Kahler moduli. Shape (n,) if max_deg=None, in which case this is the
-        minimum degree vector. Shape (N,n) if max_deg!=None, in which case these
-        are some low degree p-vectors up to the minimum degree. No certificate
-        that this is comprehensive...
+    pts : ndarray of shape (h11,) or (N, h11)
+        Array of p-vectors satisfying H @ p > 0. Shape (h11,) if max_deg=None,
+        in which case this is the minimum degree vector. Shape (N,h11) if
+        max_deg!=None, in which case these are some low degree p-vectors up to
+        the minimum degree. No certificate that this is comprehensive...
     """
     # import gurobi
     import gurobipy as gp
