@@ -59,17 +59,20 @@ def get_proj(dim):
     return projs[dim]
 
 # very coni-specific helpers
-def coniMellipsoid(p,
-                   data=None,
-                   kappa=None,
-                   Mbasis=None,
-                   extra_lll_reduction=True,
-                   extra_checks=False):
+def coniMellipsoid(p: ArrayLike,
+                   data: CYData=None,
+                   kappa: ArrayLike=None,
+                   Mbasis: ArrayLike=None,
+                   extra_lll_reduction: bool=True,
+                   extra_checks: bool=False):
     """
     **Description:**
     Compute the matrices defining the M-ellipsoid in coni-ZpM.
 
-    **Arguments:**
+    Parameters
+    ----------
+    p : ndarray of shape (h11,)
+        A shape 
     - `p`:    The relevant p-vector
     - `data`: The CYData describing the CY.
 
