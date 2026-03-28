@@ -171,7 +171,7 @@ def orthogonal_lattice_custom(p: "ArrayLike") -> "ArrayLike":
             tmp2   = M[1][0]*U[0,r] + M[1][1]*U[k,r]
             U[0,r] = tmp1
             U[k,r] = tmp2
-        
+
     return U[1:].T
 
 # dual lattice
@@ -179,9 +179,9 @@ def dual_lattice(B: "ArrayLike") -> "ArrayLike":
     """
     **Description:**
     Computes a basis of the lattice dual to L(B).
-    
+
     Use the convention that the basis vectors are the **columns** of B.
-    
+
     See https://en.wikipedia.org/wiki/Dual_lattice
 
     **Arguments:**
@@ -275,7 +275,7 @@ def fp_iterative_njit(
            Q-c[dim-1]^2 and effectively reduces the dimension of the problem,
            at the cost of adding a shift-vector to c[:dim-1]
         5) recurse
-    
+
     **Note:**
     This is an iterative (DFS) implementation using an explicit stack.
 
@@ -314,7 +314,7 @@ def fp_iterative_njit(
     # -------------
     out = np.empty((max_N_out, dim), dtype=np.int64)
     Qs  = np.empty((max_N_out,), dtype=np.float32)
-    
+
     # output pointer
     op  = 0
 
@@ -334,7 +334,7 @@ def fp_iterative_njit(
     stack_pos    = np.empty(MAX_DEPTH, np.int64)
     stack_remQ   = np.empty(MAX_DEPTH, np.float64)
     stack_nz     = np.zeros(MAX_DEPTH, np.bool_)
-    
+
     # vec[i] candidate arrays per depth (preallocate maximum possible size)
     stack_val_len= np.zeros(MAX_DEPTH, np.int64) # number of candidates
     stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # candidates
@@ -574,7 +574,7 @@ def kannan_box_mat_njit(
     # output object
     # -------------
     out = np.empty((max_N_out, dim), dtype=np.int64)
-    
+
     # output pointer
     op  = 0
 
@@ -601,7 +601,7 @@ def kannan_box_mat_njit(
     # stack arrays: i, pos, remaining_Q, nonzero, candidate values
     stack_i      = np.empty(MAX_DEPTH, np.int64)
     stack_pos    = np.empty(MAX_DEPTH, np.int64)
-    
+
     # vec[i] candidate arrays per depth (preallocate maximum possible size)
     stack_val_len= np.zeros(MAX_DEPTH, np.int64) # number of candidates
     stack_vals   = np.empty((MAX_DEPTH, COORD_BUFF_SIZE), np.int64) # candidates
@@ -837,7 +837,7 @@ def coni_kernel_njit(
     stack_remQ   = np.empty(MAX_DEPTH, np.float64)
     stack_M0     = np.empty(MAX_DEPTH, np.int64)
     stack_gcd    = np.empty(MAX_DEPTH, np.int64)
-    
+
     # vec[i] candidate arrays per depth (preallocate maximum possible size)
     stack_val_len= np.zeros(MAX_DEPTH, np.int64) # number of candidates
     stack_val_min= np.empty(MAX_DEPTH, np.int64) # minimum value for vec[stack_i[sp]]
@@ -955,7 +955,7 @@ def coni_kernel_njit(
         stack_remQ[sp]    = new_rem
         stack_M0[sp]      = M0
         stack_gcd[sp]     = new_gcd
-        
+
         # compute the new ci, Hvec_i offset value for i-1 using this vector
         ci_offset = 0.0
         Hvec_i = 0

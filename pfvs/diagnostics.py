@@ -85,7 +85,7 @@ class PFV():
                 self._cydata.cob)
 
             # Kprime computation/check (must be positive)
-            type(self).Kprime = property(lambda self: 
+            type(self).Kprime = property(lambda self:
                 -self.K[0] + (self.M@self.kappa@self.p)[0] )
             type(self).check_Kprime = lambda self: self.Kprime > 0
 
@@ -93,7 +93,7 @@ class PFV():
             self.ncf = 2
 
             type(self).gsM = property(lambda self: self.gs*self.M[0])
-            type(self).Vtilde = property(lambda self: 
+            type(self).Vtilde = property(lambda self:
                 (((self.kappa@self.p)@self.p)@self.p/6)*np.imag(self.tau0)**(3))
             type(self).zcf = property(lambda self:
                 np.exp(-2*np.pi*self.Kprime/(self.ncf*self.gsM))/(2.*np.pi) )
@@ -256,7 +256,7 @@ class PFV():
             raise NotImplementedError
 
         mat, Z, Binter = Zp.coniMellipsoid(self.pgrading, self._cydata)
-        return mat 
+        return mat
 
     @property
     def ellipsoid_c(self):
@@ -341,7 +341,7 @@ class PFV():
         """
         if self._p is None:
             self._calc_p()
-            
+
         return self._p
 
     @property
@@ -354,7 +354,7 @@ class PFV():
         """
         if self._pgrading is None:
             self._calc_p()
-            
+
         return self._pgrading
 
     # p-vector computation
@@ -371,7 +371,7 @@ class PFV():
             self._p[:]        = np.nan
             return
         # N is invertible! the following should work...
-        
+
         # calc pgrading
         # (uses Ninv, which is inv(N), scaled to be integral)
         if self.coni:
@@ -444,7 +444,7 @@ class PFV():
 
         # sanity check: the p-vector should be in Kcup
         assert np.all(val[:,:-1]@self.p >= 0)
-        
+
         # set the value :)
         self._gvs  = val.copy()
 
@@ -469,7 +469,7 @@ class PFV():
         # remove evenness check, optionally
         if ('check_even' in checks) and (not self.require_evenness):
             checks.remove('check_even')
-        
+
         # check them
         passes = True
         for check in checks:
@@ -498,7 +498,7 @@ class PFV():
         tmp = self.a@self.M
 
         return (tmp%2 == 0).all()
-    
+
     def check_b(self):
         # check that b.M is a multiple of 24
         return np.dot(self.b, self.M)%24 == 0
@@ -509,7 +509,7 @@ class PFV():
         return 0 <= -np.dot(self.M,self.K) <= upper
 
     def check_Knonzero(self):
-        # check that K 
+        # check that K
         return any([Ki!=0 for Ki in self.K])
 
     def check_Ninvertible(self, tol=0.5):
@@ -526,7 +526,7 @@ class PFV():
             return min(self.H@self.pgrading[1:])>0.5
         else:
             return min(self.H@self.p)>0.5
-    
+
     def check_NpK(self, tol=1e-4):
         # check that N@p=K
         if self.coni:
@@ -632,7 +632,7 @@ class PFV():
     @property
     def tau0(self):
         # tau0 is the value of tau that minimizes the 2-term racetrack
-        
+
         # check if PFV has valid leading coefficients
         validQ = self.valid_coeff_ratio()
         if validQ == False:
@@ -701,10 +701,10 @@ class PFV():
             return np.nan
 
         gs = 1/np.imag(self.tau0)
-        
+
         if gs < 0:
             warnings.warn("Negative string coupling!")
-        
+
         return gs
 
     # diagnostics
@@ -882,7 +882,7 @@ class PFV():
                                 self._all_coeffs,
                                 self._all_exps):
                 print(f"Exponent {e:.2f} has coefficient {sum(c)} = ", end="")
-                
+
                 first = True
                 if verbosity>2:
                     print(f"{self.M.tolist()}·(", end="")
@@ -902,4 +902,3 @@ class PFV():
                             first = False
                         print(f"({_gv})·({_c//_gv})", end="")
                 print()
-    

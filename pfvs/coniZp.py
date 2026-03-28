@@ -292,7 +292,7 @@ def coniZpM(
     # iterate over p-vectors
     chunk_size = max(100, len(ps)//n_jobs+1)
     p_chunks   = [ps[i:i+chunk_size] for i in range(0,len(ps),chunk_size)]
-    
+
     def make_pfvs(p_chunk, job_i=0):
         all_Ks = np.zeros((0,h11), dtype=np.int32)
         all_Ms = np.zeros((0,h11), dtype=np.int32)
@@ -379,7 +379,7 @@ def coniZpM(
                         print(max_N_pfvs)
                         print(np.linalg.cholesky(mat).T.dtype, Binter[0,:].astype(np.int32).dtype, H.dtype)
                         raise Exception
-                
+
                 # use GCD lattices
                 # ----------------
                 else:
@@ -391,7 +391,7 @@ def coniZpM(
 
                     for gcd in range(1,ellipsoid_dilation+1):
                         Bgcd = Kperp_gcd_lattice(data, Z, Binter, gcd)
-                        
+
                         vs, vQs = lattice.fp_iterative_njit(
                             # ellipsoid definition
                             L=np.linalg.cholesky(Bgcd.T@mat@Bgcd),
@@ -448,7 +448,7 @@ def coniZpM(
                 # ---------------------------
                 cs  = lattice_points[:,chunk_start:chunk_start+chunk_size]
                 Qs  = rawQs[chunk_start:chunk_start+chunk_size]
-                
+
                 # cut on feasibility of finding a K0 giving K'>0
                 # ----------------------------------------------
                 # for 0 <= K_scaling <= 1

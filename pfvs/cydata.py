@@ -124,7 +124,7 @@ class CYData:
         type(self).kappa_cob = property(lambda self: self._kappa_cob.copy())
         type(self).c2_cob    = property(lambda self: self._c2_cob.copy())
         type(self).H_cob     = property(lambda self: self._H_cob.copy())
-    
+
     # alternative constructor
     # -----------------------
     @classmethod
@@ -203,7 +203,7 @@ class CYData:
     @property
     def kappa(self):
         return self._kappa.copy()
-    
+
     @property
     def c2(self):
         return self._c2.copy()
@@ -242,7 +242,7 @@ class CYData:
 
         **Arguments:**
         Nothing.
-        
+
         **Returns:**
         The a-matrix.
         """
@@ -287,12 +287,12 @@ class CYData:
         \\begin{equation}
             \\tilde{b} = c_2 + n_{cf} q_{coni}
         \\end{equation}
-        where $n_{cf} = 2$ and $q_{coni} = `coni_normal`$ (see below eq 3.5 of 
+        where $n_{cf} = 2$ and $q_{coni} = `coni_normal`$ (see below eq 3.5 of
         https://arxiv.org/pdf/2406.13751).
 
         **Arguments:**
         Nothing
-        
+
         **Returns:**
         The b vector.
         """
@@ -371,17 +371,17 @@ class CYData:
         # LLL-reduce
         primal = lattice.lll_reduce(_primal)
         primal = primal[:,-h11:]
-        
+
         # construct the dual lattice
         dual, denom = lattice.dual_lattice(primal)
         assert multiplier%denom == 0 # the dual lattice should be integral
         out = dual * (multiplier//denom)
-        
+
         # LLL-reduce the dual to be extra nice
         out = lattice.lll_reduce(out)
         if verify:
             assert np.all((self.a@out)%2 == 0)
             assert np.all((self.b.reshape(1,-1)@out)%24 == 0)
-        
+
         self._M_lattice = out.copy()
         return out

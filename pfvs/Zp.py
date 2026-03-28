@@ -122,7 +122,7 @@ def ZpM(
     for _i, p in enumerate(iterator):
         # helper variable (K = Z@M)
         Z = kappa@p
-        
+
         # define the lattices for M
         # -------------------------
         # need K.p = 0
@@ -141,7 +141,7 @@ def ZpM(
         # lll-reduce Binter
         # (doesn't seem to have a huge effect...)
         Binter = lattice.lll_reduce(Binter)
-        
+
         # find lattice points in tadpole
         mat = -(Binter).T@(Z@Binter)
 
@@ -167,7 +167,7 @@ def ZpM(
         # only keep primitive lattice points (can reclaim other PFVs easily)
         primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
         lattice_points = lattice_points[primitiveQ]
-        
+
         # compute Ms
         # ----------
         Ms = Binter@lattice_points.T # as columns
@@ -271,7 +271,7 @@ def ZpK(
             Ainv, scale = lattice.inv_scaled(A)#np.linalg.inv(A)
         except:
             print(f"PANIC!!!! {p.tolist()} CAUSED WEIRD AINV!!!")
-        
+
         # define the lattices for K
         # -------------------------
         # (need K^T@p = 0)
@@ -280,7 +280,7 @@ def ZpK(
         # lll-reduce B
         # (doesn't seem to have a huge effect...)
         B = lattice.lll_reduce(B)
-        
+
         # find lattice points in tadpole
         mat = -B.T@np.linalg.inv(kappa@p)@B
 
@@ -303,7 +303,7 @@ def ZpK(
         # only keep primitive lattice points (can reclaim other PFVs easily)
         primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
         lattice_points = lattice_points[primitiveQ]
-        
+
         # compute Ms, Ks, and reduced by GCD
 
         # read the data
