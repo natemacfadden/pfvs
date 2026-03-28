@@ -32,7 +32,7 @@ import os
 
 # local imports
 from . import lattice, diagnostics
-from .c_kernels import pvec_kernel, coni_kernel
+from .c_kernels import coni_kernel
 
 # global variables
 # ================
@@ -41,343 +41,23 @@ from .c_kernels import pvec_kernel, coni_kernel
 # compute these once and for all using global variabls
 projs = [None]*100
 def get_proj(dim):
+    """
+    Get a projection matrix, projecting out the 0th component.
+    """
     if projs[dim] is None:
         projs[dim] = np.eye(dim, dtype=int)[1:,:]
     
     return projs[dim]
 
-# p-vectors
-# =========
-def pvecs(
-    data: "CYData",
-    min_N_pts: int,
-    use_njit: bool = False,
-    verbosity: int = 0) -> "ArrayLike":
-
-    max_N_iter = 1_000_000*min_N_pts
-
-    # read hyperplanes
-    if data.coni:
-        H = data.H_cob
-    else:
-        H = data.H
-
-    # get the points
-    Bs_fit   = []
-    Npts_fit = []
-
-    i = -1
-    B = 1
-    Nlast = 0
-    while True:
-        i += 1
-        if verbosity >= 1:
-            print('pre ',data.coni_curve,i,B,flush=True)
-
-        if use_njit:
-            print("try the c-code if you'd like but I'm not your boss. To do so, set `use_njit=False`")
-            pts, Niter = lattice.kannan_box_mat_njit(
-                B=B,
-                linmat=H,
-                linmin=1,
-                max_N_out=10*min_N_pts,
-                max_N_iter=max_N_iter,
-            )
-
-            if Niter >= max_N_iter:
-                print(f"TOO MANY (>={max_N_iter}) ITERATIONS",flush=True)
-                break
-        else:
-            try:
-                pts, status = pvec_kernel(
-                    B=B,
-                    linmat=H.astype(np.int32),
-                    linmin=1,
-                    max_N_out=10*min_N_pts,
-                    max_N_iter=max_N_iter
-                )
-
-                if (status != 0) and (status != -5):
-                    print(f"KERNEL RETURNED STATUS {status}!!!",flush=True)
-            except Exception as e:
-                print("did you run the `rebuild_kernels.py` file? please do")
-                raise e
-
-        # remove points with nontrivial GCDs
-        gcds = np.gcd.reduce(pts,axis=1)
-        primitive = (gcds == 1)
-        pts = pts[primitive]
-
-        N = len(pts)
-        if N >= min_N_pts:
-            break
-        if verbosity >= 1:
-            print('post',data.coni_curve,i, B, Nlast, N, flush=True)
-        if N > Nlast:
-            Nlast = N
-            Bs_fit.append(np.log(B))
-            Npts_fit.append(np.log(N))
-
-        # guess the B to scale it to
-        # y = mx + b
-        # y1-y0 = m(x1-x0)
-        if len(Bs_fit) > 2:
-            m = (Npts_fit[-1]-Npts_fit[-2])/(Bs_fit[-1]-Bs_fit[-2])
-            m *= 1.5
-
-            Bguess = (np.log(min_N_pts)-Npts_fit[-1])/m + Bs_fit[-1]
-            Bguess = np.exp(Bguess)
-            if N <= 200:
-                Bstep  = min(Bguess - B, 0.05*B)
-            else:
-                Bstep = Bguess - B
-            Bstep = int(np.ceil(Bstep))
-            assert Bstep > 0
-            B += Bstep
-        else:
-            B += min(3, int(np.ceil(0.05*B)))
-
-    return pts
-
-def pvecs_cpsat(
-    data: "CYData",
-    min_N_pts: int = None,
-    max_deg: int = None,
-    min_deg: int = 0,
-    max_Linf: int = None,
-    deg_window: int = 1,
-    max_window_i: int = 10_000,
-    max_time: float = 120, # 2 min...
-    reduce_deg: bool = True,
-    verbosity: int = 0) -> "ArrayLike":
-    """
-    **Description:**
-    Computes possible p-vectors.
-
-    For non-Coni PFVs, these are integral vectors p such that
-        H @ p > 0
-    for H the hyperplanes of the Kahler cone. I.e., p is in the interior of the
-    Kahler cone.
-
-    For Coni PFVs, these are integral vectors p such that
-        (H\\coni_normal) @ p > 0
-        dot(coni_normal, p)  = 0
-    for H the hyperplanes of the Kahler cone. I.e., p is in the interior of the
-    facet of the Kahler cone defined by coni_normal.
-
-    **Arguments:**
-    - `data`:         The CYData describing the CY.
-    - `min_N_pts`:    Grab at least this many p-vectors.
-    - `max_deg`:      The maximum degree to compute p-vectors to.
-    - `min_deg`:      The minimum permissible degree to allow p-vectors to have.
-    - `deg_window`:   When setting `min_N_pts`, it operates by sliding a degree
-                      window, grabbing all points in the window, and quitting
-                      only once enough points have been generated. This
-                      argument sets the width of the window.
-    - `max_window_i`: The maximum number of windows to try if setting min_N_pts.
-    - `max_time`:     The maximum amount of time (in seconds) per degree window
-                      to search for p-vectors.
-    - `verbosity`:    The verbosity level.
-
-    **Returns:**
-    Possible p-vectors.
-    """
-    # check inputs
-    if (max_deg is None) ^ (min_N_pts is None):
-        pass
-    else:
-        raise ValueError("Either `max_deg` or `min_N_pts` must be set...")
-
-    # read hyperplanes
-    if data.coni:
-        H = data.H_cob
-    else:
-        H = data.H
-
-    # requesting N points
-    # -------------------
-    # use shifting degree windows until we get enough points
-    if min_N_pts is not None:
-        ps = np.empty((0,H.shape[1]), dtype=int)
-        N_ps = 0
-
-        for window_i in range(max_window_i+1):
-            _min = min_deg + (window_i+0)*deg_window + window_i
-            _max = min_deg + (window_i+1)*deg_window + window_i
-
-            if verbosity >= 1:
-                print(f"Have {N_ps} p-vectors for degrees <{_min}", end=' '*20 + '\r')
-
-            # compute new p-vectors, save them
-            new_ps = pvecs_cpsat(
-                data,
-                min_deg = _min,
-                max_deg = _max,
-                max_time = max_time)
-            if len(new_ps):
-                ps     = np.vstack([ps, new_ps])
-                N_ps  += len(new_ps)
-
-                # break if done
-                if N_ps >= min_N_pts:
-                    break
-
-        return ps
-
-    # solving via min/max degree
-    # --------------------------
-    # compute a grading vector
-    # (just needs to be in strict interior of dual cone)
-    grading = H.sum(axis=0)
-    grading = grading//np.gcd.reduce(grading)
-
-    # define a constraint-programming model to solve
-    model  = cp_model.CpModel()
-    if max_Linf is None:
-        print("PLEASE set max_Linf")
-        max_Linf = cp_model.INT32_MAX - 1
-
-    p_vars = [model.NewIntVar(-max_Linf, max_Linf, f'x{i}') for i in\
-                                                        range(H.shape[1])]
-
-    for row in H:
-        model.Add(sum(int(row[j])*p_vars[j] for j in range(H.shape[1])) >= 1)
-    model.Add(sum(int(grading[j])*p_vars[j] for j in range(H.shape[1])) >=\
-                                                                    min_deg)
-    model.Add(sum(int(grading[j])*p_vars[j] for j in range(H.shape[1])) <=\
-                                                                    max_deg)
-
-    # enumerate all solutions up to max_deg
-    solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = max_time
-
-    class SolutionPrinter(cp_model.CpSolverSolutionCallback):
-        def __init__(self, p_vars):
-            cp_model.CpSolverSolutionCallback.__init__(self)
-            self.p_vars = p_vars
-            self.points = []
-
-        def on_solution_callback(self):
-            self.points.append([self.Value(v) for v in self.p_vars])
-
-    printer = SolutionPrinter(p_vars)
-
-    status = solver.SearchForAllSolutions(model, printer)
-    if status == cp_model.OPTIMAL:
-        pass
-    elif status == cp_model.UNKNOWN:
-        print("LIKELY HIT TIME LIMIT!!!\nLIKELY HIT TIME LIMIT!!!\nLIKELY HIT TIME LIMIT!!!")
-        print(min_deg, max_deg)
-    elif status != cp_model.INFEASIBLE:
-        print("UNKNOWN ERROR\nUNKNOWN ERROR\nUNKNOWN ERROR")
-        print(min_deg, max_deg, status)
-
-    # return
-    ps = np.array(printer.points)
-    if len(ps) == 0:
-        return np.empty((0,H.shape[1]), dtype=int)
-
-    # reduce by GCD
-    if reduce_deg:
-        gcds = np.gcd.reduce(ps,axis=1)
-        ps = ps[gcds==1]
-    return ps.tolist()
-
-def pvecs_gurobi(data: "CYData", max_deg: int=None, verbosity: int = 0):
-    """
-    **Description:**
-    Use gurobi to find the minimum degree integral p-vector.
-
-    **Arguments:**
-    - `data`:      The CYData describing the CY.
-    - `verbosity`: The verbosity level.
-
-    **Returns:**
-    The minimum-degree p-vector
-    """
-    # import gurobi
-    import gurobipy as gp
-
-    # setup
-    # -----
-    # read hyperplanes
-    if data.coni:
-        H = data.H_cob
-    else:
-        H = data.H
-
-    # compute a grading vector
-    # (just needs to be in strict interior of dual cone)
-    grading = H.sum(axis=0)
-    grading = grading//np.gcd.reduce(grading)
-
-    # define the model
-    # ----------------
-    model = gp.Model("pFinder")
-    model.setParam('OutputFlag', (verbosity > 0))
-
-    p = model.addMVar(
-        (H.shape[1],),
-        lb=-float('inf'), ub=float('inf'),
-        vtype=gp.GRB.INTEGER)
-    model.setMObjective(
-        Q=None,
-        c=grading,
-        constant=0,
-        xc=p,
-        sense=gp.GRB.MINIMIZE)
-    model.addMConstr(H, p, '>', np.full(len(H),0.5))
-    if max_deg is not None:
-        model.addMConstr(grading.reshape(1,-1), p, '<=', [max_deg])
-
-    # optimize
-    # --------
-    if max_deg is None:
-        model.setParam("PoolSolutions", 1)
-    else:
-        model.setParam('PoolSearchMode', 1)
-        model.setParam("PoolSolutions",  1_000_000_000)
-    model.optimize()
-
-    # retrieve and print the solutions
-    nSolutions = model.SolCount
-    if verbosity>=1:
-        print(f"Found {nSolutions} solutions")
-
-    model.Params.outputFlag = 0 # avoid clutter
-    sols = []
-    for i in range(nSolutions):
-        model.setParam('SolutionNumber', i)
-
-        sols.append(np.rint(p.xn).astype(int))
-    model.setParam('SolutionNumber', 0)
-
-    if len(sols) == 1:
-        return sols[0]
-    else:
-        return sols
-
 # Zp helpers
 # ==========
 # generic
 # -------
-if False:
-    # NOT RELIABLE/STABLE
-    @numba.njit(parallel=True)
-    def check_singular(Ns, tol=1e-4):
-        n = Ns.shape[0]
-        singular = np.zeros(n, dtype=np.bool_)
-        for i in numba.prange(n):
-            s, ld = np.linalg.slogdet(Ns[i])
-            if s == 0.0 or ld <= -tol:
-                singular[i] = True
-        return singular
-else:
-    def check_singular(Ns, rtol=1e-12):
-        svals = np.linalg.svdvals(Ns)
-        singular = svals[:,-1] <= rtol * svals[:,0]
+def check_singular(Ns, rtol=1e-12):
+    svals = np.linalg.svdvals(Ns)
+    singular = svals[:,-1] <= rtol * svals[:,0]
 
-        return singular
+    return singular
 
 # non-coni
 # --------
@@ -676,7 +356,8 @@ def ZpK(
                 chunk = Ms[i:i+batch_size]
 
                 #Ns = np.tensordot(kappa, Ms, axes=([2], [0]))
-                Ns = (kappa.reshape(data.h11*data.h11,data.h11)@Ms).reshape(data.h11,data.h11,-1)
+                Ns = kappa.reshape(data.h11*data.h11,data.h11)@Ms
+                Ns = Ns.reshape(data.h11,data.h11,-1)
                 Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
                 #sign, logdet = np.linalg.slogdet(Ns)
@@ -705,7 +386,12 @@ def ZpK(
 
 # coni Zp
 # =======
-def coniMellipsoid(p, data=None, kappa=None, Mbasis=None, extra_lll_reduction=True, extra_checks=False):
+def coniMellipsoid(p,
+                   data=None,
+                   kappa=None,
+                   Mbasis=None,
+                   extra_lll_reduction=True,
+                   extra_checks=False):
     """
     **Description:**
     Compute the matrices defining the M-ellipsoid in coni-ZpM.
@@ -925,7 +611,8 @@ def coniZpM(
     # the search
     # ----------
     if use_njit:
-        print("the c-code is 2x faster, or so ;) Turn `use_njit=False` to try it")
+        print("the c-code is 2x faster, or so ;) ",end="")
+        pritn("Turn `use_njit=False` to try it")
 
     # iterate over p-vectors
     chunk_size = max(100, len(ps)//n_jobs+1)
@@ -939,7 +626,12 @@ def coniZpM(
             _0p = np.concatenate([[0],p])
 
             # construct the quadratic form defining the ellipsoid
-            mat, Z, Binter = coniMellipsoid(_0p, kappa=kappa, Mbasis=Mbasis, extra_lll_reduction=extra_lll_reduction, extra_checks=extra_checks)
+            mat, Z, Binter = coniMellipsoid(
+                _0p,
+                kappa=kappa,
+                Mbasis=Mbasis,
+                extra_lll_reduction=extra_lll_reduction,
+                extra_checks=extra_checks)
 
             ZBinter = np.ascontiguousarray(Z@Binter)
             Binter  = np.ascontiguousarray(  Binter)
@@ -979,7 +671,8 @@ def coniZpM(
                             max_N_out=max_N_pfvs)
 
                         if len(lattice_points) >= max_N_pfvs:
-                            print(f"SATURATED (>={max_N_iter}) PFV COUNT",flush=True)
+                            print(f"SATURATED (>={max_N_iter}) PFV COUNT",
+                                  flush=True)
                             break
                     else:
                         try:
@@ -995,9 +688,9 @@ def coniZpM(
                             )
 
                             if status != 0:
-                                print(f"KERNEL RETURNED STATUS {status}!!!",flush=True)
+                                print(f"KERNEL RETURNED STATUS {status}!!!",
+                                      flush=True)
                         except Exception as e:
-                            print("did you run the `rebuild_kernels.py` file? please do")
                             raise e
 
                     if extra_checks and (not np.allclose(rawQs, np.sum(lattice_points*(lattice_points@mat.T),axis=1))):
@@ -1162,8 +855,6 @@ def coniZpM(
                         # if M[0] > 0:
                         #    (Qperp - Qmax)/M[0] <= K[0] <= (Qperp - Qmin)/M[0]
                         if M0min > 0:
-                            #lo = -(-(Qperps-Qmax)//M0s) # round lower bound upwards
-                            #up = (Qperps-Qmin)//M0s     # round upper bound downwards
                             lo = np.ceil(( Qperps - Qmax)/M0s).astype(int)
                             up = np.floor((Qperps - Qmax)/M0s).astype(int)
                         else:
@@ -1175,7 +866,8 @@ def coniZpM(
                         # K'     = -K[0] + (natural K)[0] * Kperp_gcd/K_gcds
                         # K' > 0 => K[0] < (natural K)[0] * Kperp_gcd/K_gcds
                         # (subtract 1e-4 to enforce K'>0, not K'>=0)
-                        tmp = np.floor((natural_K0s*Kperp_gcd-1e-4)/K_gcds).astype(int)
+                        tmp = np.floor((natural_K0s*Kperp_gcd-1e-4)/K_gcds)
+                        tmp = tmp.astype(int)
                         up  = np.minimum(up, tmp.astype(int))
 
                         # compute the PFVs
@@ -1198,21 +890,32 @@ def coniZpM(
 
                         # add range(up)
                         K0s += np.arange(total_pfvs)
-                        K0s -= np.repeat(np.cumsum(num_K0s_perM) - num_K0s_perM, num_K0s_perM)
+                        K0s -= np.repeat(
+                            np.cumsum(num_K0s_perM) - num_K0s_perM,
+                            num_K0s_perM
+                        )
 
                         # prepend the K0s to the Ks
                         # -------------------------
-                        new_Ks = np.repeat(Kperp_gcd*Kperps[1:,mask], num_K0s_perM, axis=1)
+                        new_Ks = np.repeat(
+                            Kperp_gcd*Kperps[1:,mask],
+                            num_K0s_perM,
+                            axis=1
+                        )
                         new_Ks = np.vstack([K0s, new_Ks])
 
                         # get the Ms
                         Mperps = Binter[1:]@cs[:,mask]
-                        new_M0s    = np.repeat(M0s[mask].reshape(1,-1), num_K0s_perM, axis=1)
+                        new_M0s    = np.repeat(
+                            M0s[mask].reshape(1,-1),
+                            num_K0s_perM,
+                            axis=1
+                        )
                         new_Mperps = np.repeat(Mperps, num_K0s_perM, axis=1)
                         new_Ms = np.vstack([new_M0s, new_Mperps])
 
                         if not all(-np.sum(new_Ks*new_Ms, axis=0) <= Qmax):
-                            inds = np.where(-np.sum(new_Ks*new_Ms, axis=0) > Qmax)
+                            inds = np.where(-np.sum(new_Ks*new_Ms,axis=0) >Qmax)
                             i = inds[0]
 
                             print("VIOLATED QMAX!!!")
