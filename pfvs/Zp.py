@@ -177,7 +177,7 @@ def ZpM(
         if True:#filter_Ninvertible:
             batch_size = 5000
             singular = []
-            for i in range(0, len(Ms), batch_size):
+            for i in range(0, Ms.shape[1], batch_size):
                 chunk = Ms[i:i+batch_size]
 
                 #Ns = np.tensordot(kappa, Ms, axes=([2], [0]))

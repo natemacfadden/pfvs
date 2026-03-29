@@ -34,7 +34,7 @@ from .cydata import CYData
 def pvecs(
     data: CYData,
     min_N_pts: int,
-    verbosity: int = 0) -> ArrayLike:
+    verbosity: int = 0) -> np.ndarray:
     """
     Generate primitive p-vectors using a branch-and-bound search (Kannan).
 
@@ -55,13 +55,13 @@ def pvecs(
     min_N_pts : int
         Minimum number of primitive p-vectors to return.
     verbosity : int, optional
-        Verbosity level. 0 is silent; >= 1 prints progress. Default is 0.
+        The verbosity level. Higher is more verbose. Defaults to 0.
 
     Returns
     -------
     pts : ndarray of shape (N, h11)
         Array of primitive p-vectors, where N >= `min_N_pts`. Each row is an
-        integer vector satisfying H @ p > 0.
+        integer vector satisfying H @ p > 0
     """
     # pvec_kernel has a safety max # of iterations. Set this to a large number
     max_N_iter = 1_000_000*min_N_pts
@@ -91,18 +91,19 @@ def pvecs(
             max_N_out=10*min_N_pts, # give room in case more pvecs are found
             max_N_iter=max_N_iter
         )
+        N = len(pts)
 
         if (status != 0) and (status != -5):
             # status -5 means no vectors are found
             print(f"KERNEL RETURNED STATUS {status}!!!",flush=True)
 
         # remove points with nontrivial GCDs
-        gcds = np.gcd.reduce(pts,axis=1)
-        primitive = (gcds == 1)
-        pts = pts[primitive]
+        if N > 0:
+            gcds = np.gcd.reduce(pts,axis=1)
+            primitive = (gcds == 1)
+            pts = pts[primitive]
 
         # check if done
-        N = len(pts)
         if N >= min_N_pts:
             break
         if verbosity >= 1:
@@ -111,7 +112,7 @@ def pvecs(
                   flush=True)
 
         # save data for estimating next bounds B to try
-        if N > Nlast:
+        if N > 0 and N > Nlast:
             Nlast = N
             Bs_fit.append(np.log(B))
             Npts_fit.append(np.log(N))
@@ -132,9 +133,12 @@ def pvecs(
             else:
                 Bstep = Bguess - B
             Bstep = int(np.ceil(Bstep))
-            assert Bstep > 0
+            if Bstep <= 0:
+                raise ValueError
+
             B += Bstep
         else:
+            # be very conservative with B if we have few pvecs
             B += min(3, int(np.ceil(0.05*B)))
 
     return pts
@@ -148,8 +152,8 @@ def pvecs_cpsat(
     deg_window: int = 1,
     max_window_i: int = 10_000,
     max_time: float = 120, # 2 min...
-    reduce_deg: bool = True,
-    verbosity: int = 0) -> ArrayLike:
+    keep_primitive: bool = True,
+    verbosity: int = 0) -> np.ndarray:
     """
     Generate primitive p-vectors using CP-SAT (OR-Tools). NOT recommended --
     use `pvecs` instead, which is significantly faster.
@@ -164,31 +168,32 @@ def pvecs_cpsat(
         The CY geometry, providing the hyperplane matrix H (or H_cob for coni).
     min_N_pts : int, optional
         Minimum number of p-vectors to return. Inclusive. Mutually exclusive
-        with `max_deg`.
+        with `max_deg`
     max_deg : int, optional
         Maximum degree to enumerate p-vectors to. Inclusive. Mutually exclusive
-        with `min_N_pts`.
+        with `min_N_pts`
     min_deg : int, optional
-        Minimum degree for p-vectors. Default is 0.
+        Minimum degree for p-vectors. Default is 0
     max_Linf : int, optional
         L-inf bound on p-vector components. Defaults to INT32_MAX - 1 if unset
-        (not recommended).
+        (not recommended)
     deg_window : int, optional
-        Width of the sliding degree window used in `min_N_pts` mode. Default 1.
+        Width of the sliding degree window used in `min_N_pts` mode. Default 1
     max_window_i : int, optional
         Maximum number of degree windows to try in `min_N_pts` mode. Default
-        10,000.
+        10,000
     max_time : float, optional
-        Time limit in seconds per degree window. Default is 120.
-    reduce_deg : bool, optional
-        If True, remove p-vectors with non-trivial GCD. Default is True.
+        Time limit in seconds per degree window. Default is 120
+    keep_primitive : bool, optional
+        If True, remove p-vectors with non-trivial GCD. Default is True
     verbosity : int, optional
-        Verbosity level. 0 is silent; >= 1 prints progress. Default is 0.
+        The verbosity level. Higher is more verbose. Defaults to 0
 
     Returns
     -------
     pts : ndarray of shape (N, h11)
-        Array of p-vectors satisfying H @ p > 0.
+        Array of p-vectors satisfying H @ p > 0. Can have N < min_N_pts if
+        max_window_i is exhausted.
     """
     # check inputs
     if (max_deg is None) ^ (min_N_pts is None):
@@ -221,7 +226,8 @@ def pvecs_cpsat(
                 min_deg = _min,
                 max_deg = _max,
                 max_Linf = max_Linf,
-                max_time = max_time)
+                max_time = max_time,
+                keep_primitive = keep_primitive)
             if len(new_ps):
                 ps     = np.vstack([ps, new_ps])
                 N_ps  += len(new_ps)
@@ -277,7 +283,7 @@ def pvecs_cpsat(
         print("LIKELY HIT TIME LIMIT!!!")
         print(min_deg, max_deg)
     elif status != cp_model.INFEASIBLE:
-        print("UNKNOWN ERROR")
+        print("MISC ERROR")
         print(min_deg, max_deg, status)
 
     # return
@@ -286,14 +292,14 @@ def pvecs_cpsat(
         return np.empty((0,H.shape[1]), dtype=int)
 
     # reduce by GCD
-    if reduce_deg:
+    if keep_primitive:
         gcds = np.gcd.reduce(ps,axis=1)
         ps = ps[gcds==1]
     return ps
 
 def mindeg_pvec_gurobi(
     data: CYData,
-    max_deg: int=None,
+    max_deg: int = None,
     verbosity: int = 0) -> ArrayLike:
     """
     Generate the minimum-degree (relative to grading vector sum(H,axis=0) / GCD)
@@ -310,7 +316,7 @@ def mindeg_pvec_gurobi(
     max_deg : int, optional
         Maximum degree to enumerate p-vectors to.
     verbosity : int, optional
-        Verbosity level. 0 is silent; >= 1 prints progress. Default is 0.
+        The verbosity level. Higher is more verbose. Defaults to 0.
 
     Returns
     -------
@@ -336,7 +342,7 @@ def mindeg_pvec_gurobi(
 
     # define the model
     # ----------------
-    model = gp.Model("pFinder")
+    model = gp.Model('pFinder')
     model.setParam('OutputFlag', (verbosity > 0))
 
     p = model.addMVar(
@@ -356,10 +362,10 @@ def mindeg_pvec_gurobi(
     # optimize
     # --------
     if max_deg is None:
-        model.setParam("PoolSolutions", 1)
+        model.setParam('PoolSolutions', 1)
     else:
         model.setParam('PoolSearchMode', 1)
-        model.setParam("PoolSolutions",  1_000_000_000)
+        model.setParam('PoolSolutions',  1_000_000_000) # effectively unlimited
     model.optimize()
 
     # retrieve and print the solutions
