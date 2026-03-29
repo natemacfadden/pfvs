@@ -40,8 +40,10 @@ from .cydata import CYData
 # coniZp helpers
 # ==============
 def check_singular(Ns: ArrayLike, rtol: float = 1e-12):
-    # for a length-n stack of mxm matrices Ns (shape nxmxm), return a length-n
-    # vector whose ith value is 1 iff Ns[i] is singular
+    """
+    For a length-n stack of mxm matrices Ns (shape nxmxm), return a length-n
+    vector whose ith value is 1 iff Ns[i] is singular
+    """
     svals = np.linalg.svdvals(Ns)
     singular = (svals[:,-1] <= rtol * svals[:,0])
 
@@ -52,7 +54,9 @@ def check_singular(Ns: ArrayLike, rtol: float = 1e-12):
 # compute these once and for all using global variables
 projs = [None]*100
 def get_proj(dim):
-    # Get a dim->(dim-1) projection matrix, projecting out the 0th component.
+    """
+    Get a dim->(dim-1) projection matrix, projecting out the 0th component.
+    """
     if projs[dim] is None:
         projs[dim] = np.eye(dim, dtype=np.int64)[1:,:]
 
@@ -264,9 +268,9 @@ def Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
     """
     (Not recommended in practice - just prune FP using `coniHmatrix`)
 
-    When finding c in the coniMellipsoid, one wants to guarantee that Kperp has
-    sufficiently large GCD (see `coniHmatrix`). The collection of c giving rise
-    to GCD(Kperp) = g (or integer multiples of it) forms a lattice. This
+    When finding c in the `coniMellipsoid`, one wants to guarantee that Kperp
+    has sufficiently large GCD (see `coniHmatrix`). The collection of c giving
+    rise to GCD(Kperp) = g (or integer multiples of it) forms a lattice. This
     function computes a basis of that lattice.
 
     This enables scans over different lattice bases without having to explicitly
@@ -345,7 +349,6 @@ def Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
 
 # coni Zp
 # =======
-print("IDK if K'>0 cut works for max_Kperp_gcd>1")
 def coniZpM(
     # problem definition
     data: CYData,
@@ -397,7 +400,7 @@ def coniZpM(
     max_Kperp_gcd : integer, optional
         When solving for PFVs, one hardcodes the GCD of Kperp (since we
         previously cleared the GCD, making Kperp primitive). Allow GCDs up to
-        this value. Not well tested - defaults to 1.
+        this value. **Not well tested - defaults to 1.** Leave at default.
     ellipsoid_dilation : float, optional
         The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
         Empirically, runtime scales linearly with this value. Defaults to 1.
@@ -450,7 +453,10 @@ def coniZpM(
     if n_jobs == -1:
         n_jobs = 2*os.cpu_count()
 
-    # misc
+    if max_Kperp_gcd > 1:
+        print("This code hasn't been well-tested for max_Kperp_gcd > 1...")
+
+    # misc (left for future debugging)
     only_positive_news = False
 
     # read data
@@ -470,6 +476,7 @@ def coniZpM(
     p_chunks   = [ps[i:i+chunk_size] for i in range(0,len(ps),chunk_size)]
 
     def make_pfvs(p_chunk, job_i=0):
+        # define a factory function here for later parallelization
         all_Ks = np.zeros((0,h11), dtype=np.int32)
         all_Ms = np.zeros((0,h11), dtype=np.int32)
 
@@ -487,11 +494,12 @@ def coniZpM(
             ZBinter = np.ascontiguousarray(Z@Binter)
             Binter  = np.ascontiguousarray(  Binter)
 
-            # solve for lattice points maybe in tadpole
-            # =========================================
+            # solve for lattice points under tadpole
+            # ======================================
             try:
                 if not use_gcd_lattice:
                     # find relevant lattice points in ellipsoid c.T@mat@c <= Q
+                    # just uses FP with pruning on GCDs and M0 - no GCD lattice
                     try:
                         H = coniHmatrix(ZBinter, proj)
                     except Exception as e:
@@ -530,7 +538,9 @@ def coniZpM(
                         print(Binter[0,:].tolist()),
                         print(H.tolist())
                         print(max_N_pfvs)
-                        print(np.linalg.cholesky(mat).T.dtype, Binter[0,:].astype(np.int32).dtype, H.dtype)
+                        print(np.linalg.cholesky(mat).T.dtype,
+                              Binter[0,:].astype(np.int32).dtype,
+                              H.dtype)
                         raise Exception
 
                 # use GCD lattices
@@ -566,6 +576,7 @@ def coniZpM(
                 # --------
                 rawQs = np.rint(rawQs).astype(int)
                 if False:
+                    # disabled debugging/testing code
                     cs     = np.array(lattice_points)
                     testQs = np.sum(cs * (cs@mat.T), axis=1)
                     if not all(rawQs == testQs):
@@ -743,7 +754,8 @@ def coniZpM(
                             i = inds[0]
 
                             print("VIOLATED QMAX!!!")
-                            print(new_Ks[:,i].T.tolist(), new_Ms[:,i].T.tolist())
+                            print(new_Ks[:,i].T.tolist(),
+                                  new_Ms[:,i].T.tolist())
                             print(-np.sum(new_Ks*new_Ms, axis=0)[i], Q)
                             print(np.repeat(lo[mask], num_K0s_perM)[i])
                             print(np.repeat(up[mask], num_K0s_perM)[i])
