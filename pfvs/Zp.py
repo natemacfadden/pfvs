@@ -329,7 +329,7 @@ def ZpM(
         The maximum number of PFVs that can be output. The C-kernel requires a
         limit. Defaults excessively high to 1,000,000,000.
     return_formal_pfvs : bool, optional
-        Whether to return "PFV" objects as in diagnostics.py. Otherwise, an
+        Whether to return "PFV" objects as in pfv.py. Otherwise, an
         array of K-vectors (as rows) and an array of M-vectors (as rows) are
         returned. Defaults to False.
     verbosity : int, optional
@@ -344,7 +344,7 @@ def ZpM(
         M-vectors of the PFVs, one per row. Only returned if
         return_formal_pfvs=False.
     pfvs : list of length N
-         PFV objects (see ``diagnostics.PFV``). Only returned if
+         PFV objects (see ``pfv.PFV``). Only returned if
          return_formal_pfvs=True.
     """
     print("WARNING NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")
@@ -506,7 +506,7 @@ def ZpK(
         The maximum number of PFVs that can be output. The C-kernel requires a
         limit. Defaults excessively high to 1,000,000,000.
     return_formal_pfvs : bool, optional
-        Whether to return "PFV" objects as in diagnostics.py. Otherwise, an
+        Whether to return "PFV" objects as in pfv.py. Otherwise, an
         array of K-vectors (as rows) and an array of M-vectors (as rows) are
         returned. Defaults to False.
     verbosity : int, optional
@@ -521,7 +521,7 @@ def ZpK(
         M-vectors of the PFVs, one per row. Only returned if
         return_formal_pfvs=False.
     pfvs : list of length N
-         PFV objects (see ``diagnostics.PFV``). Only returned if
+         PFV objects (see ``pfv.PFV``). Only returned if
          return_formal_pfvs=True.
     """
     print("WARNING NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")

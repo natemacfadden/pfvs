@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # local imports
-from . import lattice, cydata, Zp
+from . import lattice, cydata, Zp, coniZp
 
 class PFV():
     """
@@ -255,7 +255,7 @@ class PFV():
         if not self.coni:
             raise NotImplementedError
 
-        mat, Z, Binter = Zp.coniMellipsoid(self.pgrading, self._cydata)
+        mat, Z, Binter = coniZp.coniMellipsoid(self.pgrading, self._cydata)
         return mat
 
     @property
@@ -263,7 +263,7 @@ class PFV():
         if not self.coni:
             raise NotImplementedError
 
-        mat, Z, Binter = Zp.coniMellipsoid(self.pgrading, self._cydata)
+        mat, Z, Binter = coniZp.coniMellipsoid(self.pgrading, self._cydata)
         c = np.rint(np.linalg.lstsq(Binter, self.M)[0]).astype(int)
         assert np.all(self.M == Binter@c)
 
@@ -465,10 +465,6 @@ class PFV():
         if 'check_Knonzero' in checks:
             checks.remove('check_Knonzero')
             checks.insert(0, 'check_Knonzero')
-
-        # remove evenness check, optionally
-        if ('check_even' in checks) and (not self.require_evenness):
-            checks.remove('check_even')
 
         # check them
         passes = True

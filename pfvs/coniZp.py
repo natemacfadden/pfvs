@@ -33,7 +33,7 @@ import os
 from numpy.typing import ArrayLike
 
 # local imports
-from . import lattice, diagnostics
+from . import lattice, pfv
 from .c_kernels import coni_kernel
 from .cydata import CYData
 
@@ -426,7 +426,7 @@ def coniZpM(
         The maximum number of PFVs that can be output. The C-kernel requires a
         limit. Defaults excessively high to 1,000,000,000.
     return_formal_pfvs : bool, optional
-        Whether to return "PFV" objects as in diagnostics.py. Otherwise, an
+        Whether to return "PFV" objects as in pfv.py. Otherwise, an
         array of K-vectors (as rows) and an array of M-vectors (as rows) are
         returned. Defaults to False.
     verbosity : int, optional
@@ -441,7 +441,7 @@ def coniZpM(
         M-vectors of the PFVs, one per row. Only returned if
         return_formal_pfvs=False.
     pfvs : list of length N
-         PFV objects (see ``diagnostics.PFV``). Only returned if
+         PFV objects (see ``pfv.PFV``). Only returned if
          return_formal_pfvs=True.
     """
     assert data.coni
@@ -819,6 +819,6 @@ def coniZpM(
 
     # return
     if return_formal_pfvs:
-        return [diagnostics.PFV(data, K, M) for K,M in zip(all_Ks, all_Ms)]
+        return [pfv.PFV(data, K, M) for K,M in zip(all_Ks, all_Ms)]
     else:
         return all_Ks, all_Ms
