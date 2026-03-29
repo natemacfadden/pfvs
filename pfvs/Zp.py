@@ -407,7 +407,7 @@ def ZpM(
         batch_size = 5000
         singular = []
         for i in range(0, Ms.shape[1], batch_size):
-            chunk = Ms[i:i+batch_size]
+            chunk = Ms[:,i:i+batch_size]
 
             Ns = (kappa.reshape(h11*h11,h11)@chunk).reshape(h11,h11,-1)
             Ns = Ns.transpose(2,0,1) # (N,h11,h11)
@@ -607,7 +607,7 @@ def ZpK(
         batch_size = 5000
         singular = []
         for i in range(0, Ms.shape[1], batch_size):
-            chunk = Ms[i:i+batch_size]
+            chunk = Ms[:,i:i+batch_size]
 
             Ns = (kappa.reshape(h11*h11,h11)@chunk).reshape(h11,h11,-1)
             Ns = Ns.transpose(2,0,1) # (N,h11,h11)
