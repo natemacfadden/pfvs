@@ -25,34 +25,31 @@ import functools
 import math
 import matplotlib.pyplot as plt
 import numpy as np
+import warnings
 
 # local imports
 from . import lattice, cydata, Zp, coniZp
 
 class PFV():
     """
-    Class to stores/verifies (Coni-)PFVs.
+    Stores and verifies (coni-)PFVs.
 
-    **Arguments:**
-    - `data`:   A CYData object defining the CY.
-    - `K`:      K flux vector. Must be integral.
-    - `M`:      M flux vector. Must be integral.
-    - `silent`: Whether to suppress messages.
+    Parameters
+    ----------
+    data : CYData
+        A CYData object defining the CY.
+    K : array-like
+        K flux vector. Must be integral.
+    M : array-like
+        M flux vector. Must be integral.
+    silent : bool, optional
+        Whether to suppress messages. Defaults to False.
     """
     def __init__(self,
         data: "CYData",
         K: "ArrayLike",
         M: "ArrayLike",
         silent: bool = False):
-        """
-        Class to stores/verifies (Coni-)PFVs.
-
-        **Arguments:**
-        - `data`: A CYData object defining the CY.
-        - `K`: K flux vector. Must be integral.
-        - `M`: M flux vector. Must be integral.
-        - `silent`: Whether to suppress messages.
-        """
         # read inputs
         self._cydata      = data
         self._K           = np.array(K)
@@ -98,20 +95,26 @@ class PFV():
             type(self).zcf = property(lambda self:
                 np.exp(-2*np.pi*self.Kprime/(self.ncf*self.gsM))/(2.*np.pi) )
 
-            volProxy = (2*(2+self.h11+self.h21))**(3/2)
             type(self).align = property(lambda self:
-                2*89.5643*(self.Vtilde**(1/3))*(volProxy**(2/3))*(self.zcf**(4/3))/(self.gsM*self.gsM*self.W0()*self.W0()) )
+                2*89.5643*(self.Vtilde**(1/3))*(2*(2+self.h11+self.h21))*(self.zcf**(4/3))/(self.gsM*self.gsM*self.W0()*self.W0()) )
 
         # alternative constructor
     # -----------------------
     @classmethod
-    def from_str(cls, str_) -> "PFV":
+    def from_str(cls, str_: str) -> "PFV":
         """
-        **Description:**
-        Initializes an instance of the PFV validation/diagnostic class.
+        Construct a PFV from its string representation.
 
-        **Arguments:**
-        - `str`: The string format representing the PFV, in the format that.
+        Parameters
+        ----------
+        str_ : str
+            String representation of a PFV, in the format produced by
+            str(PFV(...)).
+
+        Returns
+        -------
+        pfv : PFV
+            The reconstructed PFV object.
         """
         try:
             import cytools
@@ -177,7 +180,7 @@ class PFV():
     # getters
     # =======
     @property
-    def coni(self):
+    def coni(self) -> bool:
         """
         Whether this object describes a coni PFV.
         """
@@ -186,24 +189,27 @@ class PFV():
     # CY info
     # -------
     @property
-    def h11(self):
+    def h11(self) -> int:
         return self._cydata.h11
 
     @property
-    def h21(self):
+    def h21(self) -> int:
         return self._cydata.h21
 
     @property
-    def vertices(self):
+    def vertices(self) -> np.ndarray:
         return self._cydata.vertices
     verts = vertices
 
     @property
-    def heights(self):
+    def heights(self) -> np.ndarray:
         return self._cydata.heights
 
     @property
-    def cy(self):
+    def cy(self) -> "CalabiYau":
+        """
+        The CY object (requires cytools).
+        """
         try:
             import cytools
         except ImportError as e:
@@ -223,7 +229,7 @@ class PFV():
         return cytools.Polytope(v).triangulate(heights=h).cy()
 
     @property
-    def kappa(self):
+    def kappa(self) -> np.ndarray:
         """
         The intersection numbers
         """
@@ -235,14 +241,14 @@ class PFV():
     # basic fluxes
     # ------------
     @property
-    def K(self):
+    def K(self) -> np.ndarray:
         """
         The K-vector
         """
         return self._K.copy()
 
     @property
-    def M(self):
+    def M(self) -> np.ndarray:
         """
         The M-vector
         """
@@ -251,7 +257,10 @@ class PFV():
     # search related properties
     # -------------------------
     @property
-    def ellipsoid_mat(self):
+    def ellipsoid_mat(self) -> np.ndarray:
+        """
+        The matrix mat defining the M-ellipsoid: c^T @ mat @ c <= Q. Coni only.
+        """
         if not self.coni:
             raise NotImplementedError
 
@@ -259,7 +268,10 @@ class PFV():
         return mat
 
     @property
-    def ellipsoid_c(self):
+    def ellipsoid_c(self) -> np.ndarray:
+        """
+        The lattice vector c such that M = Binter @ c. Coni only.
+        """
         if not self.coni:
             raise NotImplementedError
 
@@ -270,7 +282,12 @@ class PFV():
         return c
 
     @property
-    def ellipsoid_required_dilation(self):
+    def ellipsoid_required_dilation(self) -> float:
+        """
+        The minimum ellipsoid dilation needed to capture this PFV. Coni only.
+
+        Equal to c^T @ mat @ c / Q.
+        """
         if not self.coni:
             raise NotImplementedError
 
@@ -282,38 +299,45 @@ class PFV():
     # validation of fluxes
     # --------------------
     @property
-    def H(self):
+    def H(self) -> np.ndarray:
+        """
+        The hyperplanes of the Kahler cone.
+        """
         if self.coni:
             return self._cydata.H_cob
         else:
             return self._cydata.H
 
     @property
-    def a(self):
+    def a(self) -> np.ndarray:
         """
         The a-matrix
         """
         return self._cydata.a
 
     @property
-    def b(self):
+    def b(self) -> np.ndarray:
         """
         The b-vector
         """
         return self._cydata.b
 
     @property
-    def gvs(self):
+    def gvs(self) -> np.ndarray | None:
+        """
+        The Gopakumar-Vafa invariants in coo format, or None if not yet set.
+        """
         if self._gvs is not None:
             return self._gvs.copy()
 
     # N-matrix and its inverse
     # ------------------------
     @property
-    def N(self):
-        # the N-matrix
-        # defined as kappa @ M
-        # for coni, the 0th row and column are trimmed
+    def N(self) -> np.ndarray:
+        """
+        The N-matrix, defined as kappa @ M. For coni, the 0th row and column
+        are trimmed.
+        """
         if self._N is None:
             self._N = self.kappa @ self._M
 
@@ -324,6 +348,9 @@ class PFV():
 
     @property
     def Ninv(self):
+        """
+        The scaled exact inverse of N, as a (flint matrix, scale) pair.
+        """
         if self._Ninv is None:
             self._Ninv = lattice.inv_scaled(self.N, as_flint=True)
 
@@ -332,7 +359,7 @@ class PFV():
     # p-vector
     # --------
     @property
-    def p(self):
+    def p(self) -> np.ndarray:
         """
         The p-vector
 
@@ -345,7 +372,7 @@ class PFV():
         return self._p
 
     @property
-    def pgrading(self):
+    def pgrading(self) -> np.ndarray:
         """
         The 'pgrading'-vector.
 
@@ -359,7 +386,7 @@ class PFV():
 
     # p-vector computation
     # ====================
-    def _calc_p(self):
+    def _calc_p(self) -> None:
         """
         Compute the p-vector and pgrading.
         """
@@ -405,7 +432,15 @@ class PFV():
 
     # GVs
     # ===
-    def compute_gvs(self, max_deg):
+    def compute_gvs(self, max_deg: int) -> None:
+        """
+        Compute GV invariants up to degree max_deg via cytools and store them.
+
+        Parameters
+        ----------
+        max_deg : int
+            Maximum degree of GV invariants to compute.
+        """
         try:
             import cytools
         except ImportError as e:
@@ -418,7 +453,7 @@ class PFV():
     @gvs.setter
     def gvs(self, val):
         """
-        in coo format
+        Accepts GVs in coo format
         """
         # input sanitization
         try:
@@ -450,7 +485,7 @@ class PFV():
 
     # checkers
     # ========
-    def check_all(self, stop_at_fail=True):
+    def check_all(self, stop_at_fail: bool = True) -> bool:
         # master checking method (calls all functions that begin with 'check_')
 
         # get check methods
@@ -489,33 +524,33 @@ class PFV():
 
         return True
 
-    def check_a(self):
+    def check_a(self) -> bool:
         # check that a@M is even
         tmp = self.a@self.M
 
         return (tmp%2 == 0).all()
 
-    def check_b(self):
+    def check_b(self) -> bool:
         # check that b.M is a multiple of 24
         return np.dot(self.b, self.M)%24 == 0
 
-    def check_tadpole(self):
+    def check_tadpole(self) -> bool:
         # check tadpole bound
         upper = (self.h11+self.h21+2) + 2*self.coni
         return 0 <= -np.dot(self.M,self.K) <= upper
 
-    def check_Knonzero(self):
+    def check_Knonzero(self) -> bool:
         # check that K
         return any([Ki!=0 for Ki in self.K])
 
-    def check_Ninvertible(self, tol=0.5):
+    def check_Ninvertible(self, tol: float = 0.5) -> bool:
         # check that N is full rank
         # use determinant
-        if self._Ninvertible == None:
+        if self._Ninvertible is None:
             self._Ninvertible = np.abs(np.linalg.det(self.N))>tol
         return self._Ninvertible
 
-    def check_pcontainment(self):
+    def check_pcontainment(self) -> bool:
         # check that p is *strictly* contained in Kcup (the union of 2-face
         # equivalent kahler cones)
         if self.coni:
@@ -523,7 +558,7 @@ class PFV():
         else:
             return min(self.H@self.p)>0.5
 
-    def check_NpK(self, tol=1e-4):
+    def check_NpK(self, tol: float = 1e-4) -> bool:
         # check that N@p=K
         if self.coni:
             return (self.pgrading[0] == 0) and\
@@ -531,7 +566,7 @@ class PFV():
         else:
             return np.linalg.norm(self.N@self.p - self.K)<tol
 
-    def check_orthogonality(self):
+    def check_orthogonality(self) -> bool:
         # check that K.p=0
         if self.coni:
             return (self.pgrading[0] == 0) and\
@@ -585,7 +620,7 @@ class PFV():
             yield coeff, deg/self._p_denom
         return
 
-    def series(self, N_nonzero=float('inf'), verbosity=0):
+    def series(self, N_nonzero: int = float('inf'), verbosity: int = 0) -> list:
         # initialize series container
         self._series = []
         self._all_exps = []
@@ -613,7 +648,7 @@ class PFV():
         # built the entire series!
         return self._series
 
-    def valid_coeff_ratio(self):
+    def valid_coeff_ratio(self) -> bool | None:
         # checks if the coefficients obey |c1| > |c0|
         terms = self.series(N_nonzero=2)
         if len(terms)<2:
@@ -626,7 +661,7 @@ class PFV():
     # main physics outputs
     # --------------------
     @property
-    def tau0(self):
+    def tau0(self) -> complex:
         # tau0 is the value of tau that minimizes the 2-term racetrack
 
         # check if PFV has valid leading coefficients
@@ -652,9 +687,9 @@ class PFV():
         return self._tau0
 
     def W0(self,
-           as_logs=False,
-           check_Ninvertible=True,
-           verbosity=0):
+           as_logs: bool = False,
+           check_Ninvertible: bool = True,
+           verbosity: int = 0) -> float:
         # check if PFV has valid N-rank
         if check_Ninvertible and (not self.check_Ninvertible()):
             return np.nan#float('inf')
@@ -691,7 +726,7 @@ class PFV():
             return np.power(10,log10W0)
 
     @property
-    def gs(self):
+    def gs(self) -> float:
         # check if PFV has valid leading coefficients
         if not self.valid_coeff_ratio():
             return np.nan
@@ -705,7 +740,7 @@ class PFV():
 
     # diagnostics
     # ===========
-    def series_abs_vev(self, as_logs=False):
+    def series_abs_vev(self, as_logs: bool = False) -> list:
         # look at the series W = sum_i Wi for Wi = ci exp(2*pi*i*tau*p.qi)
         # find the value of exp(2*pi*i*tau) that minimizes W1+W2
         # plug that in to each Wi, return the (absolute value of the) result
@@ -734,7 +769,7 @@ class PFV():
         # return the (absolute values of the) VEVs of each term
         return vevs
 
-    def series_corrections(self, as_logs=False):
+    def series_corrections(self, as_logs: bool = False) -> list:
         if not self.silent:
             print("THIS USES self.tau0 FROM THE 2-TERM APPROXIMATION")
         log_vevs = self.series_abs_vev(as_logs=True)
@@ -754,7 +789,7 @@ class PFV():
 
     # diagnostics
     # -----------
-    def diagnostics(self, verbosity=0):
+    def diagnostics(self, verbosity: int = 0) -> None:
         # generic info
         print(f"Dumping info for:\n")
         print(self)
@@ -813,7 +848,7 @@ class PFV():
         terms = self.series(N_nonzero=2)
         deg0 = int(round(terms[0][1]*self._p_denom))
         deg1 = int(round(terms[1][1]*self._p_denom))
-        p_graded_degs = np.array(list(self._gvs[:,:-1]))@self.pgrading
+        #p_graded_degs = np.array(list(self._gvs[:,:-1]))@self.pgrading
 
         print( "Series:")
         print( "-------")
@@ -839,37 +874,27 @@ class PFV():
         print("Plotting the series... evauluated at tau0 from 2-term")
         self.plot_series()
 
-    def plot_series(self):
+    def plot_series(self) -> None:
         corrections = self.series_corrections(as_logs=True)
         plt.plot(range(2,2+len(corrections)),
                  corrections)
         plt.xlabel('ith term')
         plt.ylabel('log$_{10}(|W_i|/W_0)$')
 
-    def dump_series(self,
-                    max_deg=15,
-                    p_grading=False,
-                    n_digits=150,
-                    verbosity=0):
+    def dump_series(self, verbosity: int = 0) -> None:
         # dump it!
         if verbosity==0:
-            for term in self.series(max_deg=max_deg,
-                                    p_grading=p_grading,
-                                    n_digits=n_digits):
+            for term in self.series():
                 c,e = term
                 print(f"Exponent {e:.2f} has coefficient {c}")
         elif verbosity==1:
-            self.series(max_deg=max_deg,
-                        p_grading=p_grading,
-                        n_digits=n_digits)
+            self.series()
 
             for c,e in zip(self._all_coeffs, self._all_exps):
                 print(f"Exponent {e:.2f} has coefficient {sum(c)} "
                       f"arising from terms {c}...")
         else:
-            self.series(max_deg=max_deg,
-                        p_grading=p_grading,
-                        n_digits=n_digits)
+            self.series()
 
             print("(format is (GV_i)·(M.q_i) + ...)")
 
