@@ -42,7 +42,7 @@ from .cydata import CYData
 def check_singular(Ns: ArrayLike, rtol: float = 1e-12):
     """
     For a length-n stack of mxm matrices Ns (shape nxmxm), return a length-n
-    vector whose ith value is 1 iff Ns[i] is singular
+    vector whose ith value is 1 iff Ns[i] is singular.
     """
     svals = np.linalg.svdvals(Ns)
     singular = (svals[:,-1] <= rtol * svals[:,0])
