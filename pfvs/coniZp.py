@@ -370,12 +370,12 @@ def coniZpM(
     verbosity: int = 0,
     ) -> tuple[ArrayLike, ArrayLike]:
     """
-    A 'Zp' implementation that computes PFVs from input integer p-vectors.
+    A 'Zp' implementation that computes coniPFVs from input integer p-vectors.
 
     The logic is
         1 an integer p-vector defines a certain ellipsoid (see `coniMellipsoid`)
         2 a lattice point c in this ellipsoid defines an M-vector via Binter@c.
-          this also defines (most) of a K-vector via K[1:] = (Z@Binter@c)[1:]
+          this also defines (most of) a K-vector via K[1:] = (Z@Binter@c)[1:]
     so one wants to enumerate such c-vectors. This is done via Fincke-Pohst.
 
     As discussed in `coniMellipsoid` and `coniHmatrix`, this ellipsoid can be
@@ -454,7 +454,7 @@ def coniZpM(
         n_jobs = 2*os.cpu_count()
 
     if max_Kperp_gcd > 1:
-        print("This code hasn't been well-tested for max_Kperp_gcd > 1...")
+        print("WARNING This code hasn't been well-tested for max_Kperp_gcd > 1...")
 
     # misc (left for future debugging)
     only_positive_news = False
@@ -546,7 +546,7 @@ def coniZpM(
                 # use GCD lattices
                 # ----------------
                 else:
-                    print("LIKELY OLD CODE THAT COULD BE REFRESHED")
+                    print("WARNING LIKELY OLD CODE THAT COULD BE REFRESHED")
                     # i.e., encode gcd(Kperp) == val as a lattice
                     # scan in each lattice
                     lattice_points = np.empty((0,Binter.shape[1]), dtype=int)
