@@ -16,10 +16,10 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  This module contains methods for constructing coni PFVs
-#               using the "Zp" style algorithms. These operate by fixing some
-#               p-vectors and then searching for lattice points in an ellipsoid,
-#               one for each p-vector.
+# Description:  This module contains methods for constructing coniPFVs using the
+#               "Zp" style algorithms. These operate by fixing some p-vectors
+#               and then searching for lattice points in an ellipsoid, one for
+#               each p-vector.
 # -----------------------------------------------------------------------------
 
 # external imports
@@ -82,11 +82,11 @@ def gcd_of_matmul(A, C):
 # very coni-specific helpers
 # --------------------------
 def coniMellipsoid(p: ArrayLike,
-                   data: CYData=None,
-                   kappa: ArrayLike=None,
-                   Mbasis: ArrayLike=None,
-                   extra_lll_reduction: bool=True,
-                   extra_checks: bool=False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                   data: CYData = None,
+                   kappa: ArrayLike = None,
+                   Mbasis: ArrayLike = None,
+                   extra_lll_reduction: bool = True,
+                   extra_checks: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute the matrices defining the M-ellipsoid in coni-ZpM.
 
@@ -96,10 +96,13 @@ def coniMellipsoid(p: ArrayLike,
           as Kperp = (Z@M)[1:] for Z = kappa@p
         - the parallel component of K (i.e., K[0]) is unconstrained, other than
           K[0] > 0 (from the physics)
-        - one can show (see coniZpM) a K[0]>0 exists s.t. -dot(K,M) <= Qmax iff
-          -c^T @ Binter^T Z Binter c <= Qmax. Define mat = -Binter^T Z Binter.
-    That last constraint is the ellipsoid constraint. One can actually dilate
-    the ellipsoid as long as GCD(Kperp) > (c^T mat c)/Qmax.
+        - one can show (see `coniZpM`) a K[0]>0 exists s.t. -dot(K,M) <= Qmax
+          iff -c^T @ Binter^T @ Z @ Binter @ c <= Qmax. Define
+          mat = -Binter^T @ Z @ Binter.
+    That last constraint c^T @ mat @ c <= Qmax is the ellipsoid constraint. One
+    can actually dilate the ellipsoid as long as
+    GCD(Kperp) > (c^T @ mat @ c)/Qmax - see the 'cut on feasibility of finding a
+    K0 giving K'>0' section of `coniZpM`.
 
     Parameters
     ----------
@@ -157,15 +160,15 @@ def coniMellipsoid(p: ArrayLike,
     # -------------------------
     # need dot(K,p) = 0
     #
-    # note that K[1:] = (kappa@M@p)[1:]
-    # (K[0] is unconstrained so (kappa@M@p)[0] is semi-meaningless)
+    # note that K[1:] = (kappa @ M @ p)[1:]
+    # (K[0] is unconstrained so (kappa @ M @ p)[0] is semi-meaningless)
     #
-    # thus need dot(p, kappa@M@p) = 0
-    # equivalently, dot(kappa@p@p, M) = 0
+    # thus need dot(p, kappa @ M @ p) = 0
+    # equivalently, dot((kappa @ p) @ p, M) = 0
     T = kappa@p@p
 
-    # need T.T @ Mbasis@c = 0
-    # thus just need c in the orthogonal lattice to Mbasis.T @ T
+    # need T^T @ Mbasis @ c = 0
+    # thus just need c in the orthogonal lattice to Mbasis^T @ T
     # (the output will be lattice generators of such cs... we'll want
     #  lattice generators of valid Ms so we multiply on left by Mbasis)
     orthog = lattice.orthogonal_lattice(p=T.T@Mbasis)
@@ -206,29 +209,29 @@ def coniHmatrix(ZBinter: ArrayLike, proj: ArrayLike = None):
     in which case one can divide both p and K by GCD(K[1:]) to bring the
     solution back under tadpole. The strict inequality is correct but
     unintuitive. See the 'cut on feasibility of finding a K0 giving K'>0'
-    section of coniZpM.
+    section of `coniZpM`.
 
     Recall that
         1 The M-vector is built incrementally via the relationship M = Binter c,
           using a modified Fincke-Pohst algorithm.
-        2 K[1:] = (Z@Binter@c)[1:]
+        2 K[1:] = (Z @ Binter @ c)[1:]
     Naively, one would have to fully set c before checking GCD(K[1:]).
 
     A trick, though:
         FP sets c from right to left, beginning with c[-1], then c[-2], etc.
 
-        This uses that FP provides a monotonically increasing lower bound on 
-        c^T mat c as further components of c are set.
+        This uses the fact that FP provides a monotonically increasing lower
+        bound on  c^T @ mat @ c as further components of c are set.
 
-        Similarly, since H is upper triangular, H[-m:,-m:]@c[-m:] is a
+        Similarly, since H is upper triangular, H[-m:,-m:] @ c[-m:] is a
         monotonically decreasing upper bound on
-            GCD(H@c) = GCD((Z@Binter)[1:,:]@c) = GCD(K[1:]).
+            GCD(H@c) = GCD((Z@Binter)[1:,:] @ c) = GCD(K[1:]).
         This is because (H@c)[-m:] = H[-m:,-m:]@c[-m:] and
         GCD((H@c)[-m:]) >= GCD((H@c)[-n:]) for m<n.
 
-        Thus, mid operation, one can check if the current upper bound on the GCD
+        Thus, during FP, one can check if the current upper bound on the GCD
         is sufficiently large compared to the current lower bound on the
-        valuation. If not, then one can immediately prune the branch.
+        valuation. If not, then one can immediately prune the current branch.
 
     Parameters
     ----------
@@ -259,7 +262,7 @@ def coniHmatrix(ZBinter: ArrayLike, proj: ArrayLike = None):
 
 def Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
     """
-    (Not recommended in practice)
+    (Not recommended in practice - just prune FP using `coniHmatrix`)
 
     When finding c in the coniMellipsoid, one wants to guarantee that Kperp has
     sufficiently large GCD (see `coniHmatrix`). The collection of c giving rise

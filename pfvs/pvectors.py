@@ -63,7 +63,9 @@ def pvecs(
         Array of primitive p-vectors, where N >= `min_N_pts`. Each row is an
         integer vector satisfying H @ p > 0
     """
-    # pvec_kernel has a safety max # of iterations. Set this to a large number
+    # pvec_kernel has a safety max number of iterations, outputs
+    # set both to a large number
+    max_N_out  = 10*min_N_pts
     max_N_iter = 1_000_000*min_N_pts
 
     # read hyperplanes (varies for coni and non-coni PFVs)
@@ -88,7 +90,7 @@ def pvecs(
             B=B,
             linmat=H.astype(np.int32),
             linmin=1,
-            max_N_out=10*min_N_pts, # give room in case more pvecs are found
+            max_N_out=max_N_out,
             max_N_iter=max_N_iter
         )
         N = len(pts)
@@ -117,7 +119,7 @@ def pvecs(
             Bs_fit.append(np.log(B))
             Npts_fit.append(np.log(N))
 
-        # guess the B to scale it to
+        # guess the B to scale it to using some fitting:
         # log(N) = m log(B) + b
         # log(N1)-log(N0) = m(log(B1)-log(B0))
         # (ensure there are at least 3x data points. Otherwise, fit empirically
@@ -155,8 +157,9 @@ def pvecs_cpsat(
     keep_primitive: bool = True,
     verbosity: int = 0) -> np.ndarray:
     """
-    Generate primitive p-vectors using CP-SAT (OR-Tools). NOT recommended --
-    use `pvecs` instead, which is significantly faster.
+    (Not recommended in practice - use `pvecs` instead, which is faster)
+
+    Generate primitive p-vectors using CP-SAT (OR-Tools).
 
     Same goal as `pvecs`: finds integral vectors p satisfying H @ p > 0, where H
     are the hyperplanes of the Kahler cone (non-coni) or a particular facet of
@@ -248,7 +251,7 @@ def pvecs_cpsat(
     # define a constraint-programming model to solve
     model  = cp_model.CpModel()
     if max_Linf is None:
-        print("PLEASE set max_Linf")
+        print("PLEASE set max_Linf.. it's much more efficient if you set it")
         max_Linf = cp_model.INT32_MAX - 1
 
     p_vars = [model.NewIntVar(-max_Linf, max_Linf, f'x{i}') for i in\
