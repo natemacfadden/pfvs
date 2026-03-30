@@ -27,8 +27,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import warnings
 
+from numpy.typing import ArrayLike
+
 # local imports
 from . import lattice, cydata, Zp, coniZp
+from .cydata import CYData
 
 class PFV():
     """
@@ -46,9 +49,9 @@ class PFV():
         Whether to suppress messages. Defaults to False.
     """
     def __init__(self,
-        data: "CYData",
-        K: "ArrayLike",
-        M: "ArrayLike",
+        data: CYData,
+        K: ArrayLike,
+        M: ArrayLike,
         silent: bool = False):
         # read inputs
         self._cydata      = data
@@ -347,7 +350,7 @@ class PFV():
         return self._N.copy()
 
     @property
-    def Ninv(self):
+    def Ninv(self) -> tuple:
         """
         The scaled exact inverse of N, as a (flint matrix, scale) pair.
         """
@@ -486,8 +489,12 @@ class PFV():
     # checkers
     # ========
     def check_all(self, stop_at_fail: bool = True) -> bool:
-        # master checking method (calls all functions that begin with 'check_')
+        """
+        Run all check_* methods. Returns True iff all pass.
 
+        Runs check_Ninvertible first (required for p to exist), then the rest.
+        If stop_at_fail is True, short-circuits on first failure.
+        """
         # get check methods
         checks = [func for func in dir(self) if func[:6] == 'check_']
         checks = [check for check in checks if check != 'check_all']
@@ -525,41 +532,42 @@ class PFV():
         return True
 
     def check_a(self) -> bool:
-        # check that a@M is even
+        """Check that a @ M is even."""
         tmp = self.a@self.M
 
         return (tmp%2 == 0).all()
 
     def check_b(self) -> bool:
-        # check that b.M is a multiple of 24
+        """Check that dot(b, M) is a multiple of 24."""
         return np.dot(self.b, self.M)%24 == 0
 
     def check_tadpole(self) -> bool:
-        # check tadpole bound
+        """Check that 0 <= -dot(K, M) <= h11 + h21 + 2 + 2*coni."""
         upper = (self.h11+self.h21+2) + 2*self.coni
         return 0 <= -np.dot(self.M,self.K) <= upper
 
     def check_Knonzero(self) -> bool:
-        # check that K
+        """Check that K is nonzero."""
         return any([Ki!=0 for Ki in self.K])
 
     def check_Ninvertible(self, tol: float = 0.5) -> bool:
-        # check that N is full rank
-        # use determinant
+        """Check that N is full rank via |det(N)| > tol."""
         if self._Ninvertible is None:
             self._Ninvertible = np.abs(np.linalg.det(self.N))>tol
         return self._Ninvertible
 
     def check_pcontainment(self) -> bool:
-        # check that p is *strictly* contained in Kcup (the union of 2-face
-        # equivalent kahler cones)
+        """
+        Check that p is strictly contained in Kcup (the union of 2-face
+        equivalent Kahler cones).
+        """
         if self.coni:
             return min(self.H@self.pgrading[1:])>0.5
         else:
             return min(self.H@self.p)>0.5
 
     def check_NpK(self, tol: float = 1e-4) -> bool:
-        # check that N@p=K
+        """Check that N @ p = K."""
         if self.coni:
             return (self.pgrading[0] == 0) and\
                    np.linalg.norm(self.N@self.p[1:] - self.K[1:])<tol
@@ -567,7 +575,7 @@ class PFV():
             return np.linalg.norm(self.N@self.p - self.K)<tol
 
     def check_orthogonality(self) -> bool:
-        # check that K.p=0
+        """Check that dot(K, p) = 0."""
         if self.coni:
             return (self.pgrading[0] == 0) and\
                    (np.dot(self.pgrading[1:], self.K[1:]) == 0)
@@ -579,7 +587,11 @@ class PFV():
     # main series method
     # ------------------
     def series_gen(self):
-        assert self._gvs is not None
+        """
+        Generator yielding the coefficient, exponent of each term in the series
+        """
+        if self._gvs is None:
+            raise ValueError("GVs must be set to get the series")
 
         # get the GVs, charges
         gvs = self._gvs[:,-1]
@@ -621,6 +633,13 @@ class PFV():
         return
 
     def series(self, N_nonzero: int = float('inf'), verbosity: int = 0) -> list:
+        """
+        Compute the superpotential series W = sum_i c_i * exp(2*pi*i*tau*e_i),
+        where e_i = dot(p, q) and c_i = sum_{q at e_i} n_q * dot(M, q).
+
+        Returns a list of [coeff, exponent] pairs for nonzero terms only,
+        sorted by exponent. Stops after N_nonzero nonzero terms.
+        """
         # initialize series container
         self._series = []
         self._all_exps = []
@@ -649,7 +668,10 @@ class PFV():
         return self._series
 
     def valid_coeff_ratio(self) -> bool | None:
-        # checks if the coefficients obey |c1| > |c0|
+        """
+        Check that the series has valid leading coefficients, i.e. |c1| > |c0|.
+        Returns None if fewer than 2 terms are available.
+        """
         terms = self.series(N_nonzero=2)
         if len(terms)<2:
             if (not self.silent):
@@ -662,8 +684,10 @@ class PFV():
     # --------------------
     @property
     def tau0(self) -> complex:
-        # tau0 is the value of tau that minimizes the 2-term racetrack
-
+        """
+        The value of tau minimizing the 2-term racetrack potential.
+        Returns nan if the series has invalid leading coefficients.
+        """
         # check if PFV has valid leading coefficients
         validQ = self.valid_coeff_ratio()
         if validQ == False:
@@ -690,14 +714,21 @@ class PFV():
            as_logs: bool = False,
            check_Ninvertible: bool = True,
            verbosity: int = 0) -> float:
+        """
+        Compute the flux superpotential W0 from the 2-term racetrack
+        approximation.
+
+        Returns the value (or log10 if as_logs=True), or nan if N is singular
+        or the series has invalid leading coefficients.
+        """
         # check if PFV has valid N-rank
         if check_Ninvertible and (not self.check_Ninvertible()):
-            return np.nan#float('inf')
+            return np.nan
 
         # check if PFV has valid leading coefficients
         validQ = self.valid_coeff_ratio()
         if validQ == False:
-            return np.nan#float('inf')
+            return np.nan
         elif validQ is None:
             return np.nan
 
@@ -727,6 +758,10 @@ class PFV():
 
     @property
     def gs(self) -> float:
+        """
+        The string coupling gs = 1 / Im(tau0).
+        Returns nan if the series has invalid leading coefficients.
+        """
         # check if PFV has valid leading coefficients
         if not self.valid_coeff_ratio():
             return np.nan
@@ -741,9 +776,13 @@ class PFV():
     # diagnostics
     # ===========
     def series_abs_vev(self, as_logs: bool = False) -> list:
-        # look at the series W = sum_i Wi for Wi = ci exp(2*pi*i*tau*p.qi)
-        # find the value of exp(2*pi*i*tau) that minimizes W1+W2
-        # plug that in to each Wi, return the (absolute value of the) result
+        """
+        Evaluate |W_i| at the tau0 from the 2-term approximation.
+
+        Specifically, finds the value of exp(2*pi*i*tau) minimizing W_0 + W_1,
+        plugs it into each W_i = c_i * exp(2*pi*i*tau*e_i), and returns |W_i|
+        (or log10|W_i| if as_logs=True), one per series term.
+        """
         terms = self.series()
         coeffs, exps = zip(*terms)
 
@@ -770,6 +809,11 @@ class PFV():
         return vevs
 
     def series_corrections(self, as_logs: bool = False) -> list:
+        """
+        Compute |W_i| / W0 for i >= 2, as a measure of higher-order corrections
+        to the 2-term approximation. Returns the ratios (or log10 if
+        as_logs=True), starting from the third series term.
+        """
         if not self.silent:
             print("THIS USES self.tau0 FROM THE 2-TERM APPROXIMATION")
         log_vevs = self.series_abs_vev(as_logs=True)
@@ -790,6 +834,10 @@ class PFV():
     # diagnostics
     # -----------
     def diagnostics(self, verbosity: int = 0) -> None:
+        """
+        Print a summary of the PFV: checks, tadpole, W0, tau0, gs, and series
+        info. At higher verbosity, dumps the full series and plots corrections.
+        """
         # generic info
         print(f"Dumping info for:\n")
         print(self)
@@ -875,6 +923,7 @@ class PFV():
         self.plot_series()
 
     def plot_series(self) -> None:
+        """Plot log10(|W_i| / W0) vs. term index for i >= 2."""
         corrections = self.series_corrections(as_logs=True)
         plt.plot(range(2,2+len(corrections)),
                  corrections)
@@ -882,7 +931,12 @@ class PFV():
         plt.ylabel('log$_{10}(|W_i|/W_0)$')
 
     def dump_series(self, verbosity: int = 0) -> None:
-        # dump it!
+        """
+        Print the series terms. At verbosity=0, prints (exponent, coefficient)
+        pairs. At verbosity=1, breaks each coefficient into its contributing
+        terms. At verbosity>=2, also shows the individual GV invariants and
+        charges.
+        """
         if verbosity==0:
             for term in self.series():
                 c,e = term
