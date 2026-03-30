@@ -92,7 +92,10 @@ class CYData:
         # change of basis matrix to basis where coni_curve = (1,0,...,0)
         # --------------------------------------------------------------
         if coni_cob is None:
-            # compute the change of basis via HNF
+            # Use the HNF transform to find a unimodular integer matrix U
+            # such that U @ coni_curve = (gcd, 0, ..., 0). Since coni_curve
+            # is primitive (gcd = 1), this gives U @ coni_curve = (1, 0,...,0),
+            # i.e. U is the desired change-of-basis matrix.
             q = np.array(self._coni_curve).reshape(-1,1)
             q = flint.fmpz_mat(q.tolist())
             self._cob = q.hnf(transform=True)[1]

@@ -79,6 +79,10 @@ def extended_euclidean(a,b):
     """
     Extended Euclidean algorithm.
 
+    Runs the standard Euclidean algorithm on (a, b) while tracking the
+    linear combinations of (a, b) that produce each remainder, yielding
+    Bezout coefficients s, t such that s*a + t*b = gcd(a, b).
+
     Parameters
     ----------
     a, b : int
@@ -165,40 +169,40 @@ def orthogonal_lattice_custom(p: "ArrayLike") -> "ArrayLike":
     U = np.eye(n, dtype=p.dtype)
 
     w = p.copy()
+    # Invariant: after step k, w[0] = gcd(p[0],...,p[k]) and w[1:k] = 0.
+    # U is kept unimodular throughout, satisfying U @ p_original = w.
+    # At the end, w = (gcd(p), 0, ..., 0), so U[1:] @ p_original = 0,
+    # meaning the rows of U[1:] span the orthogonal complement.
     for k in range(1,n):
-        # clear out w[k]
-
-        # already done :)
+        # w[k] is already zero — this component was cleared by a prior step
         if w[k] == 0:
             continue
 
-        # not done - compute the bezout coefficients
+        # Use Bezout to find a unimodular 2x2 matrix M such that
+        # M @ (w[0], w[k]) = (gcd(w[0], w[k]), 0).
+        # This replaces (w[0], w[k]) with (gcd, 0) while preserving
+        # the unimodularity of U.
         a,b   = w[0], w[k]
         s,t,g = extended_euclidean(a,b)
 
         M = [[s,t],[-b//g, a//g]]
-        # interpretation:
-        # det(M) = +/- 1
-        # M@(w[0],w[k]) = (g, 0)
+        # det(M) = s*(a//g) + t*(b//g) = +/- 1  (Bezout identity)
+        # M @ (a, b) = (s*a + t*b, 0) = (g, 0)
 
         # update w
         w[0] = g
         w[k] = 0
 
-        # update U
-        # think: U->\Tilde{M}@U
-        # for \Tilde{M} an extended version of M
-        # (specifically,
-        #                \Tilde{M}<-1
-        #                \Tilde{M}[[0,k],[0,k]] <- M)
-        # you can track the indices but this has the effect
-        #     U[[0,k],r] <- M@U[[0,k],r]
+        # Apply M to rows 0 and k of U (i.e., U <- M_extended @ U),
+        # maintaining U @ p_original = w.
         for r in range(n):
             tmp1   = M[0][0]*U[0,r] + M[0][1]*U[k,r]
             tmp2   = M[1][0]*U[0,r] + M[1][1]*U[k,r]
             U[0,r] = tmp1
             U[k,r] = tmp2
 
+    # U[0] satisfies U[0] @ p = gcd(p); U[1:] satisfies U[1:] @ p = 0.
+    # Return U[1:].T so that the orthogonal basis vectors are columns.
     return U[1:].T
 
 # dual lattice
@@ -580,6 +584,12 @@ def _kannan_box_mat_set_coord_candidates(
     lo = -B
     hi = B
 
+    # For each linear constraint row j, derive a bound on vec[i].
+    # We need: linmat[j,i]*vec[i] + partial_j + (remaining contribution) >= linmin
+    # In the worst case the remaining contribution (indices k < i) is at most
+    # B * abssum[j, i]. So a necessary condition on vec[i] alone is:
+    #   linmat[j,i]*vec[i] >= linmin - partial_j - B*abssum[j,i]  =: numer
+    # If linmat[j,i] > 0 this gives a lower bound; if < 0, an upper bound.
     for j in range(linmat.shape[0]):
         if linmat[j,i] == 0:
             continue
@@ -620,6 +630,17 @@ def kannan_box_mat_njit(
     Enumerate all nonzero integer vectors vec satisfying
         -B <= vec[i] <= B  (box constraint)
         linmat @ vec >= linmin  (linear constraint)
+
+    Named "Kannan box" after R. Kannan's lattice enumeration strategy: the
+    search space is an L-inf box [-B, B]^dim. At each DFS depth i, the
+    feasible range for vec[i] is tightened per linear constraint row j:
+      - `stack_partial_sum[j]` accumulates the contribution of already-fixed
+        coordinates (indices > i) to row j of linmat @ vec
+      - `abssum[j, i]` is the sum of |linmat[j, k]| for k < i, giving the
+        maximum possible contribution from the still-unfixed coordinates
+        assuming each is bounded by B
+    Together these yield a tighter lower bound on vec[i] per constraint,
+    pruning branches where no completion can satisfy linmat @ vec >= linmin.
 
     This is an iterative (DFS) branch-and-bound implementation using an
     explicit stack. Columns of linmat are sorted by L1 norm so that tighter

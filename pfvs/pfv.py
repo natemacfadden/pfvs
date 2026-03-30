@@ -77,6 +77,11 @@ class PFV():
 
         # coni-specific variables
         # -----------------------
+        # These properties only exist on coni PFVs. We attach them to the
+        # class dynamically (type(self).x = property(...)) rather than
+        # defining them unconditionally with @property + a coni guard, so
+        # that attribute lookup raises AttributeError for non-coni instances
+        # instead of silently returning a wrong value.
         if self.coni:
             # coni curve/basis
             type(self).coni_curve = property(lambda self:
@@ -896,7 +901,6 @@ class PFV():
         terms = self.series(N_nonzero=2)
         deg0 = int(round(terms[0][1]*self._p_denom))
         deg1 = int(round(terms[1][1]*self._p_denom))
-        #p_graded_degs = np.array(list(self._gvs[:,:-1]))@self.pgrading
 
         print( "Series:")
         print( "-------")

@@ -126,11 +126,17 @@ def pvecs(
         #  untrustworthy)
         if len(Bs_fit) > 2:
             m = (Npts_fit[-1]-Npts_fit[-2])/(Bs_fit[-1]-Bs_fit[-2])
-            m *= 1.5 # overestimate the slope so as to underestimate B
+            # Inflate slope by 1.5x: the true N(B) curve is convex in
+            # log-log space, so the local slope overestimates the global
+            # slope. Inflating it causes B to be underestimated (i.e. we
+            # take a smaller step), which is safer than overshooting.
+            m *= 1.5
 
             Bguess = (np.log(min_N_pts)-Npts_fit[-1])/m + Bs_fit[-1]
             Bguess = np.exp(Bguess)
-            if N <= 200: # be very conservative with B if we have few pvecs
+            # With few p-vectors the log-log fit is noisy, so cap the step
+            # at 5% of B to avoid large jumps on unreliable extrapolation.
+            if N <= 200:
                 Bstep  = min(Bguess - B, 0.05*B)
             else:
                 Bstep = Bguess - B
