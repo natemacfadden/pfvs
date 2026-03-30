@@ -39,7 +39,7 @@ from .cydata import CYData
 
 # coniZp helpers
 # ==============
-def check_singular(Ns: ArrayLike, rtol: float = 1e-12) -> np.ndarray:
+def _check_singular(Ns: ArrayLike, rtol: float = 1e-12) -> np.ndarray:
     """
     Check which matrices in a stack are singular.
 
@@ -65,7 +65,7 @@ def check_singular(Ns: ArrayLike, rtol: float = 1e-12) -> np.ndarray:
 # these are only used in matrix product, so mutability is not a concern
 # compute these once and for all using global variables
 projs = [None]*100
-def get_proj(dim: int) -> np.ndarray:
+def _get_proj(dim: int) -> np.ndarray:
     """
     Return a (dim-1) x dim projection matrix that drops the 0th component.
 
@@ -87,7 +87,7 @@ def get_proj(dim: int) -> np.ndarray:
     return projs[dim]
 
 @numba.njit(parallel=True, fastmath=False)
-def gcd_of_matmul(A, C):
+def _gcd_of_matmul(A, C):
     """
     Compute the column-wise GCD of the matrix product A @ C.
 
@@ -121,7 +121,7 @@ def gcd_of_matmul(A, C):
 
 # very coni-specific helpers
 # --------------------------
-def coniMellipsoid(p: ArrayLike,
+def coni_M_ellipsoid(p: ArrayLike,
                    data: CYData = None,
                    kappa: ArrayLike = None,
                    Mbasis: ArrayLike = None,
@@ -179,12 +179,12 @@ def coniMellipsoid(p: ArrayLike,
         Updated M-vector lattice basis, integrating the dot(K,p)=0 constraint.
     """
     if data is None:
-        assert kappa is not None
-        assert Mbasis is not None
+        if kappa is None or Mbasis is None:
+            raise ValueError("If data is None, both kappa and Mbasis must be provided.")
         h11 = kappa.shape[0]
     else:
-        assert kappa is None
-        assert Mbasis is None
+        if kappa is not None or Mbasis is not None:
+            raise ValueError("kappa and Mbasis must be None when data is provided.")
         h11    = data.h11
         kappa  = data.kappa_cob
         Mbasis = data.M_lattice()
@@ -237,12 +237,12 @@ def coniMellipsoid(p: ArrayLike,
 
     return mat, Z, Binter
 
-def coniHmatrix(ZBinter: ArrayLike, proj: ArrayLike = None):
+def coni_H_matrix(ZBinter: ArrayLike, proj: ArrayLike = None):
     """
     Compute the H-matrix for use in coni-ZpM. This is the HNF of (Z@Binter)[1:].
 
     This is the preferred approach for enforcing the GCD(K[1:]) cut in
-    `coniZpM`. The alternative lattice-based approach is `Kperp_gcd_lattice`
+    `coniZpM`. The alternative lattice-based approach is `_Kperp_gcd_lattice`
     (not recommended in practice).
 
     In coni-ZpM, one wants to ensure GCD(K[1:]) is sufficiently large. A point
@@ -280,12 +280,12 @@ def coniHmatrix(ZBinter: ArrayLike, proj: ArrayLike = None):
     Parameters
     ----------
     ZBinter : ndarray of shape (h11,h11-1)
-        The product of matrices Z and Binter from coniMellipsoid. Has
+        The product of matrices Z and Binter from coni_M_ellipsoid. Has
         interpretation that K[1:] = (ZBinter c)[1:].
     proj : ndarray of shape (h11-1,h11)
         An optional projection matrix, since we want the HNF of (Z Binter)[1:].
         This is trivial: identity(h11)[1:,:]. If not provided, then it's
-        computed using `get_proj`.
+        computed using `_get_proj`.
 
     Returns
     -------
@@ -294,7 +294,7 @@ def coniHmatrix(ZBinter: ArrayLike, proj: ArrayLike = None):
         and that GCD(H[-m:,-m:]@c[-m:]) >= GCD(H[-n:,-n:]@c[-n:]) for m<n.
     """
     if proj is None:
-        proj = get_proj(ZBinter.shape[0])
+        proj = _get_proj(ZBinter.shape[0])
 
     H    = proj@ZBinter
     H_fl = flint.fmpz_mat(H.tolist())
@@ -304,12 +304,12 @@ def coniHmatrix(ZBinter: ArrayLike, proj: ArrayLike = None):
 
     return H
 
-def Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
+def _Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
     """
-    (Not recommended in practice - just prune FP using `coniHmatrix`)
+    (Not recommended in practice - just prune FP using `coni_H_matrix`)
 
-    When finding c in the `coniMellipsoid`, one wants to guarantee that Kperp
-    has sufficiently large GCD (see `coniHmatrix`). The collection of c giving
+    When finding c in the `coni_M_ellipsoid`, one wants to guarantee that Kperp
+    has sufficiently large GCD (see `coni_H_matrix`). The collection of c giving
     rise to GCD(Kperp) = g (or integer multiples of it) forms a lattice. This
     function computes a basis of that lattice.
 
@@ -339,7 +339,7 @@ def Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
     """
     # compute the matrix A such that Kperp = A@c
     # ------------------------------------------
-    proj = get_proj(data.h11)
+    proj = _get_proj(data.h11)
     A = proj@Z@Binter
 
     # compute the basis B such that (A @ (B@d)) % gcd == 0
@@ -377,7 +377,8 @@ def Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
 
     # LLL transform and map to NumPy array
     null = np.array(null_fl.transpose().lll().transpose().tolist()).astype(int)
-    assert np.all((A@null % gcd) == 0)
+    if not np.all((A@null % gcd) == 0):
+        raise RuntimeError("_Kperp_gcd_lattice: computed null lattice does not satisfy A@null % gcd == 0.")
 
     # sort null to maximize leading 0s in (Binter@null)[0]
     sort_inds = np.argsort((Binter@null)[0]!=0)
@@ -413,16 +414,16 @@ def coniZpM(
     A 'Zp' implementation that computes coniPFVs from input integer p-vectors.
 
     The logic is
-        1 an integer p-vector defines a certain ellipsoid (see `coniMellipsoid`)
+        1 an integer p-vector defines a certain ellipsoid (see `coni_M_ellipsoid`)
         2 a lattice point c in this ellipsoid defines an M-vector via Binter@c.
           this also defines (most of) a K-vector via K[1:] = (Z@Binter@c)[1:]
     so one wants to enumerate such c-vectors. This is done via Fincke-Pohst.
 
-    As discussed in `coniMellipsoid` and `coniHmatrix`, this ellipsoid can be
+    As discussed in `coni_M_ellipsoid` and `coni_H_matrix`, this ellipsoid can be
     dilated, but then only c vectors that give rise to K[1:] with sufficiently
     large GCD are allowed. This is integrated into the Fincke-Pohst solver via
-    the H-matrix from `coniHmatrix`. An alternative lattice-based approach is
-    available via `Kperp_gcd_lattice` (controlled by `use_gcd_lattice`), but
+    the H-matrix from `coni_H_matrix`. An alternative lattice-based approach is
+    available via `_Kperp_gcd_lattice` (controlled by `use_gcd_lattice`), but
     is not recommended.
 
     Likewise, one can impose constraints on M[0] >= 13 early in FP by ordering
@@ -492,6 +493,10 @@ def coniZpM(
             "coniZpM only applies to coni contexts. "
             "Use Zp.py for non-coni PFVs."
         )
+    if len(ps) == 0:
+        raise ValueError("ps must be non-empty.")
+    if ellipsoid_dilation <= 0:
+        raise ValueError(f"ellipsoid_dilation must be > 0, got {ellipsoid_dilation}.")
 
     if low_level_parallelism:
         if n_jobs != 1:
@@ -510,7 +515,7 @@ def coniZpM(
     kappa  = data.kappa_cob
     h11    = data.h11
     h21    = data.h21
-    proj   = get_proj(h11)
+    proj   = _get_proj(h11)
     Mbasis = data.M_lattice()
 
     if Q is None:
@@ -528,11 +533,11 @@ def coniZpM(
         all_Ms = np.zeros((0,h11), dtype=np.int32)
 
         for p in p_chunk:
-            _0p = np.concatenate([[0],p])
+            p_full = np.concatenate([[0],p])
 
             # construct the quadratic form defining the ellipsoid
-            mat, Z, Binter = coniMellipsoid(
-                _0p,
+            mat, Z, Binter = coni_M_ellipsoid(
+                p_full,
                 kappa=kappa,
                 Mbasis=Mbasis,
                 extra_lll_reduction=extra_lll_reduction,
@@ -548,7 +553,7 @@ def coniZpM(
                     # find relevant lattice points in ellipsoid c.T@mat@c <= Q
                     # just uses FP with pruning on GCDs and M0 - no GCD lattice
                     try:
-                        H = coniHmatrix(ZBinter, proj)
+                        H = coni_H_matrix(ZBinter, proj)
                     except Exception as e:
                         print(f"C long error for p={p.tolist()} :(",flush=True)
                         print(e)
@@ -603,7 +608,7 @@ def coniZpM(
                     rawQs          = np.empty((0,), dtype=int)
 
                     for gcd in range(1,np.ceil(ellipsoid_dilation)+1):
-                        Bgcd = Kperp_gcd_lattice(data, Z, Binter, gcd)
+                        Bgcd = _Kperp_gcd_lattice(data, Z, Binter, gcd)
 
                         vs, vQs = lattice.fp_iterative_njit(
                             # ellipsoid definition
@@ -684,7 +689,7 @@ def coniZpM(
                 # -c.T @ Binter.T @ Z @ Binter @ c < Q/Kscaling
                 # DOH!... same matrix!
                 if low_level_parallelism:
-                    K_gcds = gcd_of_matmul(ZBinter[1:], cs)
+                    K_gcds = _gcd_of_matmul(ZBinter[1:], cs)
                 else:
                     Kperps = ZBinter[1:]@cs
                     K_gcds = np.gcd.reduce(Kperps, axis=0)
@@ -829,7 +834,7 @@ def coniZpM(
                     Ns = Ns.transpose(2,0,1) # (N,h11,h11)
                     Ns = Ns[:,1:,1:]
 
-                    singular.append(check_singular(Ns))
+                    singular.append(_check_singular(Ns))
 
                 singular = np.concatenate(singular)
 

@@ -35,7 +35,7 @@ from .cydata import CYData
 # ==========
 # generic
 # -------
-def check_singular(Ns: ArrayLike, rtol: float = 1e-12) -> np.ndarray:
+def _check_singular(Ns: ArrayLike, rtol: float = 1e-12) -> np.ndarray:
     """
     Check which matrices in a stack are singular.
 
@@ -59,7 +59,7 @@ def check_singular(Ns: ArrayLike, rtol: float = 1e-12) -> np.ndarray:
 
 # non-coni
 # --------
-def allow_gcds(Ks: ArrayLike, Ms: ArrayLike, Qmax: int, h11: int) -> tuple[np.ndarray, np.ndarray]:
+def _allow_gcds(Ks: ArrayLike, Ms: ArrayLike, Qmax: int, h11: int) -> tuple[np.ndarray, np.ndarray]:
     """
     Re-introduce nontrivial GCDs into primitive (K, M) pairs.
 
@@ -116,7 +116,7 @@ def allow_gcds(Ks: ArrayLike, Ms: ArrayLike, Qmax: int, h11: int) -> tuple[np.nd
 
 # very PFV-specific helpers
 # -------------------------
-def Mellipsoid(p: ArrayLike,
+def M_ellipsoid(p: ArrayLike,
                data: CYData = None,
                kappa: ArrayLike = None,
                Mbasis: ArrayLike = None,
@@ -171,12 +171,12 @@ def Mellipsoid(p: ArrayLike,
         Updated M-vector lattice basis, integrating the dot(K,p)=0 constraint.
     """
     if data is None:
-        assert kappa is not None
-        assert Mbasis is not None
+        if kappa is None or Mbasis is None:
+            raise ValueError("If data is None, both kappa and Mbasis must be provided.")
         h11 = kappa.shape[0]
     else:
-        assert kappa is None
-        assert Mbasis is None
+        if kappa is not None or Mbasis is not None:
+            raise ValueError("kappa and Mbasis must be None when data is provided.")
         h11    = data.h11
         kappa  = data.kappa
         Mbasis = data.M_lattice()
@@ -220,7 +220,7 @@ def Mellipsoid(p: ArrayLike,
 
     return mat, Z, Binter
 
-def Kellipsoid(p: ArrayLike,
+def K_ellipsoid(p: ArrayLike,
                data: CYData = None,
                kappa: ArrayLike = None,
                Mbasis: ArrayLike = None,
@@ -268,12 +268,12 @@ def Kellipsoid(p: ArrayLike,
         The K-vector lattice basis, integrating just the dot(K,p)=0 constraint.
     """
     if data is None:
-        assert kappa is not None
-        assert Mbasis is not None
+        if kappa is None or Mbasis is None:
+            raise ValueError("If data is None, both kappa and Mbasis must be provided.")
         h11 = kappa.shape[0]
     else:
-        assert kappa is None
-        assert Mbasis is None
+        if kappa is not None or Mbasis is not None:
+            raise ValueError("kappa and Mbasis must be None when data is provided.")
         h11    = data.h11
         kappa  = data.kappa
         Mbasis = data.M_lattice()
@@ -297,8 +297,9 @@ def Kellipsoid(p: ArrayLike,
 
     return mat, B
 
-def Hmatrix():
-    print("FILL IN")
+def H_matrix():
+    """[WIP: not yet implemented.]"""
+    raise NotImplementedError
 
 # non-coni Zp
 # ===========
@@ -324,11 +325,11 @@ def ZpM(
     p-vectors.
 
     The logic is
-        1 an integer p-vector defines a certain ellipsoid (see `Mellipsoid`)
+        1 an integer p-vector defines a certain ellipsoid (see `M_ellipsoid`)
         2 a lattice point c in this ellipsoid defines an M-vector via Binter@c.
           this also defines a K-vector via K = Z @ Binter @ c
     so one wants to enumerate such c-vectors. This is done via Fincke-Pohst.
-    GCD re-introduction is applied post-hoc via `allow_gcds`. [WIP: GCD
+    GCD re-introduction is applied post-hoc via `_allow_gcds`. [WIP: GCD
     pruning will be integrated into the Fincke-Pohst solver, as in
     `coniZpM`.]
 
@@ -384,6 +385,8 @@ def ZpM(
             "Methods in Zp.py only apply to non-coni contexts. "
             "Use coniZp.py for coni PFVs."
         )
+    if len(ps) == 0:
+        raise ValueError("ps must be non-empty.")
 
     # misc (left for future debugging)
     only_positive_news = False
@@ -396,6 +399,10 @@ def ZpM(
 
     if Qmax is None:
         Qmax = h11+h21+2
+    if Qmax < Qmin:
+        raise ValueError(f"Qmax ({Qmax}) must be >= Qmin ({Qmin}).")
+    if ellipsoid_dilation <= 0:
+        raise ValueError(f"ellipsoid_dilation must be > 0, got {ellipsoid_dilation}.")
 
     # the search
     # ----------
@@ -406,7 +413,7 @@ def ZpM(
     print("WARNING CONVERT THIS TO PARALLELISM USING NJOBS AS IN CONI")
     iterator = ps
     for _i, p in enumerate(iterator):
-        mat, Z, Binter = Mellipsoid(
+        mat, Z, Binter = M_ellipsoid(
             p,
             kappa=kappa,
             Mbasis=Mbasis,
@@ -447,7 +454,7 @@ def ZpM(
             Ns = (kappa.reshape(h11*h11,h11)@chunk).reshape(h11,h11,-1)
             Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
-            singular.append(check_singular(Ns))
+            singular.append(_check_singular(Ns))
 
         singular = np.concatenate(singular)
 
@@ -484,7 +491,7 @@ def ZpM(
         all_Ms = np.vstack([all_Ms, Ms])
 
     # return
-    return allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
+    return _allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
 
 def ZpK(
     # problem definition
@@ -508,11 +515,11 @@ def ZpK(
     p-vectors.
 
     The logic is
-        1 an integer p-vector defines a certain ellipsoid (see `Kellipsoid`)
+        1 an integer p-vector defines a certain ellipsoid (see `K_ellipsoid`)
         2 a lattice point d in this ellipsoid defines a K-vector via B @ d.
           this also defines an M-vector via M = (kappa @ p)^{-1} @ B @ d
     so one wants to enumerate such d-vectors. This is done via Fincke-Pohst.
-    GCD re-introduction is applied post-hoc via `allow_gcds`. [WIP: GCD
+    GCD re-introduction is applied post-hoc via `_allow_gcds`. [WIP: GCD
     pruning will be integrated into the Fincke-Pohst solver, as in
     `coniZpM`.]
 
@@ -568,6 +575,8 @@ def ZpK(
             "Methods in Zp.py only apply to non-coni contexts. "
             "Use coniZp.py for coni PFVs."
         )
+    if len(ps) == 0:
+        raise ValueError("ps must be non-empty.")
 
     # misc (left for future debugging)
     only_positive_news = False
@@ -580,6 +589,10 @@ def ZpK(
 
     if Qmax is None:
         Qmax = h11+h21+2
+    if Qmax < Qmin:
+        raise ValueError(f"Qmax ({Qmax}) must be >= Qmin ({Qmin}).")
+    if ellipsoid_dilation <= 0:
+        raise ValueError(f"ellipsoid_dilation must be > 0, got {ellipsoid_dilation}.")
 
     # the search
     # ----------
@@ -600,7 +613,7 @@ def ZpK(
                 f"may be singular."
             ) from e
 
-        mat, B = Kellipsoid(
+        mat, B = K_ellipsoid(
             p,
             kappa=kappa,
             Mbasis=Mbasis,
@@ -658,7 +671,7 @@ def ZpK(
             Ns = (kappa.reshape(h11*h11,h11)@chunk).reshape(h11,h11,-1)
             Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
-            singular.append(check_singular(Ns))
+            singular.append(_check_singular(Ns))
 
         singular = np.concatenate(singular)
 
@@ -677,4 +690,4 @@ def ZpK(
         all_Ms = np.vstack([all_Ms, Ms])
 
     # return
-    return allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
+    return _allow_gcds(all_Ks, all_Ms, Qmax, data.h11)

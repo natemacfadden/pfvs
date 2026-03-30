@@ -60,6 +60,13 @@ class PFV():
         self._M           = np.array(M)
         self.silent       = silent
 
+        if self._K.shape != (data.h11,):
+            raise ValueError(
+                f"K must have shape ({data.h11},), got {self._K.shape}.")
+        if self._M.shape != (data.h11,):
+            raise ValueError(
+                f"M must have shape ({data.h11},), got {self._M.shape}.")
+
         # initialize other variables
         self._p           = None
         self._pgrading    = None
@@ -278,7 +285,7 @@ class PFV():
         if not self.coni:
             raise NotImplementedError
 
-        mat, Z, Binter = coniZp.coniMellipsoid(self.pgrading, self._cydata)
+        mat, Z, Binter = coniZp.coni_M_ellipsoid(self.pgrading, self._cydata)
         return mat
 
     @property
@@ -290,7 +297,7 @@ class PFV():
         if not self.coni:
             raise NotImplementedError
 
-        mat, Z, Binter = coniZp.coniMellipsoid(self.pgrading, self._cydata)
+        mat, Z, Binter = coniZp.coni_M_ellipsoid(self.pgrading, self._cydata)
         c = np.rint(np.linalg.lstsq(Binter, self.M)[0]).astype(int)
         if not np.all(self.M == Binter@c):
             raise RuntimeError(
@@ -575,6 +582,8 @@ class PFV():
 
     def check_Ninvertible(self, tol: float = 0.5) -> bool:
         """Check that N is full rank via |det(N)| > tol."""
+        if tol <= 0:
+            raise ValueError(f"tol must be > 0, got {tol}.")
         if self._Ninvertible is None:
             self._Ninvertible = np.abs(np.linalg.det(self.N))>tol
         return self._Ninvertible
@@ -666,6 +675,9 @@ class PFV():
         Returns a list of [coeff, exponent] pairs for nonzero terms only,
         sorted by exponent. Stops after N_nonzero nonzero terms.
         """
+        if N_nonzero <= 0:
+            raise ValueError(f"N_nonzero must be > 0, got {N_nonzero}.")
+
         # initialize series container
         self._series = []
         self._all_exps = []
@@ -673,7 +685,7 @@ class PFV():
         self._all_charges = []
         self._all_coeffs = []
 
-        len_series = len(self._series)
+        len_series = 0  # self._series was just reset above
 
         # series is already long enough!
         if len_series >= N_nonzero:

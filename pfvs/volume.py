@@ -41,6 +41,10 @@ def vol_ball(r: float, dim: int) -> float:
     **Returns:**
     The volume of the ball.
     """
+    if r < 0:
+        raise ValueError(f"r must be >= 0, got {r}.")
+    if dim <= 0:
+        raise ValueError(f"dim must be > 0, got {dim}.")
     prefactor = np.pow(np.pi, dim/2)/sp.special.gamma(1 + dim/2)
     return prefactor * (r**dim)
 
@@ -108,8 +112,10 @@ def estimate_num_cs(Q: float, L: ArrayLike, b: ArrayLike, offset: float) -> floa
     dim = L.shape[1]
 
     # map to a ball via x = L.T @ c
-    u      = np.linalg.inv(L) @ b
-    offset = offset
+    try:
+        u = np.linalg.inv(L) @ b
+    except np.linalg.LinAlgError as e:
+        raise ValueError("L is singular; cannot invert.") from e
 
     # normalize u
     u_norm = np.linalg.norm(u)

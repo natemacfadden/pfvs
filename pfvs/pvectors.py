@@ -64,6 +64,9 @@ def pvecs(
         Array of primitive p-vectors, where N >= `min_N_pts`. Each row is an
         integer vector satisfying H @ p > 0
     """
+    if min_N_pts <= 0:
+        raise ValueError(f"min_N_pts must be > 0, got {min_N_pts}.")
+
     # pvec_kernel has a safety max number of iterations, outputs
     # set both to a large number
     max_N_out  = 10*min_N_pts
@@ -125,7 +128,7 @@ def pvecs(
         # log(N1)-log(N0) = m(log(B1)-log(B0))
         # (ensure there are at least 3x data points. Otherwise, fit empirically
         #  untrustworthy)
-        if len(Bs_fit) > 2:
+        if len(Bs_fit) > 2:  # require >=3 points before trusting the fit
             m = (Npts_fit[-1]-Npts_fit[-2])/(Bs_fit[-1]-Bs_fit[-2])
             # Inflate slope by 1.5x: the true N(B) curve is convex in
             # log-log space, so the local slope overestimates the global
@@ -210,6 +213,12 @@ def pvecs_cpsat(
         pass # good - exactly one of max_deg or min_N_pts was set
     else:
         raise ValueError("Either `max_deg` or `min_N_pts` must be set...")
+    if max_deg is not None and max_deg < min_deg:
+        raise ValueError(f"max_deg ({max_deg}) must be >= min_deg ({min_deg}).")
+    if max_Linf is not None and max_Linf <= 0:
+        raise ValueError(f"max_Linf must be > 0, got {max_Linf}.")
+    if deg_window <= 0:
+        raise ValueError(f"deg_window must be > 0, got {deg_window}.")
 
     # read hyperplanes
     if data.coni: H = data.H_cob
