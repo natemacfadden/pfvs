@@ -33,6 +33,7 @@ from numba.typed import Dict
 # basic helpers
 # =============
 def lcm(a, b):
+    """Least common multiple of integers a and b."""
     return abs(a*b) // math.gcd(a, b)
 
 # misc lattice
@@ -40,8 +41,8 @@ def lcm(a, b):
 # LLL-reduction
 def lll_reduce(B: "ArrayLike") -> "ArrayLike":
     """
-    Apply lll-reduction to the input matrix, representing a columnwise basis of
-    some lattice
+    Apply LLL-reduction to the input matrix, representing a columnwise basis
+    of some lattice.
 
     N.B.: Flint's LLL-transformation effectively works on row-bases. This is
     because, for an integral matrix M, it solves for
@@ -50,11 +51,15 @@ def lll_reduce(B: "ArrayLike") -> "ArrayLike":
     obeying T@M = L. I.e., L[i,:] = T[i,k] M[k,:] so the *rows* of L are
     integral combinations of the *rows* of M.
 
-    **Arguments:**
-    - `B`: A basis of a lattice, as column vectors.
+    Parameters
+    ----------
+    B : ArrayLike
+        A basis of a lattice, as column vectors.
 
-    **Returns:**
-    The reduced basis, also as column vectors.
+    Returns
+    -------
+    ArrayLike
+        The reduced basis, also as column vectors.
     """
     # transpose since Flint assumes a row-basis
     B_list = np.array(B.T).tolist()
@@ -71,6 +76,18 @@ def lll_reduce(B: "ArrayLike") -> "ArrayLike":
 # orthogonal lattice
 @njit
 def extended_euclidean(a,b):
+    """
+    Extended Euclidean algorithm.
+
+    Parameters
+    ----------
+    a, b : int
+
+    Returns
+    -------
+    s, t, gcd : int
+        Bezout coefficients and gcd, satisfying s*a + t*b = gcd(a, b).
+    """
     old_r, r = (a,b)
     old_s, s = (1,0)
     old_t, t = (0,1)
@@ -86,21 +103,26 @@ def extended_euclidean(a,b):
 
 def orthogonal_lattice(p: "ArrayLike") -> "ArrayLike":
     """
-    **Description:**
-    Computes a basis of the orthogonal lattice to some vector v, with columns
-    as basis vectors.
+    Computes a basis of the lattice orthogonal to p, with columns as basis
+    vectors.
 
-    **Arguments:**
-    - `v`: The orthogonal vector. Assumed to be integral
+    [WIP: This function may return a diluted sublattice rather than the true
+    orthogonal lattice. `flint.nullspace` does not guarantee a primitive basis,
+    so the GCD-reduction below may be insufficient. Should be replaced with an
+    HNF-based implementation.]
 
-    **Returns:**
-    A basis of the lattice orthogonal to v, as column vectors.
+    Parameters
+    ----------
+    p : ArrayLike
+        The orthogonal vector. Assumed to be integral.
+
+    Returns
+    -------
+    ArrayLike
+        A basis of the lattice orthogonal to p, as column vectors.
     """
     p = np.array(p).reshape(1,-1)
     dim = p.shape[1]
-
-    # speeds up following computations if p is primitive
-    #p = p//np.gcd.reduce(p,axis=1)
 
     # compute null space
     mat_fl = flint.fmpz_mat(p.tolist())
@@ -108,8 +130,6 @@ def orthogonal_lattice(p: "ArrayLike") -> "ArrayLike":
     null = null.transpose().hnf().transpose()
 
     gcds = np.array([np.gcd.reduce([null[i,j] for i in range(dim)]) for j in range(nullity)])
-
-    #print(dim, nullity, null)
 
     out = np.zeros((dim,nullity), dtype=int)
     for j in range(nullity):
@@ -124,15 +144,22 @@ def orthogonal_lattice(p: "ArrayLike") -> "ArrayLike":
 @njit
 def orthogonal_lattice_custom(p: "ArrayLike") -> "ArrayLike":
     """
-    **Description:**
-    Computes a basis of the orthogonal lattice to some vector v, with columns
-    as basis vectors.
+    Computes a basis of the lattice orthogonal to p via iterated Bezout
+    reduction. Columns are basis vectors.
 
-    **Arguments:**
-    - `v`: The orthogonal vector. Assumed to be integral
+    This is the preferred implementation over `orthogonal_lattice`: it
+    constructs the orthogonal complement directly using the extended Euclidean
+    algorithm, avoiding any lattice dilution.
 
-    **Returns:**
-    A basis of the lattice orthogonal to v, as column vectors.
+    Parameters
+    ----------
+    p : ArrayLike
+        The orthogonal vector. Assumed to be integral.
+
+    Returns
+    -------
+    ArrayLike
+        A basis of the lattice orthogonal to p, as column vectors.
     """
     n = p.shape[0]
     U = np.eye(n, dtype=p.dtype)
@@ -177,18 +204,22 @@ def orthogonal_lattice_custom(p: "ArrayLike") -> "ArrayLike":
 # dual lattice
 def dual_lattice(B: "ArrayLike") -> "ArrayLike":
     """
-    **Description:**
     Computes a basis of the lattice dual to L(B).
 
-    Use the convention that the basis vectors are the **columns** of B.
-
+    Uses the convention that basis vectors are the **columns** of B.
     See https://en.wikipedia.org/wiki/Dual_lattice
 
-    **Arguments:**
-    - `B`: A basis of the primal lattice.
+    Parameters
+    ----------
+    B : ArrayLike
+        A basis of the primal lattice, as column vectors.
 
-    **Returns:**
-    A basis of the dual lattice.
+    Returns
+    -------
+    D : np.ndarray
+        A basis of the dual lattice, as column vectors (numerator).
+    denom : int
+        The denominator, so the true dual basis is D / denom.
     """
     B = flint.fmpz_mat(B.tolist())
     D, denom = (B*( (B.transpose()*B).inv() )).numer_denom()
@@ -198,7 +229,29 @@ def dual_lattice(B: "ArrayLike") -> "ArrayLike":
 # integer 'inverse' of matrix (i.e., adjugate)
 def inv_scaled(A_in, as_flint: bool = False):
     """
-    Return (B, s) such that B*A = s*I
+    Compute a scaled integer inverse of A, i.e. (B, s) such that B @ A = s*I.
+
+    Uses the Smith normal form to find the minimal integer scaling factor s,
+    then solves for B column-by-column.
+
+    Parameters
+    ----------
+    A_in : ArrayLike
+        A square integer matrix. Must be nonsingular over Q.
+    as_flint : bool, optional
+        If True, return B as a flint.fmpz_mat instead of a numpy array.
+
+    Returns
+    -------
+    B : np.ndarray or flint.fmpz_mat
+        Integer matrix satisfying B @ A = s * I.
+    s : int
+        The scaling factor (lcm of the Smith normal form diagonal entries).
+
+    Raises
+    ------
+    ValueError
+        If A_in is singular.
     """
     dim = A_in.shape[0]
     A = flint.fmpz_mat(A_in.tolist())
@@ -255,7 +308,6 @@ def fp_iterative_njit(
         eps: float = 1e-4,
         COORD_BUFF_SIZE: int = 2048) -> "ArrayLike":
     """
-    **Description:**
     Enumerate all nonzero integer vectors vec such that
         0 <= vec^T @ mat @ vec <= Q.
 
@@ -276,20 +328,32 @@ def fp_iterative_njit(
            at the cost of adding a shift-vector to c[:dim-1]
         5) recurse
 
-    **Note:**
     This is an iterative (DFS) implementation using an explicit stack.
 
-    **Arguments:**
-    - `L`:               The lower triangular matrix such that mat = L@L.T
-    - `Q`:               The ellipsoid bound.
-    - `max_N_out`:       The maximum number of output allowed.
-    - `eps`:             A small number used for correctly setting bounds
-                         despite floating point errors.
-    - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
-                         of vec[i].
+    Parameters
+    ----------
+    L : ArrayLike
+        Lower triangular matrix such that mat = L @ L.T.
+    Q : float
+        The ellipsoid bound.
+    linvec : ArrayLike, optional
+        Linear constraint vector. If provided, only vectors with
+        dot(linvec, vec) >= linmin are returned.
+    linmin : int, optional
+        Minimum value for the linear constraint.
+    max_N_out : int, optional
+        Maximum number of output vectors allowed.
+    eps : float, optional
+        Small tolerance for floating-point bound computations.
+    COORD_BUFF_SIZE : int, optional
+        Size of the per-depth candidate value buffer.
 
-    **Returns:**
-    The vectors `vec` in the ellipsoid.
+    Returns
+    -------
+    out : np.ndarray, shape (N, dim)
+        Vectors in the ellipsoid.
+    Qs : np.ndarray, shape (N,)
+        Quadratic form value vec^T @ mat @ vec for each output vector.
     """
     dim        = L.shape[0]
     L_diag_inv = 1.0 / np.diag(L)
@@ -480,24 +544,38 @@ def _kannan_box_mat_set_coord_candidates(
     COORD_BUFF_SIZE) -> int:
     """
     ***For use only in kannan_box_mat_njit.***
-    ***For use only in kannan_box_mat_njit.***
-    ***For use only in kannan_box_mat_njit.***
-    ***For use only in kannan_box_mat_njit.***
-    ***For use only in kannan_box_mat_njit.***
 
-    **Description:**
-    Sets the candidate values for vec[i], bound by constraints on ...
+    Sets the candidate values for vec[i] satisfying -B <= vec[i] <= B and
+    the linear constraints linmat @ vec >= linmin, given partial sums for
+    indices j > i.
 
-    **Arguments:**
-    - `sp`:              Stack pointer. For writing our outputs.
+    Parameters
+    ----------
+    sp : int
+        Stack pointer, used to index into stack_vals and stack_val_len.
+    i : int
+        Current coordinate index being enumerated.
+    B : int
+        Box half-width bound.
+    linmat : ArrayLike
+        Linear constraint matrix.
+    linmin : int
+        Minimum value for the linear constraints.
+    stack_partial_sum : ArrayLike
+        Partial sums of linmat @ vec for indices j > i.
+    abssum : ArrayLike
+        Precomputed cumulative absolute column sums of linmat.
+    stack_vals : ArrayLike
+        Output buffer to store candidate values for vec[i].
+    stack_val_len : ArrayLike
+        Output buffer to store the count of candidate values.
+    COORD_BUFF_SIZE : int
+        Maximum number of candidates per depth.
 
-    - `stack_vals`:      The output array to store candidate vec[i] values to.
-    - `stack_val_len`:   How many candidate vec[i] values exist.
-    - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
-                         of vec[i].
-
-    **Returns:**
-    The number of candidate values, stack_val_len[sp].
+    Returns
+    -------
+    int
+        The number of candidate values written to stack_vals[sp].
     """
     lo = -B
     hi = B
@@ -539,27 +617,38 @@ def kannan_box_mat_njit(
         eps: float = 1e-4,
         COORD_BUFF_SIZE: int = 2048) -> "ArrayLike":
     """
-    **Description:**
-    Enumerate all nonzero integer vectors vec such that
-        -B <= vec[i] <= B
-    and
-        linmat@vec >= linmin.
+    Enumerate all nonzero integer vectors vec satisfying
+        -B <= vec[i] <= B  (box constraint)
+        linmat @ vec >= linmin  (linear constraint)
 
-    **Note:**
-    This is an iterative (DFS) implementation using an explicit stack.
+    This is an iterative (DFS) branch-and-bound implementation using an
+    explicit stack. Columns of linmat are sorted by L1 norm so that tighter
+    constraints are applied first.
 
-    **Arguments:**
-    - `V`:               ...
-    - `linmat`:          ...
-    - `linmin`:          ...
-    - `max_N_out`:       The maximum number of output allowed.
-    - `eps`:             A small number used for correctly setting bounds
-                         despite floating point errors.
-    - `COORD_BUFF_SIZE`: The size of the buffer that holds the possible values
-                         of vec[i].
+    Parameters
+    ----------
+    B : int
+        Box half-width bound.
+    linmat : ArrayLike
+        Linear constraint matrix, shape (n_constraints, dim).
+    linmin : int
+        Minimum value for each linear constraint (applied row-wise).
+    max_N_out : int, optional
+        Maximum number of output vectors.
+    max_N_iter : int, optional
+        Maximum number of stack iterations before early exit.
+    eps : float, optional
+        Floating-point tolerance (unused in this function, kept for API
+        consistency).
+    COORD_BUFF_SIZE : int, optional
+        Size of the per-depth candidate value buffer.
 
-    **Returns:**
-    The vectors `vec` in the ellipsoid.
+    Returns
+    -------
+    out : np.ndarray, shape (N, dim)
+        Vectors satisfying all constraints.
+    Niter : int
+        Number of stack iterations performed.
     """
     dim        = linmat.shape[1]
 
@@ -704,34 +793,32 @@ def _coni_kernel_set_bounds(
     eps) -> int:
     """
     ***For use only in coni_kernel_njit.***
-    ***For use only in coni_kernel_njit.***
-    ***For use only in coni_kernel_njit.***
-    ***For use only in coni_kernel_njit.***
-    ***For use only in coni_kernel_njit.***
 
-    **Description:**
-    Sets the candidate values for vec[i], bound by constraints on Q. Operates as
-    follows.
+    Sets the candidate integer range for vec[i] from the remaining quadratic
+    budget remQ. Feasible bounds (with R = sqrt(remQ)):
+        (-R - ci_offset) / L[i,i]  <=  vec[i]  <=  (R - ci_offset) / L[i,i]
 
-    Feasible integer bounds for vec[i] (let R = sqrt(remQ)):
-        -R                      <= c[i]          <= R
-        -R - ci_offset          <= L[i,i]*vec[i] <= R - ci_offset
-        (-R - ci_offset)/L[i,i] <= vec[i]        <= (R - ci_offset)/L[i,i]
-    where we used that the diagonal is positive.
+    Parameters
+    ----------
+    sp : int
+        Stack pointer, used to index into stack_val_min and stack_val_len.
+    remQ : float
+        Remaining quadratic budget Q - sum_{j>i} c[j]^2.
+    ci_offset : float
+        Offset to c[i] from contributions of vec[j] for j > i.
+    L_diag_inv : float
+        Reciprocal of the diagonal L[i,i].
+    stack_val_min : ArrayLike
+        Output buffer for the minimum candidate value of vec[i].
+    stack_val_len : ArrayLike
+        Output buffer for the number of candidate values.
+    eps : float
+        Floating-point tolerance for bound computation.
 
-    **Arguments:**
-    - `sp`:              Stack pointer. For writing our outputs.
-    - `remQ`:            The remaining amount of Q that we have to work with.
-    - `ci_offset`:       The offset to the vector vec[i] from vec[j>i]
-                         contributions.
-    - `L_diag_inv`:      The value 1/L[i,i] for setting bounds.
-    - `stack_val_min`:   Container for the minimum value of vec[i] permissible.
-    - `stack_val_len`:   Container for how many candidate vec[i] values exist.
-    - `eps`:             A small number used for correctly setting bounds
-                         despite floating point errors.
-
-    **Returns:**
-    The number of candidate values, stack_val_len[sp].
+    Returns
+    -------
+    int
+        The number of candidate values (stack_val_len[sp]).
     """
     if remQ < 0:
         remQ = 0
@@ -761,41 +848,43 @@ def coni_kernel_njit(
         max_N_out: int,
         eps: float = 1e-4) -> ("ArrayLike", "ArrayLike"):
     """
-    **Description:**
-    Adaptation of the (iterative) Fincke-Pohst algorithm for utility in
-    constructing coni-PFVs. I.e., solves
-        0 <= vec^T @ mat     @ vec <= dilation*Q.
-        0 <= vec^T @ (L@L^T) @ vec <= dilation*Q
-    as well as (M[0] cuts)
-        M0min <= dot(Binter0, vec)
-    as well as (K'>0 cuts)
-        (vec^T @ mat @ vec)//Q <= gcd(Kperp)
-                                = gcd([0, 1]@Z@Binter@vec)
-                                = gcd(H@vec)
-    for H the row-HNF of [0, 1]@Z@Binter (this matrix computes Kperp from vec).
+    Adaptation of the iterative Fincke-Pohst algorithm for constructing
+    coni-PFVs. Enumerates integer vectors vec satisfying:
 
-    Any `vec` satisfying all of the above can generate a coni-PFV, as long as
+        0 <= vec^T @ (L@L^T) @ vec <= dilation * Q   (ellipsoid)
+        dot(Binter0, vec) >= M0min                    (M[0] cut)
+        (vec^T @ mat @ vec) // Q <= gcd(H @ vec)      (K' > 0 cut)
+
+    Any vec passing all constraints can generate a coni-PFV as long as
     det(N) != 0.
 
-    **Arguments:**
-    - `L`:               The lower triangular matrix such that mat = L@L.T
-    - `Q`:               The ellipsoid bound.
-    - `dilation`:        The maximum allowed dilation to allow... As long as
-                         gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec
-                         can still define coni-PFV.
-    - `Binter0`:         Binter[0,:]. The vector such that dot(Binter0,vec)=M0.
-                         BEST TO ORDER COLUMNS SUCH THAT Binter0 HAS A LARGE
-                         NUMBER OF LEADING 0s.
-    - `M0min`:           The minimum value of M0 permitted. Inclusive.
-    - `H`:               Let G be the matrix such that Kperp = G@vec. Then
-                         H = HNF(G).
-    - `max_N_out`:       The maximum number of output allowed.
-    - `eps`:             A small number used for correctly setting bounds
-                         despite floating point errors.
+    Parameters
+    ----------
+    L : ArrayLike
+        Lower triangular matrix such that mat = L @ L.T.
+    Q : int
+        Base ellipsoid bound (tadpole).
+    dilation : int
+        Maximum allowed dilation factor for the ellipsoid.
+    Binter0 : ArrayLike
+        First row of Binter; satisfies dot(Binter0, vec) = M[0]. Columns
+        should be ordered so that Binter0 has as many leading zeros as
+        possible to enable early M[0] cuts.
+    M0min : int
+        Minimum permitted value of M[0]. Inclusive.
+    H : ArrayLike
+        Row-HNF of the matrix G such that Kperp = G @ vec.
+    max_N_out : int
+        Maximum number of output vectors.
+    eps : float, optional
+        Floating-point tolerance for bound computation.
 
-    **Returns:**
-    The vectors `vec` in the ellipsoid and obeying the extra constraints.
-    The valuation `vec^T @ mat @ vec`.
+    Returns
+    -------
+    out : np.ndarray, shape (N, dim)
+        Vectors satisfying all constraints.
+    Qs : np.ndarray, shape (N,)
+        Quadratic form value vec^T @ mat @ vec for each output vector.
     """
     # compute  useful variables
     Q_upper    = Q*dilation

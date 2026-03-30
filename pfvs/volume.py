@@ -80,19 +80,26 @@ def vol_cap(r, dim, offset):
 
 def estimate_num_cs(Q, L, b, offset):
     """
-    **Description:**
-    Use volume to estimate the number of lattice vectors, c, such that
-        (ellipsoid)  c.T @ (L@L.T) @ c <= Q AND
-        (linear cut) b.T @ c >= offset.
+    Estimate the number of lattice vectors c satisfying
+        c.T @ (L @ L.T) @ c <= Q   (ellipsoid)
+        b.T @ c >= offset           (linear cut)
+    using a volume approximation (one lattice point per unit volume).
 
-    **Arguments:**
-    - `Q`:      The bound for the ellipsoid.
-    - `L`:      The matrix defining the quadratic form.
-    - `b`:      The linear vector defining the spherical cap.
-    - `offset`: The offset of the affine hyperplane defining the cap.
+    Parameters
+    ----------
+    Q : float
+        Ellipsoid bound.
+    L : ArrayLike
+        Lower triangular matrix defining the quadratic form.
+    b : ArrayLike
+        Linear vector defining the spherical cap direction.
+    offset : float
+        Minimum value of dot(b, c).
 
-    **Returns:**
-    The number of lattice points in the spherical cap.
+    Returns
+    -------
+    float
+        Estimated number of lattice points in the region.
     """
     # preliminary
     r   = np.sqrt(Q)
@@ -104,7 +111,6 @@ def estimate_num_cs(Q, L, b, offset):
 
     # normalize u
     u_norm = np.linalg.norm(u)
-    #u      = u/u_norm
     offset = offset/u_norm
 
     # find volume of the cap in x-space

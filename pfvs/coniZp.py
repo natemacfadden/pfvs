@@ -41,8 +41,20 @@ from .cydata import CYData
 # ==============
 def check_singular(Ns: ArrayLike, rtol: float = 1e-12):
     """
-    For a length-n stack of mxm matrices Ns (shape nxmxm), return a length-n
-    vector whose ith value is 1 iff Ns[i] is singular.
+    Check which matrices in a stack are singular.
+
+    Parameters
+    ----------
+    Ns : ArrayLike, shape (n, m, m)
+        Stack of n square matrices.
+    rtol : float, optional
+        Relative tolerance: matrix is singular if
+        sval_min <= rtol * sval_max.
+
+    Returns
+    -------
+    np.ndarray, shape (n,), dtype bool
+        True at index i iff Ns[i] is singular.
     """
     svals = np.linalg.svdvals(Ns)
     singular = (svals[:,-1] <= rtol * svals[:,0])
@@ -55,7 +67,19 @@ def check_singular(Ns: ArrayLike, rtol: float = 1e-12):
 projs = [None]*100
 def get_proj(dim):
     """
-    Get a dim->(dim-1) projection matrix, projecting out the 0th component.
+    Return a (dim-1) x dim projection matrix that drops the 0th component.
+
+    Results are cached in the module-level `projs` list.
+
+    Parameters
+    ----------
+    dim : int
+        Dimension of the input space.
+
+    Returns
+    -------
+    np.ndarray, shape (dim-1, dim), dtype int64
+        The projection matrix eye(dim)[1:, :].
     """
     if projs[dim] is None:
         projs[dim] = np.eye(dim, dtype=np.int64)[1:,:]
@@ -65,11 +89,23 @@ def get_proj(dim):
 @numba.njit(parallel=True, fastmath=False)
 def gcd_of_matmul(A, C):
     """
-    Computes gcd(A@C, axis=0)
+    Compute the column-wise GCD of the matrix product A @ C.
 
-    Gives better performance than NumPy, but uses parallelism
-    (if you want to parallelize at a higher level, maybe not
-    the best idea...)
+    Equivalent to np.gcd.reduce(A @ C, axis=0), but faster due to Numba
+    parallelism. Note: if parallelizing at a higher level, the internal
+    parallelism here may be counterproductive.
+
+    Parameters
+    ----------
+    A : ArrayLike, shape (k, k)
+        Left matrix factor.
+    C : ArrayLike, shape (k, N)
+        Right matrix factor (columns are vectors).
+
+    Returns
+    -------
+    np.ndarray, shape (N,), dtype int64
+        GCD of each column of A @ C.
     """
     k, N = C.shape
     out  = np.empty(N, dtype=np.int64)

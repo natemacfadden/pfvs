@@ -37,8 +37,20 @@ from .cydata import CYData
 # -------
 def check_singular(Ns: ArrayLike, rtol: float = 1e-12):
     """
-    For a length-n stack of mxm matrices Ns (shape nxmxm), return a length-n
-    vector whose ith value is 1 iff Ns[i] is singular.
+    Check which matrices in a stack are singular.
+
+    Parameters
+    ----------
+    Ns : ArrayLike, shape (n, m, m)
+        Stack of n square matrices.
+    rtol : float, optional
+        Relative tolerance: matrix is singular if
+        sval_min <= rtol * sval_max.
+
+    Returns
+    -------
+    np.ndarray, shape (n,), dtype bool
+        True at index i iff Ns[i] is singular.
     """
     svals = np.linalg.svdvals(Ns)
     singular = (svals[:,-1] <= rtol * svals[:,0])

@@ -30,17 +30,27 @@ from . import lattice
 
 class CYData:
     """
-    Simple class to hold the relevant data of a CY for constructing PFVs.
+    Holds the CY data needed for constructing PFVs.
 
-    **Arguments:**
-    - `h21`:        The hodge number h^{2,1}.
-    - `kappa`:      The intersection numbers.
-    - `c2`:         The second chern class.
-    - `H`:          Inwards-facing hyperplaness defining the Kahler cone.
-    - `coni_curve`: The conifold curve. If not provided, then non-Coni PFVs are
-                    assumed.
-    - `coni_cob`:   A custom change of basis matrix used to map the coni curve
-                    to a preferred presentation (1,0,...0).
+    Parameters
+    ----------
+    h21 : int
+        The Hodge number h^{2,1}.
+    kappa : ArrayLike
+        The triple intersection numbers.
+    c2 : ArrayLike
+        The second Chern class.
+    H : ArrayLike
+        Inwards-facing hyperplanes defining the Kahler cone.
+    coni_curve : ArrayLike, optional
+        The conifold curve. If not provided, non-coni PFVs are assumed.
+    coni_cob : ArrayLike, optional
+        Change-of-basis matrix mapping the coni curve to (1,0,...,0).
+    vertices : ArrayLike, optional
+        Polytope vertices. Defaults to a placeholder string if not provided.
+    heights : ArrayLike, optional
+        Triangulation heights. Defaults to a placeholder string if not
+        provided.
     """
     def __init__(
         self,
@@ -52,21 +62,6 @@ class CYData:
         coni_cob: "ArrayLike" = None,
         vertices: "ArrayLike" = "unknown (set when constructing CYData)",
         heights: "ArrayLike" = "unknown (set when constructing CYData)"):
-        """
-        **Description:**
-        Initializes an instance of a simple class to hold the relevant data of
-        a CY for constructing PFVs.
-
-        **Arguments:**
-        - `h21`:        The hodge number h^{2,1}.
-        - `kappa`:      The intersection numbers.
-        - `c2`:         The second chern class.
-        - `H`:          Inwards-facing hyperplaness defining the Kahler cone.
-        - `coni_curve`: The conifold curve. If not provided, then non-Coni PFVs
-                        are assumed.
-        - `coni_cob`:   A custom change of basis matrix used to map the coni
-                        curve to a preferred presentation (1,0,...0).
-        """
         self._kappa = np.array(kappa)
         self._c2    = np.array(c2)
         self._H     = np.array(H)
@@ -133,20 +128,16 @@ class CYData:
         coni_curve: "ArrayLike" = None,
         coni_cob: "ArrayLike" = None) -> "CYData":
         """
-        **Description:**
-        Initializes an instance of a simple class to hold the relevant data of
-        a CY for constructing PFVs.
-
-        **Arguments:**
-        - `cy`:         The CYTools CalabiYau object of interest.
-        - `coni_curve`: The conifold curve. If not provided, then non-Coni PFVs
-                        are assumed.
-        - `coni_cob`:   A change of basis matrix used to map the coni curve to
-                        a preferred presentation (1,0,...0)
-        """
-        """
-        **Description:**
         Construct a CYData object from a cytools.CalabiYau object.
+
+        Parameters
+        ----------
+        cy : cytools.CalabiYau
+            The CYTools CalabiYau object of interest.
+        coni_curve : ArrayLike, optional
+            The conifold curve. If not provided, non-coni PFVs are assumed.
+        coni_cob : ArrayLike, optional
+            Change-of-basis matrix mapping the coni curve to (1,0,...,0).
         """
         try:
             import cytools
