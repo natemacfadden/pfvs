@@ -101,7 +101,7 @@ class PFV():
             type(self).align = property(lambda self:
                 2*89.5643*(self.Vtilde**(1/3))*(2*(2+self.h11+self.h21))*(self.zcf**(4/3))/(self.gsM*self.gsM*self.W0()*self.W0()) )
 
-        # alternative constructor
+    # alternative constructor
     # -----------------------
     @classmethod
     def from_str(cls, str_: str) -> "PFV":
@@ -511,7 +511,7 @@ class PFV():
         # check them
         passes = True
         for check in checks:
-            if not self.__getattribute__(check)():
+            if not getattr(self, check)():
                 # failed a check!
                 if not self.silent:
                     # printit!
@@ -548,7 +548,7 @@ class PFV():
 
     def check_Knonzero(self) -> bool:
         """Check that K is nonzero."""
-        return any([Ki!=0 for Ki in self.K])
+        return any(Ki != 0 for Ki in self.K)
 
     def check_Ninvertible(self, tol: float = 0.5) -> bool:
         """Check that N is full rank via |det(N)| > tol."""

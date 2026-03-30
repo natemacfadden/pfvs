@@ -47,10 +47,31 @@ def check_singular(Ns: ArrayLike, rtol: float = 1e-12):
 
 # non-coni
 # --------
-def allow_gcds(Ks: ArrayLike, Ms: ArrayLike, Qmax: int, h11: int):
+def allow_gcds(Ks: ArrayLike, Ms: ArrayLike, Qmax: int, h11: int) -> tuple[np.ndarray, np.ndarray]:
     """
-    non-coni PFVs naturally operate on primitive K,M (i.e., gcd(K)=gcd(M)=1)
-    allow re-introduction of nontrivial GCDs (up to the tadpole constraint)
+    Re-introduce nontrivial GCDs into primitive (K, M) pairs.
+
+    Non-coni PFVs naturally operate on primitive K, M (i.e., gcd(K)=gcd(M)=1).
+    This function expands each such pair to all (aK, bM) with a, b >= 1 that
+    still satisfy the tadpole constraint -dot(aK, bM) <= Qmax.
+
+    Parameters
+    ----------
+    Ks : ArrayLike of shape (N, h11)
+        Primitive K-vectors, one per row.
+    Ms : ArrayLike of shape (N, h11)
+        Primitive M-vectors, one per row.
+    Qmax : int
+        Maximum allowed tadpole -dot(K, M).
+    h11 : int
+        Number of Kahler moduli.
+
+    Returns
+    -------
+    Ks : ndarray of shape (M, h11)
+        Expanded K-vectors including nontrivial GCDs.
+    Ms : ndarray of shape (M, h11)
+        Expanded M-vectors including nontrivial GCDs.
     """
     num_input = len(Ks)
     if num_input == 0:
@@ -295,10 +316,8 @@ def ZpM(
         2 a lattice point c in this ellipsoid defines an M-vector via Binter@c.
           this also defines a K-vector via K = Z @ Binter @ c
     so one wants to enumerate such c-vectors. This is done via Fincke-Pohst.
-
-    As discussed in `Mellipsoid` and `Hmatrix`, this ellipsoid can be
-    dilated, but then only c vectors that give rise to K with sufficiently large
-    GCD are allowed. This is integrated into the Fincke-Pohst solver.
+    GCD reduction of K is applied post-hoc. [WIP: GCD pruning will be
+    integrated into the Fincke-Pohst solver, as in `coniZpM`.]
 
     Parameters
     ----------
@@ -316,8 +335,7 @@ def ZpM(
         The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
         Empirically, runtime scales linearly with this value. Defaults to 1.
     n_jobs : int, optional
-        How many jobs to spawn if not doing low-level parallelism. Defaults to
-        twice the CPU count.
+        [WIP: parallelism not yet implemented, will follow `coniZpM` scheme.]
     extra_checks : bool, optional
         Whether to do extra sanity checks in the ellipsoid generation. Never
         seen these fail so defaults to False.
@@ -474,8 +492,10 @@ def ZpK(
     The logic is
         1 an integer p-vector defines a certain ellipsoid (see `Kellipsoid`)
         2 a lattice point d in this ellipsoid defines a K-vector via B @ d.
-          this also defines a M-vector via K = (kappa @ p)^{-1} @ B @ d
+          this also defines an M-vector via M = (kappa @ p)^{-1} @ B @ d
     so one wants to enumerate such d-vectors. This is done via Fincke-Pohst.
+    GCD reduction of K is applied post-hoc. [WIP: GCD pruning will be
+    integrated into the Fincke-Pohst solver, as in `coniZpM`.]
 
     Parameters
     ----------
@@ -493,8 +513,7 @@ def ZpK(
         The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
         Empirically, runtime scales linearly with this value. Defaults to 1.
     n_jobs : int, optional
-        How many jobs to spawn if not doing low-level parallelism. Defaults to
-        twice the CPU count.
+        [WIP: parallelism not yet implemented, will follow `coniZpM` scheme.]
     extra_checks : bool, optional
         Whether to do extra sanity checks in the ellipsoid generation. Never
         seen these fail so defaults to False.
