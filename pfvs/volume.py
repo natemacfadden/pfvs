@@ -24,7 +24,9 @@
 import numpy as np
 import scipy as sp
 
-def vol_ball(r, dim):
+from numpy.typing import ArrayLike
+
+def vol_ball(r: float, dim: int) -> float:
     """
     **Description:**
     Computes the volume of the radius-r dim-ball,
@@ -42,7 +44,7 @@ def vol_ball(r, dim):
     prefactor = np.pow(np.pi, dim/2)/sp.special.gamma(1 + dim/2)
     return prefactor * (r**dim)
 
-def vol_cap(r, dim, offset):
+def vol_cap(r: float, dim: int, offset: float) -> float:
     """
     **Description:**
     Computes the volume of the spherical cap of a radius-r dim-ball, defined by
@@ -78,7 +80,7 @@ def vol_cap(r, dim, offset):
     # return
     return vol*frac
 
-def estimate_num_cs(Q, L, b, offset):
+def estimate_num_cs(Q: float, L: ArrayLike, b: ArrayLike, offset: float) -> float:
     """
     Estimate the number of lattice vectors c satisfying
         c.T @ (L @ L.T) @ c <= Q   (ellipsoid)

@@ -35,7 +35,7 @@ from .cydata import CYData
 # ==========
 # generic
 # -------
-def check_singular(Ns: ArrayLike, rtol: float = 1e-12):
+def check_singular(Ns: ArrayLike, rtol: float = 1e-12) -> np.ndarray:
     """
     Check which matrices in a stack are singular.
 
@@ -306,7 +306,7 @@ def ZpM(
     # problem definition
     data: CYData,
     ps: ArrayLike,
-    Qmax: int = None,
+    Qmax: int | None = None,
     Qmin: int = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
     # algorithm selection
@@ -328,8 +328,9 @@ def ZpM(
         2 a lattice point c in this ellipsoid defines an M-vector via Binter@c.
           this also defines a K-vector via K = Z @ Binter @ c
     so one wants to enumerate such c-vectors. This is done via Fincke-Pohst.
-    GCD reduction of K is applied post-hoc. [WIP: GCD pruning will be
-    integrated into the Fincke-Pohst solver, as in `coniZpM`.]
+    GCD re-introduction is applied post-hoc via `allow_gcds`. [WIP: GCD
+    pruning will be integrated into the Fincke-Pohst solver, as in
+    `coniZpM`.]
 
     Parameters
     ----------
@@ -464,7 +465,8 @@ def ZpM(
         in_tadpole = (Qs>Qmin) & (Qs<Qmax)
         if verbosity >= 2:
             if not only_positive_news:
-                print(f"{len(in_tadpole)-sum(in_tadpole)}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
+                n_bad = len(in_tadpole) - sum(in_tadpole)
+                print(f"{n_bad}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
             if sum(in_tadpole):
                 print(f"but {sum(in_tadpole)} in tadpole!!!")
         Ks = Ks[:,in_tadpole]
@@ -484,7 +486,7 @@ def ZpK(
     # problem definition
     data: CYData,
     ps: ArrayLike,
-    Qmax: int = None,
+    Qmax: int | None = None,
     Qmin: int = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
     # algorithm selection
@@ -506,8 +508,9 @@ def ZpK(
         2 a lattice point d in this ellipsoid defines a K-vector via B @ d.
           this also defines an M-vector via M = (kappa @ p)^{-1} @ B @ d
     so one wants to enumerate such d-vectors. This is done via Fincke-Pohst.
-    GCD reduction of K is applied post-hoc. [WIP: GCD pruning will be
-    integrated into the Fincke-Pohst solver, as in `coniZpM`.]
+    GCD re-introduction is applied post-hoc via `allow_gcds`. [WIP: GCD
+    pruning will be integrated into the Fincke-Pohst solver, as in
+    `coniZpM`.]
 
     Parameters
     ----------
@@ -628,7 +631,8 @@ def ZpK(
         in_tadpole = (Qs>Qmin) & (Qs<Qmax)
         if verbosity >= 2:
             if not only_positive_news:
-                print(f"{len(in_tadpole)-sum(in_tadpole)}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
+                n_bad = len(in_tadpole) - sum(in_tadpole)
+                print(f"{n_bad}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
             if sum(in_tadpole):
                 print(f"but {sum(in_tadpole)} in tadpole!!!")
         Ks = Ks[:,in_tadpole]

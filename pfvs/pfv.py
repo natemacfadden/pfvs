@@ -27,6 +27,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import warnings
 
+from collections.abc import Generator
 from numpy.typing import ArrayLike
 
 # local imports
@@ -104,7 +105,11 @@ class PFV():
                 np.exp(-2*np.pi*self.Kprime/(self.ncf*self.gsM))/(2.*np.pi) )
 
             type(self).align = property(lambda self:
-                2*89.5643*(self.Vtilde**(1/3))*(2*(2+self.h11+self.h21))*(self.zcf**(4/3))/(self.gsM*self.gsM*self.W0()*self.W0()) )
+                2*89.5643
+                * (self.Vtilde**(1/3))
+                * (2*(2+self.h11+self.h21))
+                * (self.zcf**(4/3))
+                / (self.gsM*self.gsM*self.W0()*self.W0()) )
 
     # alternative constructor
     # -----------------------
@@ -268,6 +273,7 @@ class PFV():
     def ellipsoid_mat(self) -> np.ndarray:
         """
         The matrix mat defining the M-ellipsoid: c^T @ mat @ c <= Q. Coni only.
+        See also `ellipsoid_c`, `ellipsoid_required_dilation`.
         """
         if not self.coni:
             raise NotImplementedError
@@ -279,6 +285,7 @@ class PFV():
     def ellipsoid_c(self) -> np.ndarray:
         """
         The lattice vector c such that M = Binter @ c. Coni only.
+        See also `ellipsoid_mat`, `ellipsoid_required_dilation`.
         """
         if not self.coni:
             raise NotImplementedError
@@ -294,7 +301,7 @@ class PFV():
         """
         The minimum ellipsoid dilation needed to capture this PFV. Coni only.
 
-        Equal to c^T @ mat @ c / Q.
+        Equal to c^T @ mat @ c / Q. See also `ellipsoid_mat`, `ellipsoid_c`.
         """
         if not self.coni:
             raise NotImplementedError
@@ -459,7 +466,7 @@ class PFV():
         self._gvs = self.cy.compute_gvs(max_deg=max_deg).coo
 
     @gvs.setter
-    def gvs(self, val):
+    def gvs(self, val: np.ndarray | None):
         """
         Accepts GVs in coo format
         """
@@ -572,7 +579,7 @@ class PFV():
             return min(self.H@self.p)>0.5
 
     def check_NpK(self, tol: float = 1e-4) -> bool:
-        """Check that N @ p = K."""
+        """Check that N @ p = K. Requires `check_Ninvertible` to pass."""
         if self.coni:
             return (self.pgrading[0] == 0) and\
                    np.linalg.norm(self.N@self.p[1:] - self.K[1:])<tol
@@ -580,7 +587,7 @@ class PFV():
             return np.linalg.norm(self.N@self.p - self.K)<tol
 
     def check_orthogonality(self) -> bool:
-        """Check that dot(K, p) = 0."""
+        """Check that dot(K, p) = 0. Requires `check_Ninvertible` to pass."""
         if self.coni:
             return (self.pgrading[0] == 0) and\
                    (np.dot(self.pgrading[1:], self.K[1:]) == 0)
@@ -591,7 +598,7 @@ class PFV():
     # ===========================
     # main series method
     # ------------------
-    def series_gen(self):
+    def series_gen(self) -> Generator[tuple[float, float], None, None]:
         """
         Generator yielding the coefficient, exponent of each term in the series
         """
@@ -637,10 +644,13 @@ class PFV():
             yield coeff, deg/self._p_denom
         return
 
-    def series(self, N_nonzero: int = float('inf'), verbosity: int = 0) -> list:
+    def series(self, N_nonzero: int = float('inf'), verbosity: int = 0) -> list[tuple[float, float]]:
         """
         Compute the superpotential series W = sum_i c_i * exp(2*pi*i*tau*e_i),
         where e_i = dot(p, q) and c_i = sum_{q at e_i} n_q * dot(M, q).
+
+        See also `series_abs_vev`, `series_corrections` for downstream
+        diagnostics built on this series.
 
         Returns a list of [coeff, exponent] pairs for nonzero terms only,
         sorted by exponent. Stops after N_nonzero nonzero terms.
@@ -780,9 +790,11 @@ class PFV():
 
     # diagnostics
     # ===========
-    def series_abs_vev(self, as_logs: bool = False) -> list:
+    def series_abs_vev(self, as_logs: bool = False) -> list[float]:
         """
         Evaluate |W_i| at the tau0 from the 2-term approximation.
+
+        Built on `series`. See also `series_corrections`.
 
         Specifically, finds the value of exp(2*pi*i*tau) minimizing W_0 + W_1,
         plugs it into each W_i = c_i * exp(2*pi*i*tau*e_i), and returns |W_i|
@@ -813,11 +825,13 @@ class PFV():
         # return the (absolute values of the) VEVs of each term
         return vevs
 
-    def series_corrections(self, as_logs: bool = False) -> list:
+    def series_corrections(self, as_logs: bool = False) -> list[float]:
         """
         Compute |W_i| / W0 for i >= 2, as a measure of higher-order corrections
         to the 2-term approximation. Returns the ratios (or log10 if
         as_logs=True), starting from the third series term.
+
+        Built on `series_abs_vev`.
         """
         if not self.silent:
             print("THIS USES self.tau0 FROM THE 2-TERM APPROXIMATION")

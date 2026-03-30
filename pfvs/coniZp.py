@@ -39,7 +39,7 @@ from .cydata import CYData
 
 # coniZp helpers
 # ==============
-def check_singular(Ns: ArrayLike, rtol: float = 1e-12):
+def check_singular(Ns: ArrayLike, rtol: float = 1e-12) -> np.ndarray:
     """
     Check which matrices in a stack are singular.
 
@@ -65,7 +65,7 @@ def check_singular(Ns: ArrayLike, rtol: float = 1e-12):
 # these are only used in matrix product, so mutability is not a concern
 # compute these once and for all using global variables
 projs = [None]*100
-def get_proj(dim):
+def get_proj(dim: int) -> np.ndarray:
     """
     Return a (dim-1) x dim projection matrix that drops the 0th component.
 
@@ -241,6 +241,10 @@ def coniHmatrix(ZBinter: ArrayLike, proj: ArrayLike = None):
     """
     Compute the H-matrix for use in coni-ZpM. This is the HNF of (Z@Binter)[1:].
 
+    This is the preferred approach for enforcing the GCD(K[1:]) cut in
+    `coniZpM`. The alternative lattice-based approach is `Kperp_gcd_lattice`
+    (not recommended in practice).
+
     In coni-ZpM, one wants to ensure GCD(K[1:]) is sufficiently large. A point
     c in the M-ellipsoid has an associated valuation c^T @ mat @ c. For dilated
     ellipsoids, this can have c^T @ mat @ c > Qmax. This would give rise to a K
@@ -389,7 +393,7 @@ def coniZpM(
     # problem definition
     data: CYData,
     ps: ArrayLike,
-    Q: int = None,
+    Q: int | None = None,
     M0min: int = 13,
     max_Kperp_gcd: int = 1,
     ellipsoid_dilation: float = 1, # typically want >=1
@@ -416,7 +420,10 @@ def coniZpM(
 
     As discussed in `coniMellipsoid` and `coniHmatrix`, this ellipsoid can be
     dilated, but then only c vectors that give rise to K[1:] with sufficiently
-    large GCD are allowed. This is integrated into the Fincke-Pohst solver.
+    large GCD are allowed. This is integrated into the Fincke-Pohst solver via
+    the H-matrix from `coniHmatrix`. An alternative lattice-based approach is
+    available via `Kperp_gcd_lattice` (controlled by `use_gcd_lattice`), but
+    is not recommended.
 
     Likewise, one can impose constraints on M[0] >= 13 early in FP by ordering
     the columns of the M-vector lattice basis such that the first row of this
@@ -546,7 +553,8 @@ def coniZpM(
                     try:
                         L = np.linalg.cholesky(mat)
                     except Exception as e:
-                        print(f"couldn't compute cholesky decomposition of mat for p={p.tolist()} :(",flush=True)
+                        print(f"couldn't compute cholesky decomposition of "
+                              f"mat for p={p.tolist()} :(", flush=True)
                         print(e)
                         continue
 
@@ -565,7 +573,9 @@ def coniZpM(
                         print(f"KERNEL RETURNED STATUS {status}!!!",
                               flush=True)
 
-                    if extra_checks and (not np.allclose(rawQs, np.sum(lattice_points*(lattice_points@mat.T),axis=1))):
+                    rawQs_check = np.sum(
+                        lattice_points*(lattice_points@mat.T), axis=1)
+                    if extra_checks and (not np.allclose(rawQs, rawQs_check)):
                         print(lattice_points.tolist())
                         print(rawQs.tolist())
                         print(mat.tolist())

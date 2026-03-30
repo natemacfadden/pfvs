@@ -29,17 +29,18 @@ import scipy as sp
 
 from numba import types
 from numba.typed import Dict
+from numpy.typing import ArrayLike
 
 # basic helpers
 # =============
-def lcm(a, b):
+def lcm(a: int, b: int) -> int:
     """Least common multiple of integers a and b."""
     return abs(a*b) // math.gcd(a, b)
 
 # misc lattice
 # ============
 # LLL-reduction
-def lll_reduce(B: "ArrayLike") -> "ArrayLike":
+def lll_reduce(B: ArrayLike) -> np.ndarray:
     """
     Apply LLL-reduction to the input matrix, representing a columnwise basis
     of some lattice.
@@ -75,7 +76,7 @@ def lll_reduce(B: "ArrayLike") -> "ArrayLike":
 
 # orthogonal lattice
 @njit
-def extended_euclidean(a,b):
+def extended_euclidean(a: int, b: int) -> tuple[int, int, int]:
     """
     Extended Euclidean algorithm.
 
@@ -105,7 +106,7 @@ def extended_euclidean(a,b):
 
     return old_s, old_t, old_r
 
-def orthogonal_lattice(p: "ArrayLike") -> "ArrayLike":
+def orthogonal_lattice(p: ArrayLike) -> np.ndarray:
     """
     Computes a basis of the lattice orthogonal to p, with columns as basis
     vectors.
@@ -146,7 +147,7 @@ def orthogonal_lattice(p: "ArrayLike") -> "ArrayLike":
     return out
 
 @njit
-def orthogonal_lattice_custom(p: "ArrayLike") -> "ArrayLike":
+def orthogonal_lattice_custom(p: ArrayLike) -> np.ndarray:
     """
     Computes a basis of the lattice orthogonal to p via iterated Bezout
     reduction. Columns are basis vectors.
@@ -206,7 +207,7 @@ def orthogonal_lattice_custom(p: "ArrayLike") -> "ArrayLike":
     return U[1:].T
 
 # dual lattice
-def dual_lattice(B: "ArrayLike") -> "ArrayLike":
+def dual_lattice(B: ArrayLike) -> tuple[np.ndarray, int]:
     """
     Computes a basis of the lattice dual to L(B).
 
@@ -231,7 +232,7 @@ def dual_lattice(B: "ArrayLike") -> "ArrayLike":
     return np.array(D.tolist()).astype(int), denom
 
 # integer 'inverse' of matrix (i.e., adjugate)
-def inv_scaled(A_in, as_flint: bool = False):
+def inv_scaled(A_in: ArrayLike, as_flint: bool = False) -> tuple[np.ndarray, int]:
     """
     Compute a scaled integer inverse of A, i.e. (B, s) such that B @ A = s*I.
 
@@ -304,13 +305,13 @@ def inv_scaled(A_in, as_flint: bool = False):
 # -----------------
 @njit
 def fp_iterative_njit(
-        L: "ArrayLike",
+        L: ArrayLike,
         Q: float,
-        linvec: "ArrayLike" = None,
-        linmin: int = None,
+        linvec: ArrayLike | None = None,
+        linmin: int | None = None,
         max_N_out: int = 10_000_000,
         eps: float = 1e-4,
-        COORD_BUFF_SIZE: int = 2048) -> "ArrayLike":
+        COORD_BUFF_SIZE: int = 2048) -> tuple[np.ndarray, np.ndarray]:
     """
     Enumerate all nonzero integer vectors vec such that
         0 <= vec^T @ mat @ vec <= Q.
@@ -857,17 +858,17 @@ def _coni_kernel_set_bounds(
 
 @njit
 def coni_kernel_njit(
-        L: "ArrayLike",
+        L: ArrayLike,
         Q: int,
         dilation: int,
         # M0 cuts:
-        Binter0: "ArrayLike",
+        Binter0: ArrayLike,
         M0min: int,
         # K' cuts:
-        H: "ArrayLike",
+        H: ArrayLike,
         # misc:
         max_N_out: int,
-        eps: float = 1e-4) -> ("ArrayLike", "ArrayLike"):
+        eps: float = 1e-4) -> tuple[np.ndarray, np.ndarray]:
     """
     Adaptation of the iterative Fincke-Pohst algorithm for constructing
     coni-PFVs. Enumerates integer vectors vec satisfying:

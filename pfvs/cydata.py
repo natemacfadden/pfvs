@@ -25,6 +25,8 @@ import flint
 import itertools
 import numpy as np
 
+from numpy.typing import ArrayLike
+
 # local imports
 from . import lattice
 
@@ -55,13 +57,13 @@ class CYData:
     def __init__(
         self,
         h21: int,
-        kappa: "ArrayLike",
-        c2: "ArrayLike",
-        H: "ArrayLike",
-        coni_curve: "ArrayLike" = None,
-        coni_cob: "ArrayLike" = None,
-        vertices: "ArrayLike" = "unknown (set when constructing CYData)",
-        heights: "ArrayLike" = "unknown (set when constructing CYData)"):
+        kappa: ArrayLike,
+        c2: ArrayLike,
+        H: ArrayLike,
+        coni_curve: ArrayLike | None = None,
+        coni_cob: ArrayLike | None = None,
+        vertices: ArrayLike | str = "unknown (set when constructing CYData)",
+        heights: ArrayLike | str = "unknown (set when constructing CYData)"):
         self._kappa = np.array(kappa)
         self._c2    = np.array(c2)
         self._H     = np.array(H)
@@ -186,36 +188,36 @@ class CYData:
     # getters
     # -------
     @property
-    def vertices(self):
+    def vertices(self) -> ArrayLike | str:
         return self._vertices
     verts = vertices
 
     @property
-    def heights(self):
+    def heights(self) -> ArrayLike | str:
         return self._heights
 
     @property
-    def kappa(self):
+    def kappa(self) -> np.ndarray:
         return self._kappa.copy()
 
     @property
-    def c2(self):
+    def c2(self) -> np.ndarray:
         return self._c2.copy()
 
     @property
-    def H(self):
+    def H(self) -> np.ndarray:
         return self._H.copy()
 
     @property
-    def coni(self):
+    def coni(self) -> bool:
         return self._coni
 
     @property
-    def h11(self):
+    def h11(self) -> int:
         return self._h11
 
     @property
-    def h21(self):
+    def h21(self) -> int:
         return self._h21
 
     # a-matrix, b-vector
@@ -307,9 +309,9 @@ class CYData:
     # basis for M-vectors
     # -------------------
     def M_lattice(self,
-        other_mat=None,
-        other_mod=None,
-        verify: bool = True)-> "ArrayLike":
+        other_mat: ArrayLike | None = None,
+        other_mod: int | None = None,
+        verify: bool = True) -> np.ndarray:
         """
         **Description:**
         Computes a basis of the sublattice of all vectors, M, such that

@@ -153,10 +153,10 @@ def pvecs(
 
 def pvecs_cpsat(
     data: CYData,
-    min_N_pts: int = None,
-    max_deg: int = None,
+    min_N_pts: int | None = None,
+    max_deg: int | None = None,
     min_deg: int = 0,
-    max_Linf: int = None,
+    max_Linf: int | None = None,
     deg_window: int = 1,
     max_window_i: int = 10_000,
     max_time: float = 120, # 2 min...
@@ -308,7 +308,7 @@ def pvecs_cpsat(
 
 def mindeg_pvec_gurobi(
     data: CYData,
-    max_deg: int = None,
+    max_deg: int | None = None,
     verbosity: int = 0) -> ArrayLike:
     """
     Generate the minimum-degree (relative to grading vector sum(H,axis=0) / GCD)
