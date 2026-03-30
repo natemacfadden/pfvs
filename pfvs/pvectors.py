@@ -23,6 +23,7 @@
 
 # external imports
 import numpy as np
+import warnings
 from ortools.sat.python import cp_model
 
 from numpy.typing import ArrayLike
@@ -257,7 +258,11 @@ def pvecs_cpsat(
     # define a constraint-programming model to solve
     model  = cp_model.CpModel()
     if max_Linf is None:
-        print("PLEASE set max_Linf.. it's much more efficient if you set it")
+        warnings.warn(
+            "max_Linf not set — search will be very slow. "
+            "Setting max_Linf explicitly is strongly recommended.",
+            stacklevel=2
+        )
         max_Linf = cp_model.INT32_MAX - 1
 
     p_vars = [model.NewIntVar(-max_Linf, max_Linf, f'x{i}') for i in\

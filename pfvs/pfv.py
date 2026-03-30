@@ -292,7 +292,11 @@ class PFV():
 
         mat, Z, Binter = coniZp.coniMellipsoid(self.pgrading, self._cydata)
         c = np.rint(np.linalg.lstsq(Binter, self.M)[0]).astype(int)
-        assert np.all(self.M == Binter@c)
+        if not np.all(self.M == Binter@c):
+            raise RuntimeError(
+                "Failed to reconstruct c from M: M != Binter @ c. "
+                "This indicates an internal inconsistency."
+            )
 
         return c
 
@@ -481,19 +485,26 @@ class PFV():
                 # all good :)
                 val = np.array(val)
 
-        except:
+        except Exception:
             # not arraylike... maybe CYTools GV class?
             try:
                 val = val.coo
-            except:
-                raise ValueError("Unknown GV format input...")
+            except Exception:
+                raise ValueError(
+                    "Unknown GV format: expected a numeric array in coo "
+                    "format, or a CYTools GV object with a .coo attribute."
+                )
 
         # change the basis
         if self.coni:
             val[:,:-1] = val[:,:-1] @ np.array(self.cob).T
 
         # sanity check: the p-vector should be in Kcup
-        assert np.all(val[:,:-1]@self.p >= 0)
+        if not np.all(val[:,:-1]@self.p >= 0):
+            raise ValueError(
+                "GV charges are not compatible with the p-vector: "
+                "some charges q have dot(q, p) < 0."
+            )
 
         # set the value :)
         self._gvs  = val.copy()

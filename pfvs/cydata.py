@@ -107,7 +107,11 @@ class CYData:
             self._cob = np.array(coni_cob)
 
         # check the change of basis
-        assert np.all(self._cob@self._coni_curve == [1]+[0]*(self.h11-1))
+        if not np.all(self._cob@self._coni_curve == [1]+[0]*(self.h11-1)):
+            raise ValueError(
+                "coni_cob is not a valid change of basis: "
+                "cob @ coni_curve must equal (1, 0, ..., 0)."
+            )
         type(self).cob = property(lambda self: self._cob.copy())
 
 
@@ -352,7 +356,8 @@ class CYData:
                         24*np.identity(h11,dtype=int)]
         else:
             # adding in extra constraint `(other_mat@M) % other_mod == 0`
-            assert other_mod is not None
+            if other_mod is None:
+                raise ValueError("other_mod must be provided when other_mat is set.")
             multiplier = np.lcm(24, other_mod)
 
             other_mat = np.array(other_mat).reshape(-1,h11)
@@ -370,14 +375,20 @@ class CYData:
 
         # construct the dual lattice
         dual, denom = lattice.dual_lattice(primal)
-        assert multiplier%denom == 0 # the dual lattice should be integral
+        if multiplier % denom != 0:
+            raise RuntimeError(
+                f"Dual lattice denominator {denom} does not divide "
+                f"multiplier {multiplier}. This indicates an internal error."
+            )
         out = dual * (multiplier//denom)
 
         # LLL-reduce the dual to be extra nice
         out = lattice.lll_reduce(out)
         if verify:
-            assert np.all((self.a@out)%2 == 0)
-            assert np.all((self.b.reshape(1,-1)@out)%24 == 0)
+            if not np.all((self.a@out)%2 == 0):
+                raise RuntimeError("M_lattice verification failed: a @ M is not even.")
+            if not np.all((self.b.reshape(1,-1)@out)%24 == 0):
+                raise RuntimeError("M_lattice verification failed: dot(b, M) is not divisible by 24.")
 
         self._M_lattice = out.copy()
         return out

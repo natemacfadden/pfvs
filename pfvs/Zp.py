@@ -379,7 +379,11 @@ def ZpM(
          return_formal_pfvs=True.
     """
     print("WARNING NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")
-    assert not data.coni
+    if data.coni:
+        raise ValueError(
+            "Methods in Zp.py only apply to non-coni contexts. "
+            "Use coniZp.py for coni PFVs."
+        )
 
     # misc (left for future debugging)
     only_positive_news = False
@@ -420,10 +424,10 @@ def ZpM(
                 recursive=False,
                 verbosity=verbosity-1)
         except Exception as e:
-            print("ERROR!!!")
-            print(f"LIKELY mat={mat.tolist()} ISN'T POSITIVE DEFINITE...")
-            print(f"p        = {np.array(p).tolist()}")
-            raise e
+            raise RuntimeError(
+                f"Kernel failed for p={np.array(p).tolist()}. "
+                f"mat may not be positive definite: mat={mat.tolist()}"
+            ) from e
 
         # only keep primitive lattice points (can reclaim other PFVs easily)
         primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
@@ -559,7 +563,11 @@ def ZpK(
          return_formal_pfvs=True.
     """
     print("WARNING NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")
-    assert not data.coni
+    if data.coni:
+        raise ValueError(
+            "Methods in Zp.py only apply to non-coni contexts. "
+            "Use coniZp.py for coni PFVs."
+        )
 
     # misc (left for future debugging)
     only_positive_news = False
@@ -586,8 +594,11 @@ def ZpK(
         A = kappa@p@Mbasis
         try:
             Ainv, scale = lattice.inv_scaled(A)
-        except:
-            raise ValueError(f"PANIC!!!! {p.tolist()} CAUSED WEIRD AINV!!!")
+        except Exception as e:
+            raise ValueError(
+                f"inv_scaled failed for p={p.tolist()} — kappa@p@Mbasis "
+                f"may be singular."
+            ) from e
 
         mat, B = Kellipsoid(
             p,
@@ -607,10 +618,10 @@ def ZpK(
                 recursive=False,
                 verbosity=verbosity-1)
         except Exception as e:
-            print("ERROR!!!")
-            print(f"LIKELY mat={mat.tolist()} ISN'T POSITIVE DEFINITE...")
-            print(f"p        = {np.array(p).tolist()}")
-            raise e
+            raise RuntimeError(
+                f"Kernel failed for p={np.array(p).tolist()}. "
+                f"mat may not be positive definite: mat={mat.tolist()}"
+            ) from e
 
         # only keep primitive lattice points (can reclaim other PFVs easily)
         primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1

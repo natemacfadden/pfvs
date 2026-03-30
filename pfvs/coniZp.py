@@ -487,7 +487,11 @@ def coniZpM(
          PFV objects (see ``pfv.PFV``). Only returned if
          return_formal_pfvs=True.
     """
-    assert data.coni
+    if not data.coni:
+        raise ValueError(
+            "coniZpM only applies to coni contexts. "
+            "Use Zp.py for non-coni PFVs."
+        )
 
     if low_level_parallelism:
         if n_jobs != 1:
@@ -626,7 +630,7 @@ def coniZpM(
                     cs     = np.array(lattice_points)
                     testQs = np.sum(cs * (cs@mat.T), axis=1)
                     if not all(rawQs == testQs):
-                        print("PANIC!!!")
+                        raise RuntimeError("rawQs mismatch")
 
                 if verbosity >= 1:
                     print(f"found {len(lattice_points)} lattice points...")
@@ -635,10 +639,10 @@ def coniZpM(
                         print(lattice_points)
 
             except Exception as e:
-                print("ERROR!!!")
-                print(f"LIKELY mat={mat.tolist()} ISN'T POSITIVE DEFINITE...")
-                print(f"p        = {np.array(p).tolist()}")
-                raise e
+                raise RuntimeError(
+                    f"Kernel failed for p={np.array(p).tolist()}. "
+                    f"mat may not be positive definite: mat={mat.tolist()}"
+                ) from e
 
             lattice_points = lattice_points.T
 
@@ -799,14 +803,12 @@ def coniZpM(
                             inds = np.where(-np.sum(new_Ks*new_Ms,axis=0) > Q)
                             i = inds[0]
 
-                            print("VIOLATED QMAX!!!")
-                            print(new_Ks[:,i].T.tolist(),
-                                  new_Ms[:,i].T.tolist())
-                            print(-np.sum(new_Ks*new_Ms, axis=0)[i], Q)
-                            print(np.repeat(lo[mask], num_K0s_perM)[i])
-                            print(np.repeat(up[mask], num_K0s_perM)[i])
-                            print(Qperps, Q, M0s)
-                            raise ValueError()
+                            tadpole = -np.sum(new_Ks*new_Ms, axis=0)[i]
+                            raise RuntimeError(
+                                f"Tadpole violation: -dot(K,M)={tadpole} "
+                                f"> Q={Q}. K={new_Ks[:,i].T.tolist()}, "
+                                f"M={new_Ms[:,i].T.tolist()}"
+                            )
 
                         # save
                         # ====
