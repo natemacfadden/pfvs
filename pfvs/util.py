@@ -180,7 +180,7 @@ def dual_lattice(B: ArrayLike) -> tuple[np.ndarray, int]:
     B = flint.fmpz_mat(B.tolist())
     D, denom = (B*( (B.transpose()*B).inv() )).numer_denom()
 
-    return np.array(D.tolist()).astype(int), denom
+    return np.array(D.tolist()).astype(int), int(denom)
 
 # integer 'inverse' of matrix (i.e., adjugate)
 def inv_scaled(A_in: ArrayLike, as_flint: bool = False) -> tuple[np.ndarray, int]:
