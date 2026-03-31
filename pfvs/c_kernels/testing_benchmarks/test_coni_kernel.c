@@ -22,15 +22,21 @@ int main(int argc, char *argv[])
     int Q = 162;
     int linvec[] = {0,0,0,4,-4,-2,-2};
     double linmin = 13;
-    int H[] = {2, 0, 0, 0, 62,  58974,  -5086,
-               0, 2, 0, 0, 84,  224666, -19686,
-               0, 0, 2, 0, 12,  234014, -20736,
-               0, 0, 0, 4, 52,  78376,  -6916,
-               0, 0, 0, 0, 120, 161172, -14052,
-               0, 0, 0, 0, 0,   262692, -23292,
-               0, 0, 0, 0, 0,   0,      0};
     int max_N_out = 100000000;
     double eps = 1e-4;
+
+    // initialize H as mpz_t array
+    int H_flat[] = {2, 0, 0, 0, 62,  58974,  -5086,
+                    0, 2, 0, 0, 84,  224666, -19686,
+                    0, 0, 2, 0, 12,  234014, -20736,
+                    0, 0, 0, 4, 52,  78376,  -6916,
+                    0, 0, 0, 0, 120, 161172, -14052,
+                    0, 0, 0, 0, 0,   262692, -23292,
+                    0, 0, 0, 0, 0,   0,      0};
+    mpz_t H[49];
+    for (int i = 0; i < 49; i++) {
+        mpz_init_set_si(H[i], H_flat[i]);
+    }
 
     // read dilation
     int dilation = 1;
@@ -47,7 +53,7 @@ int main(int argc, char *argv[])
 
     // initialize output array
     int32_t *out = malloc((size_t)max_N_out * dim * sizeof(int32_t));
-    double *Qs  = malloc((size_t)max_N_out * sizeof(double));
+    float *Qs    = malloc((size_t)max_N_out * sizeof(float));
     if (!out || !Qs) {
         perror("malloc out and Qs");
         return 1;
@@ -87,5 +93,7 @@ int main(int argc, char *argv[])
 
     // free memory
     free(out);
+    free(Qs);
+    for (int i = 0; i < 49; i++) mpz_clear(H[i]);
     return 0;
 }

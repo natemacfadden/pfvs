@@ -1,7 +1,7 @@
 #!/bin/bash
 
-for b in 100 200 300 400; do
-	echo "STUDYING" $b
-    ./enum $b
+for b in 1 2 10 20 10000 20000 30000 40000 50000; do
+    echo "STUDYING" $b
+    ./test_coni_kernel $b
     echo "DONE STUDYING" $b
 done

@@ -22,6 +22,7 @@ dependencies = [
     "joblib",
     "numba",
     "numpy",
+    "ortools",
     "scipy",
 ]
 requires-python = ">=3.9"
@@ -29,6 +30,8 @@ requires-python = ">=3.9"
 [project.optional-dependencies]
 test = [
   "pytest",
+  "pytest-benchmark",
+  "matplotlib",
 ]
 
 [project.urls]
