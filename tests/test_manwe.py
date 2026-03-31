@@ -350,25 +350,16 @@ def test_coniZpM_finds_manwe(coni_data):
 
     assert any(np.all(K == K_MANWE) and np.all(M == M_MANWE) for K, M in zip(Ks, Ms))
 
-@pytest.fixture(scope="module")
-def coni_pvecs_10k(coni_data):
-    return pvecs(coni_data, min_N_pts=10_000)
-
-@pytest.fixture(scope="module")
-def coniZpM_results_10k(coni_data, coni_pvecs_10k):
-    Q = H11 + H21 + 4  # 162
-    return coniZpM(
+def test_coniZpM_pfv_count(coni_data):
+    Ks, Ms = coniZpM(
         data=coni_data,
-        ps=coni_pvecs_10k,
-        Q=Q,
+        ps=pvecs(coni_data, min_N_pts=10_000),
         M0min=13,
         ellipsoid_dilation=50,
         n_jobs=1,
         verbosity=0,
     )
 
-def test_coniZpM_pfv_count(coniZpM_results_10k):
-    Ks, Ms = coniZpM_results_10k
     assert len(Ks) == 110
 
 def test_coniZpM_empty_ps(coni_data):
