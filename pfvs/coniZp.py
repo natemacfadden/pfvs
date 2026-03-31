@@ -438,7 +438,9 @@ def coniZpM(
         Each row of the iterable corresponds to the perpendicular component of a
         p-vector. I.e., p[1:]
     Q : integer, optional
-        Only return PFVs with -dot(K,M) = Q. If not provided, set to h11+h21+4.
+        Only return PFVs with -dot(K,M) = Q (exact equality, unlike the
+        ``Qmin``/``Qmax`` range in non-coni ``ZpM``/``ZpK``). If not
+        provided, set to h11+h21+4.
     M0min : integer, optional
         Only return PFVs with M[0] >= M0min. Defaults to 13 to match physics.
     max_Kperp_gcd : integer, optional
@@ -527,7 +529,7 @@ def coniZpM(
     chunk_size = max(100, len(ps)//n_jobs+1)
     p_chunks   = [ps[i:i+chunk_size] for i in range(0,len(ps),chunk_size)]
 
-    def make_pfvs(p_chunk, job_i=0):
+    def _make_pfvs(p_chunk, job_i=0):
         # define a factory function here for later parallelization
         all_Ks = np.zeros((0,h11), dtype=np.int32)
         all_Ms = np.zeros((0,h11), dtype=np.int32)
@@ -630,13 +632,6 @@ def coniZpM(
                 # clean Qs
                 # --------
                 rawQs = np.rint(rawQs).astype(int)
-                if False:
-                    # disabled debugging/testing code
-                    cs     = np.array(lattice_points)
-                    testQs = np.sum(cs * (cs@mat.T), axis=1)
-                    if not all(rawQs == testQs):
-                        raise RuntimeError("rawQs mismatch")
-
                 if verbosity >= 1:
                     print(f"found {len(lattice_points)} lattice points...")
                     if verbosity >= 10:
@@ -864,13 +859,13 @@ def coniZpM(
     # actually run the jobs
     if n_jobs > 1:
         output = joblib.Parallel(n_jobs=n_jobs)(
-            joblib.delayed(make_pfvs)(p_chunk, job_i) for job_i, p_chunk in\
+            joblib.delayed(_make_pfvs)(p_chunk, job_i) for job_i, p_chunk in\
                                                             enumerate(p_chunks))
         all_Ks, all_Ms = zip(*output)
         all_Ks = np.vstack(all_Ks)
         all_Ms = np.vstack(all_Ms)
     else:
-        all_Ks, all_Ms = make_pfvs(ps)
+        all_Ks, all_Ms = _make_pfvs(ps)
 
     # return
     if return_formal_pfvs:

@@ -1002,11 +1002,11 @@ class PFV():
         terms. At verbosity>=2, also shows the individual GV invariants and
         charges.
         """
-        if verbosity==0:
+        if verbosity == 0:
             for term in self.series():
                 c,e = term
                 print(f"Exponent {e:.2f} has coefficient {c}")
-        elif verbosity==1:
+        elif verbosity == 1:
             self.series()
 
             for c,e in zip(self._all_coeffs, self._all_exps):

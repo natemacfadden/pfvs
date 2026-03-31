@@ -74,7 +74,8 @@ def test_njit():
 def test_c():
     for dilation, expected in zip(DILATIONS, EXPECTATIONS):
         out, Qs, status = coni_kernel(
-            U, Q, dilation, LINVEC, LINMIN, H, MAX_N_OUT
+            U, Q=Q, dilation=dilation, linvec=LINVEC,
+            linmin=LINMIN, H=H, max_N_out=MAX_N_OUT
         )
         assert out.shape[0] == expected
 

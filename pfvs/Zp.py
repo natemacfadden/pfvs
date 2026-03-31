@@ -378,6 +378,13 @@ def ZpM(
     pfvs : list of length N
          PFV objects (see ``pfv.PFV``). Only returned if
          return_formal_pfvs=True.
+
+    Raises
+    ------
+    ValueError
+        If ``data.coni`` is True, ``ps`` is empty, ``Qmax < Qmin``,
+        ``ellipsoid_dilation <= 0``, or if ``_allow_gcds`` finds no valid
+        GCD expansions.
     """
     print("WARNING NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")
     if data.coni:
@@ -574,6 +581,13 @@ def ZpK(
     pfvs : list of length N
          PFV objects (see ``pfv.PFV``). Only returned if
          return_formal_pfvs=True.
+
+    Raises
+    ------
+    ValueError
+        If ``data.coni`` is True, ``ps`` is empty, ``Qmax < Qmin``,
+        ``ellipsoid_dilation <= 0``, or if ``_allow_gcds`` finds no valid
+        GCD expansions.
     """
     print("WARNING NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")
     if data.coni:
