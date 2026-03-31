@@ -581,7 +581,14 @@ class PFV():
         return any(Ki != 0 for Ki in self.K)
 
     def check_Ninvertible(self, tol: float = 0.5) -> bool:
-        """Check that N is full rank via |det(N)| > tol."""
+        """Check that N is full rank via |det(N)| > tol.
+
+        Parameters
+        ----------
+        tol : float, optional
+            Threshold for |det(N)|. Defaults to 0.5 (appropriate for integer
+            matrices where det is an integer, so 0 vs non-zero is unambiguous).
+        """
         if tol <= 0:
             raise ValueError(f"tol must be > 0, got {tol}.")
         if self._Ninvertible is None:

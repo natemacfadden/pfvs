@@ -225,7 +225,7 @@ def K_ellipsoid(p: ArrayLike,
                kappa: ArrayLike = None,
                Mbasis: ArrayLike = None,
                extra_lll_reduction: bool = True,
-               extra_checks: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+               extra_checks: bool = False) -> tuple[np.ndarray, np.ndarray]:
     """
     Compute the matrices defining the K-ellipsoid in nonconi-ZpK.
 

@@ -147,6 +147,12 @@ class CYData:
             The conifold curve. If not provided, non-coni PFVs are assumed.
         coni_cob : ArrayLike, optional
             Change-of-basis matrix mapping the coni curve to (1,0,...,0).
+
+        Returns
+        -------
+        CYData
+            A fully initialized CYData object populated from the given
+            CalabiYau.
         """
         try:
             import cytools
@@ -312,10 +318,7 @@ class CYData:
 
     # basis for M-vectors
     # -------------------
-    def M_lattice(self,
-        other_mat: ArrayLike | None = None,
-        other_mod: int | None = None,
-        verify: bool = True) -> np.ndarray:
+    def M_lattice(self, verify: bool = True) -> np.ndarray:
         """
         **Description:**
         Computes a basis of the sublattice of all vectors, M, such that
@@ -347,26 +350,12 @@ class CYData:
 
         # define the constraints
         # ----------------------
-        if other_mat is None:
-            multiplier = 24
+        multiplier = 24
 
-            # construct the primal lattice
-            to_stack = [self.b,
-                        12*self.a,
-                        24*np.identity(h11,dtype=int)]
-        else:
-            # adding in extra constraint `(other_mat@M) % other_mod == 0`
-            if other_mod is None:
-                raise ValueError("other_mod must be provided when other_mat is set.")
-            multiplier = np.lcm(24, other_mod)
-
-            other_mat = np.array(other_mat).reshape(-1,h11)
-
-            # construct the primal lattice
-            to_stack = [(multiplier//24)*self.b,
-                        (multiplier//2)*self.a,
-                        multiplier*np.identity(h11,dtype=int),
-                        (multiplier//other_mod)*other_mat]
+        # construct the primal lattice
+        to_stack = [self.b,
+                    12*self.a,
+                    24*np.identity(h11,dtype=int)]
         _primal = np.vstack(to_stack, dtype=int).T
 
         # LLL-reduce

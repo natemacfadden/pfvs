@@ -836,6 +836,8 @@ def coniZpM(
 
                     singular.append(_check_singular(Ns))
 
+                if not singular:
+                    continue
                 singular = np.concatenate(singular)
 
                 if verbosity >= 2:
