@@ -6,6 +6,7 @@ PFVSTRINGS-*
 # test artifacts
 .pytest_cache/
 .benchmarks/
+.coverage
 pfvs/c_kernels/testing_benchmarks/test_coni_kernel
 pfvs/c_kernels/testing_benchmarks/test_pvec_kernel
 
