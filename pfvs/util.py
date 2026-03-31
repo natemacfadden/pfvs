@@ -76,11 +76,8 @@ def lll_reduce(B: ArrayLike) -> np.ndarray:
 @njit
 def extended_euclidean(a: int, b: int) -> tuple[int, int, int]:
     """
-    Extended Euclidean algorithm.
-
-    Runs the standard Euclidean algorithm on (a, b) while tracking the
-    linear combinations of (a, b) that produce each remainder, yielding
-    Bezout coefficients s, t such that s*a + t*b = gcd(a, b).
+    Extended Euclidean algorithm. Computes GCD of a and b, as well as Bezout
+    coefficients s, t such that s*a + t*b = gcd(a, b).
 
     Parameters
     ----------
@@ -104,55 +101,11 @@ def extended_euclidean(a: int, b: int) -> tuple[int, int, int]:
 
     return old_s, old_t, old_r
 
-def orthogonal_lattice(p: ArrayLike) -> np.ndarray:
-    """
-    Computes a basis of the lattice orthogonal to p, with columns as basis
-    vectors.
-
-    [WIP: This function may return a diluted sublattice rather than the true
-    orthogonal lattice. `flint.nullspace` does not guarantee a primitive basis,
-    so the GCD-reduction below may be insufficient. Should be replaced with an
-    HNF-based implementation.]
-
-    Parameters
-    ----------
-    p : ArrayLike
-        The orthogonal vector. Assumed to be integral.
-
-    Returns
-    -------
-    ArrayLike
-        A basis of the lattice orthogonal to p, as column vectors.
-    """
-    p   = np.array(p).reshape(1,-1)
-    dim = p.shape[1]
-
-    # compute null space
-    mat_fl = flint.fmpz_mat(p.tolist())
-    null, nullity = mat_fl.nullspace()
-    null = null.transpose().hnf().transpose()
-
-    gcds = np.array([np.gcd.reduce([null[i,j] for i in range(dim)]) for j in range(nullity)])
-
-    out = np.zeros((dim,nullity), dtype=int)
-    for j in range(nullity):
-        for i in range(dim):
-            out[i,j] =  null[i,j]
-
-    # reduce by gcd
-    out = out // gcds
-
-    return out
-
 @njit
-def orthogonal_lattice_custom(p: ArrayLike) -> np.ndarray:
+def orthogonal_lattice(p: ArrayLike) -> np.ndarray:
     """
     Computes a basis of the lattice orthogonal to p via iterated Bezout
     reduction. Columns are basis vectors.
-
-    This is the preferred implementation over `orthogonal_lattice`: it
-    constructs the orthogonal complement directly using the extended Euclidean
-    algorithm, avoiding any lattice dilution.
 
     Parameters
     ----------
