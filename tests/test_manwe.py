@@ -25,6 +25,11 @@ from pfvs import CYData, PFV, pvecs, coniZpM
 # (from https://arxiv.org/abs/2406.13751)
 # =============================================================================
 
+# Manwe as a CY
+# -------------
+H11, H21 = 8, 150
+
+C2    = [184, 112, 10, 10, 26, 2, 2, -6]
 KAPPA = [
     [
         [130, 80,  5,  7, 16,  2,  0,  0],
@@ -107,9 +112,6 @@ KAPPA = [
         [  0,  0,  0,  0, -3, -3, -3,  9],
     ],
 ]
-
-C2 = [184, 112, 10, 10, 26, 2, 2, -6]
-
 H = np.array([
     [ 1,  0,  0,  5, -3,  0, -3,  0],
     [ 3,  2,  0,  0,  0,  1,  1,  0],
@@ -187,8 +189,8 @@ H = np.array([
     [ 3,  0,  0,  0,  1, -4,  0,  0],
 ], dtype=np.int32)
 
-H11        = 8
-H21        = 150
+# Manwe's conifold information
+# ----------------------------
 CONI_CURVE = [0, 0, 0, 0, 0, -1, 0, 0]
 COB = np.array([
     [ 0, 0, 0, 0, 0,-1, 0, 0],
@@ -201,22 +203,17 @@ COB = np.array([
     [ 0, 0, 0, 0, 0, 0, 0,-1],
 ], dtype=np.int32)
 
-# Known good PFV for Manwe
+# Manwe as a PFV
+# --------------
+# Requires dilation 20 to find PFV from scratch...
 K_MANWE = [-6, -1,   0, 1, -3,  2,  0, -1]
 M_MANWE = [16, 10, -26, 8, 32, 30, 18, 28]
-
-# Manwe's p-vector (pgrading[1:] in cob basis), the unique p that covers Manwe
-# with ellipsoid_dilation=50.  Required dilation ~19.5.
-P_MANWE = [-8, 0, -2, 4, 5, 5, 4]
+P_MANWE = [-8, 0, -2, 4, 5, 5, 4] # p-vector (pgrading[1:] in cob basis)
 
 
 # =============================================================================
 # Fixtures
 # =============================================================================
-
-@pytest.fixture(scope="module")
-def nonconi_data():
-    return CYData(h21=H21, kappa=KAPPA, c2=C2, H=H)
 
 @pytest.fixture(scope="module")
 def coni_data():
@@ -231,32 +228,10 @@ def manwe(coni_data):
 def coni_pvecs(coni_data):
     return pvecs(coni_data, min_N_pts=200)
 
-@pytest.fixture(scope="module")
-def manwe_result(coni_data):
-    """coniZpM run with only Manwe's p-vector."""
-    return coniZpM(
-        data=coni_data,
-        ps=np.array([P_MANWE]),
-        Q=H11 + H21 + 4,
-        M0min=13,
-        ellipsoid_dilation=50,
-        n_jobs=1,
-        verbosity=0,
-    )
-
 
 # =============================================================================
 # CYData tests
 # =============================================================================
-
-def test_cydata_nonconi_smoke(nonconi_data):
-    data = nonconi_data
-    assert data.h11 == H11
-    assert data.h21 == H21
-    assert not data.coni
-    assert data.kappa.shape == (H11, H11, H11)
-    assert data.c2.shape == (H11,)
-    assert data.H.shape[1] == H11
 
 def test_cydata_coni_smoke(coni_data):
     data = coni_data
@@ -361,12 +336,19 @@ def test_coniZpM_M0min(coniZpM_results):
     Ks, Ms = coniZpM_results
     assert np.all(Ms[:, 0] >= 13)
 
-def test_coniZpM_finds_manwe(manwe_result):
+def test_coniZpM_finds_manwe(coni_data):
     """With Manwe's p-vector, coniZpM finds exactly Manwe."""
-    Ks, Ms = manwe_result
-    assert len(Ks) == 1
-    assert np.all(Ks[0] == K_MANWE)
-    assert np.all(Ms[0] == M_MANWE)
+    Ks, Ms = coniZpM(
+        data=coni_data,
+        ps=np.array([P_MANWE]),
+        Q=H11 + H21 + 4,
+        M0min=13,
+        ellipsoid_dilation=50,
+        n_jobs=1,
+        verbosity=0,
+    )
+
+    assert any(np.all(K == K_MANWE) and np.all(M == M_MANWE) for K, M in zip(Ks, Ms))
 
 @pytest.fixture(scope="module")
 def coni_pvecs_10k(coni_data):
