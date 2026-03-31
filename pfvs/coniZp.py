@@ -211,14 +211,14 @@ def coni_M_ellipsoid(p: ArrayLike,
     # thus just need c in the orthogonal lattice to Mbasis^T @ T
     # (the output will be lattice generators of such cs... we'll want
     #  lattice generators of valid Ms so we multiply on left by Mbasis)
-    orthog = lattice.orthogonal_lattice(p=T.T@Mbasis)
+    orthog = util.orthogonal_lattice(p=T.T@Mbasis)
     if extra_lll_reduction:
-        orthog = lattice.lll_reduce(orthog)
+        orthog = util.lll_reduce(orthog)
     Binter = Mbasis@orthog
 
     # lll-reduce Binter
     # (doesn't seem to have a huge effect...)
-    Binter = lattice.lll_reduce(Binter)
+    Binter = util.lll_reduce(Binter)
 
     # sort Binter so columns which don't affect M0 come first
     Binter = Binter[:,np.argsort(Binter[0]!=0)]
@@ -600,7 +600,7 @@ def coniZpM(
                     for gcd in range(1,np.ceil(ellipsoid_dilation)+1):
                         Bgcd = _Kperp_gcd_lattice(data, Z, Binter, gcd)
 
-                        vs, vQs = lattice.fp_iterative_njit(
+                        vs, vQs = util.fp_iterative_njit(
                             # ellipsoid definition
                             L=np.linalg.cholesky(Bgcd.T@mat@Bgcd),
                             Q=Q,

@@ -197,14 +197,14 @@ def M_ellipsoid(p: ArrayLike,
     # thus just need c in the orthogonal lattice to Mbasis^T @ T
     # (the output will be lattice generators of such cs... we'll want
     #  lattice generators of valid Ms so we multiply on left by Mbasis)
-    orthog = lattice.orthogonal_lattice(p=T.T@Mbasis)
+    orthog = util.orthogonal_lattice(p=T.T@Mbasis)
     if extra_lll_reduction:
-        orthog = lattice.lll_reduce(orthog)
+        orthog = util.lll_reduce(orthog)
     Binter = Mbasis@orthog
 
     # lll-reduce Binter
     # (doesn't seem to have a huge effect...)
-    Binter = lattice.lll_reduce(Binter)
+    Binter = util.lll_reduce(Binter)
 
     # define ellipsoid
     #       M-term     K-term
@@ -283,11 +283,11 @@ def K_ellipsoid(p: ArrayLike,
     # define the lattices for K
     # -------------------------
     # (need K^T@p = 0)
-    B = lattice.orthogonal_lattice(p=p)
+    B = util.orthogonal_lattice(p=p)
 
     # lll-reduce B
     # (doesn't seem to have a huge effect...)
-    B = lattice.lll_reduce(B)
+    B = util.lll_reduce(B)
 
     # find lattice points in tadpole
     mat = -B.T@np.linalg.inv(kappa@p)@B
@@ -431,7 +431,7 @@ def ZpM(
         # the core enumeration
         # --------------------
         try:
-            lattice_points, _ = lattice.fp_ellipsoid_njit(
+            lattice_points, _ = util.fp_ellipsoid_njit(
                 mat=mat,
                 Q=ellipsoid_dilation*Qmax,
                 max_N_out=max_N_pfvs,
@@ -626,7 +626,7 @@ def ZpK(
         # helper variables
         A = kappa@p@Mbasis
         try:
-            Ainv, _ = lattice.inv_scaled(A)
+            Ainv, _ = util.inv_scaled(A)
         except Exception as e:
             raise ValueError(
                 f"inv_scaled failed for p={p.tolist()} — kappa@p@Mbasis "
@@ -644,7 +644,7 @@ def ZpK(
         # the core enumeration
         # --------------------
         try:
-            lattice_points, _ = lattice.fp_ellipsoid_njit(
+            lattice_points, _ = util.fp_ellipsoid_njit(
                 mat,
                 ellipsoid_dilation*Qmax,
                 max_N_out=max_N_pfvs,

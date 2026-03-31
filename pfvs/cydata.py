@@ -367,11 +367,11 @@ class CYData:
         _primal = np.vstack(to_stack, dtype=int).T
 
         # LLL-reduce
-        primal = lattice.lll_reduce(_primal)
+        primal = util.lll_reduce(_primal)
         primal = primal[:,-h11:]
 
         # construct the dual lattice
-        dual, denom = lattice.dual_lattice(primal)
+        dual, denom = util.dual_lattice(primal)
         if multiplier % denom != 0:
             raise RuntimeError(
                 f"Dual lattice denominator {denom} does not divide "
@@ -380,7 +380,7 @@ class CYData:
         out = dual * (multiplier//denom)
 
         # LLL-reduce the dual to be extra nice
-        out = lattice.lll_reduce(out)
+        out = util.lll_reduce(out)
         if verify:
             if not np.all((self.a@out)%2 == 0):
                 raise RuntimeError("M_lattice verification failed: a @ M is not even.")

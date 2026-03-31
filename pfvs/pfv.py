@@ -382,7 +382,7 @@ class PFV():
         The scaled exact inverse of N, as a (flint matrix, scale) pair.
         """
         if self._Ninv is None:
-            self._Ninv = lattice.inv_scaled(self.N, as_flint=True)
+            self._Ninv = util.inv_scaled(self.N, as_flint=True)
 
         return self._Ninv
 
