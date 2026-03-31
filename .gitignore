@@ -1,7 +1,7 @@
 # custom
 pfvs/c_kernels/*.c
 PFVSTRINGS-*
-callgraph.png
+*.png
 
 # test artifacts
 .pytest_cache/
