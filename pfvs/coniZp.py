@@ -33,7 +33,7 @@ import os
 from numpy.typing import ArrayLike
 
 # local imports
-from . import lattice, pfv
+from . import lattice
 from .c_kernels import coni_kernel
 from .cydata import CYData
 
@@ -56,7 +56,7 @@ def _check_singular(Ns: ArrayLike, rtol: float = 1e-12) -> np.ndarray:
     np.ndarray, shape (n,), dtype bool
         True at index i iff Ns[i] is singular.
     """
-    svals = np.linalg.svdvals(Ns)
+    svals    = np.linalg.svdvals(Ns)
     singular = (svals[:,-1] <= rtol * svals[:,0])
 
     return singular
@@ -300,7 +300,7 @@ def coni_H_matrix(ZBinter: ArrayLike, proj: ArrayLike = None):
     H_fl = flint.fmpz_mat(H.tolist())
 
     H_list = H_fl.hnf().tolist()
-    H = np.array([[int(x) for x in row] for row in H_list], dtype=object)
+    H      = np.array([[int(x) for x in row] for row in H_list], dtype=object)
 
     return H
 
@@ -340,7 +340,7 @@ def _Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
     # compute the matrix A such that Kperp = A@c
     # ------------------------------------------
     proj = _get_proj(data.h11)
-    A = proj@Z@Binter
+    A    = proj@Z@Binter
 
     # compute the basis B such that (A @ (B@d)) % gcd == 0
     # ----------------------------------------------------
@@ -874,6 +874,7 @@ def coniZpM(
 
     # return
     if return_formal_pfvs:
-        return [pfv.PFV(data, K, M) for K,M in zip(all_Ks, all_Ms)]
+        from .pfv import PFV
+        return [PFV(data, K, M) for K,M in zip(all_Ks, all_Ms)]
     else:
         return all_Ks, all_Ms

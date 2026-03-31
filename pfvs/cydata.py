@@ -134,8 +134,8 @@ class CYData:
     @classmethod
     def from_cy(cls,
         cy: "cytools.CalabiYau",
-        coni_curve: "ArrayLike" = None,
-        coni_cob: "ArrayLike" = None) -> "CYData":
+        coni_curve: ArrayLike | None = None,
+        coni_cob: ArrayLike | None = None) -> "CYData":
         """
         Construct a CYData object from a cytools.CalabiYau object.
 
@@ -199,35 +199,43 @@ class CYData:
     # -------
     @property
     def vertices(self) -> ArrayLike | str:
+        """Vertices of the associated polytope, or a string identifier."""
         return self._vertices
     verts = vertices
 
     @property
     def heights(self) -> ArrayLike | str:
+        """Heights of the triangulation, or a string identifier."""
         return self._heights
 
     @property
     def kappa(self) -> np.ndarray:
+        """Triple intersection numbers, shape (h11, h11, h11)."""
         return self._kappa.copy()
 
     @property
     def c2(self) -> np.ndarray:
+        """Second Chern class coefficients, shape (h11,)."""
         return self._c2.copy()
 
     @property
     def H(self) -> np.ndarray:
+        """Kahler cone generators (hyperplanes), shape (n_rays, h11)."""
         return self._H.copy()
 
     @property
     def coni(self) -> bool:
+        """True if this CYData is set up for coni PFV search."""
         return self._coni
 
     @property
     def h11(self) -> int:
+        """Hodge number h^{1,1}."""
         return self._h11
 
     @property
     def h21(self) -> int:
+        """Hodge number h^{2,1}."""
         return self._h21
 
     # a-matrix, b-vector

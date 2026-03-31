@@ -1,7 +1,13 @@
 # custom
 pfvs/c_kernels/*.c
 PFVSTRINGS-*
-enum
+callgraph.png
+
+# test artifacts
+.pytest_cache/
+.benchmarks/
+pfvs/c_kernels/testing_benchmarks/test_coni_kernel
+pfvs/c_kernels/testing_benchmarks/test_pvec_kernel
 
 
 # Byte-compiled / optimized / DLL files

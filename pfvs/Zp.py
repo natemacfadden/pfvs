@@ -456,6 +456,8 @@ def ZpM(
 
             singular.append(_check_singular(Ns))
 
+        if not singular:
+            continue
         singular = np.concatenate(singular)
 
         if verbosity >= 2:
@@ -491,7 +493,11 @@ def ZpM(
         all_Ms = np.vstack([all_Ms, Ms])
 
     # return
-    return _allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
+    all_Ks, all_Ms = _allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
+    if return_formal_pfvs:
+        from .pfv import PFV
+        return [PFV(data, K, M) for K, M in zip(all_Ks, all_Ms)]
+    return all_Ks, all_Ms
 
 def ZpK(
     # problem definition
@@ -606,7 +612,7 @@ def ZpK(
         # helper variables
         A = kappa@p@Mbasis
         try:
-            Ainv, scale = lattice.inv_scaled(A)
+            Ainv, _ = lattice.inv_scaled(A)
         except Exception as e:
             raise ValueError(
                 f"inv_scaled failed for p={p.tolist()} — kappa@p@Mbasis "
@@ -673,6 +679,8 @@ def ZpK(
 
             singular.append(_check_singular(Ns))
 
+        if not singular:
+            continue
         singular = np.concatenate(singular)
 
         if verbosity >= 2:
@@ -690,4 +698,8 @@ def ZpK(
         all_Ms = np.vstack([all_Ms, Ms])
 
     # return
-    return _allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
+    all_Ks, all_Ms = _allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
+    if return_formal_pfvs:
+        from .pfv import PFV
+        return [PFV(data, K, M) for K, M in zip(all_Ks, all_Ms)]
+    return all_Ks, all_Ms

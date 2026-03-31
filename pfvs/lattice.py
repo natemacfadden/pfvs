@@ -27,8 +27,6 @@ from numba import njit
 import numpy as np
 import scipy as sp
 
-from numba import types
-from numba.typed import Dict
 from numpy.typing import ArrayLike
 
 # basic helpers
@@ -126,7 +124,7 @@ def orthogonal_lattice(p: ArrayLike) -> np.ndarray:
     ArrayLike
         A basis of the lattice orthogonal to p, as column vectors.
     """
-    p = np.array(p).reshape(1,-1)
+    p   = np.array(p).reshape(1,-1)
     dim = p.shape[1]
 
     # compute null space
@@ -236,8 +234,18 @@ def inv_scaled(A_in: ArrayLike, as_flint: bool = False) -> tuple[np.ndarray, int
     """
     Compute a scaled integer inverse of A, i.e. (B, s) such that B @ A = s*I.
 
-    Uses the Smith normal form to find the minimal integer scaling factor s,
-    then solves for B column-by-column.
+    The minimal integer scaling factor s is the lcm of the Smith normal form
+    (SNF) diagonal entries d_1, ..., d_n. To see why: write A = U D V with
+    U, V unimodular and D = diag(d_1,...,d_n). Then
+
+        A^{-1} = V^{-1} D^{-1} U^{-1}
+
+    and D^{-1} = diag(1/d_1,...,1/d_n). Multiplying by s = lcm(d_i) clears
+    all denominators, so s*A^{-1} = s * V^{-1} D^{-1} U^{-1} is integral.
+    No smaller integer works because d_i | s is required for each i.
+
+    B is found by solving A @ x = s*e_i column-by-column via exact integer
+    linear solves.
 
     Parameters
     ----------
@@ -259,8 +267,8 @@ def inv_scaled(A_in: ArrayLike, as_flint: bool = False) -> tuple[np.ndarray, int
         If A_in is singular.
     """
     dim = A_in.shape[0]
-    A = flint.fmpz_mat(A_in.tolist())
-    n = A.nrows()
+    A   = flint.fmpz_mat(A_in.tolist())
+    n   = A.nrows()
 
     # Smith normal form diagonal
     D = A.snf()
@@ -365,12 +373,12 @@ def fp_iterative_njit(
 
     # linear constraint
     if linvec is None:
-        linvec = np.zeros(dim)
-        linmin = 0
+        linvec    = np.zeros(dim)
+        linmin    = 0
         num_zeros = -1
     else:
         num_zeros = 0
-        zeros = True
+        zeros     = True
         for i in range(dim):
             if linvec[i] == 0:
                 if zeros == False:
@@ -465,7 +473,7 @@ def fp_iterative_njit(
             # where we used that the diagonal is positive
             if remQ<0:
                 remQ = 0
-            R = np.sqrt(remQ)
+            R  = np.sqrt(remQ)
             lo = int(np.ceil(( -R - ci_offsets[i]) * L_diag_inv[i] - eps))
             hi = int(np.floor(( R - ci_offsets[i]) * L_diag_inv[i] + eps))
 
@@ -505,7 +513,7 @@ def fp_iterative_njit(
             ci_offsets[k] += L[i,k]# * 1
 
         # get ci, the new amount of remaining Q
-        ci = L[i,i]*veci + ci_offsets[i]
+        ci      = L[i,i]*veci + ci_offsets[i]
         new_rem = remQ - ci*ci
 
         # cut of no more Q left...
@@ -915,7 +923,7 @@ def coni_kernel_njit(
 
     # linear constraint
     num_zeros = 0
-    zeros = True
+    zeros     = True
     for i in range(dim):
         if Binter0[i] == 0:
             if zeros == False:
@@ -1069,7 +1077,7 @@ def coni_kernel_njit(
 
         # compute the new ci, Hvec_i offset value for i-1 using this vector
         ci_offset = 0.0
-        Hvec_i = 0
+        Hvec_i    = 0
         for j in range(i, dim):
             ci_offset += L[j,i-1] * vec[j]
             Hvec_i += H[i-1,j] * vec[j]

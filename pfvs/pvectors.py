@@ -80,8 +80,8 @@ def pvecs(
     Bs_fit   = []
     Npts_fit = []
 
-    i = -1
-    B = 1
+    i     = -1
+    B     = 1
     Nlast = 0
     while True:
         i += 1
@@ -101,7 +101,7 @@ def pvecs(
 
         if (status != 0) and (status != -5):
             # status -5 means no vectors are found
-            print(f"KERNEL RETURNED STATUS {status}!!!",flush=True)
+            warnings.warn(f"pvec kernel returned unexpected status {status}.")
 
         # remove points with nontrivial GCDs
         if N > 0:
@@ -228,7 +228,7 @@ def pvecs_cpsat(
     # -------------------
     # use shifting degree windows until we get enough points
     if min_N_pts is not None:
-        ps = np.empty((0,H.shape[1]), dtype=int)
+        ps   = np.empty((0,H.shape[1]), dtype=int)
         N_ps = 0
 
         for window_i in range(max_window_i+1):

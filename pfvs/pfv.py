@@ -31,7 +31,7 @@ from collections.abc import Generator
 from numpy.typing import ArrayLike
 
 # local imports
-from . import lattice, cydata, Zp, coniZp
+from . import lattice, cydata, coniZp
 from .cydata import CYData
 
 class PFV():
@@ -210,19 +210,23 @@ class PFV():
     # -------
     @property
     def h11(self) -> int:
+        """Hodge number h^{1,1} of the associated CY."""
         return self._cydata.h11
 
     @property
     def h21(self) -> int:
+        """Hodge number h^{2,1} of the associated CY."""
         return self._cydata.h21
 
     @property
     def vertices(self) -> np.ndarray:
+        """Vertices of the associated polytope."""
         return self._cydata.vertices
     verts = vertices
 
     @property
     def heights(self) -> np.ndarray:
+        """Heights of the triangulation."""
         return self._cydata.heights
 
     @property
@@ -414,7 +418,18 @@ class PFV():
     # ====================
     def _calc_p(self) -> None:
         """
-        Compute the p-vector and pgrading.
+        Compute and cache ``self._p`` and ``self._pgrading``.
+
+        Uses the relation N @ p = K (i.e., p = N^{-1} @ K) via the exact
+        integer inverse ``self.Ninv``. The result is an integer grading vector
+        ``pgrading`` (a scaled version of p with GCD 1) and a float ``p``
+        obtained by dividing out the denominator.
+
+        In the coni case the first component of p is constrained to be 0, so
+        only K[1:] and the lower-right block of N are used.
+
+        If N is singular (``check_Ninvertible`` returns False), both
+        ``_p`` and ``_pgrading`` are filled with NaN.
         """
         # this computation only makes sense if N is invertible
         if not self.check_Ninvertible():
@@ -606,7 +621,13 @@ class PFV():
             return min(self.H@self.p)>0.5
 
     def check_NpK(self, tol: float = 1e-4) -> bool:
-        """Check that N @ p = K. Requires `check_Ninvertible` to pass."""
+        """Check that N @ p = K. Requires `check_Ninvertible` to pass.
+
+        Parameters
+        ----------
+        tol : float, optional
+            Tolerance for the residual norm ||N @ p - K||. Defaults to 1e-4.
+        """
         if self.coni:
             return (self.pgrading[0] == 0) and\
                    np.linalg.norm(self.N@self.p[1:] - self.K[1:])<tol
@@ -692,11 +713,7 @@ class PFV():
         self._all_charges = []
         self._all_coeffs = []
 
-        len_series = 0  # self._series was just reset above
-
-        # series is already long enough!
-        if len_series >= N_nonzero:
-            return self._series[:N_nonzero]
+        len_series = 0
 
         # need to build the series to size
         for coeff, exp in self.series_gen():
