@@ -20,10 +20,38 @@ import math
 import numpy as np
 import pytest
 
-from pfvs.util import extended_euclidean, lll_reduce
+from pfvs.util import dual_lattice, extended_euclidean, lll_reduce
 
 # =============================================================================
 # Test bases
+# =============================================================================
+
+# =============================================================================
+# Dual lattice test bases (columns are basis vectors)
+# =============================================================================
+
+# Full-rank 2D: vol = 6, dual vol = 1/6
+DUAL_B_DIAG = np.array([
+    [2, 0],
+    [0, 3],
+], dtype=np.int64)
+
+# Unimodular: self-dual (vol = 1)
+DUAL_B_UNIMOD = np.array([
+    [1, 1],
+    [0, 1],
+], dtype=np.int64)
+
+# Rank-1 in 2D
+DUAL_B_RANK1 = np.array([
+    [2],
+    [1],
+], dtype=np.int64)
+
+DUAL_BASES = [DUAL_B_DIAG, DUAL_B_UNIMOD, DUAL_B_RANK1]
+
+# =============================================================================
+# LLL test bases (columns are basis vectors)
 # =============================================================================
 
 # 2x2 trivial basis — already reduced, change-of-basis should be identity
@@ -75,6 +103,31 @@ EXTENDED_EUCLIDEAN_CASES = [
 
 # =============================================================================
 # Tests
+# =============================================================================
+
+# =============================================================================
+# Dual lattice tests
+# =============================================================================
+
+def _vol(B):
+    return np.sqrt(np.linalg.det(B.T @ B))
+
+@pytest.mark.parametrize("B", DUAL_BASES)
+def test_dual_integrality(B):
+    """B^T @ D must have all entries divisible by denom."""
+    D, denom = dual_lattice(B)
+    assert np.all((B.T @ D) % denom == 0)
+
+@pytest.mark.parametrize("B", DUAL_BASES)
+def test_dual_volume(B):
+    """vol(primal) * vol(dual) == 1."""
+    D, denom = dual_lattice(B)
+    B_dual = D / denom
+    assert np.isclose(_vol(B) * _vol(B_dual), 1.0)
+
+
+# =============================================================================
+# extended_euclidean tests
 # =============================================================================
 
 @pytest.mark.parametrize("a,b", EXTENDED_EUCLIDEAN_CASES)
