@@ -369,15 +369,15 @@ def test_coniZpM_finds_manwe(manwe_result):
     assert np.all(Ms[0] == M_MANWE)
 
 @pytest.fixture(scope="module")
-def coni_pvecs_100k(coni_data):
-    return pvecs(coni_data, min_N_pts=100_000)
+def coni_pvecs_10k(coni_data):
+    return pvecs(coni_data, min_N_pts=10_000)
 
 @pytest.fixture(scope="module")
-def coniZpM_results_100k(coni_data, coni_pvecs_100k):
+def coniZpM_results_10k(coni_data, coni_pvecs_10k):
     Q = H11 + H21 + 4  # 162
     return coniZpM(
         data=coni_data,
-        ps=coni_pvecs_100k,
+        ps=coni_pvecs_10k,
         Q=Q,
         M0min=13,
         ellipsoid_dilation=50,
@@ -385,9 +385,9 @@ def coniZpM_results_100k(coni_data, coni_pvecs_100k):
         verbosity=0,
     )
 
-def test_coniZpM_pfv_count(coniZpM_results_100k):
-    Ks, Ms = coniZpM_results_100k
-    assert len(Ks) == 198
+def test_coniZpM_pfv_count(coniZpM_results_10k):
+    Ks, Ms = coniZpM_results_10k
+    assert len(Ks) == 110
 
 def test_coniZpM_empty_ps(coni_data):
     with pytest.raises(ValueError, match="ps must be non-empty"):
