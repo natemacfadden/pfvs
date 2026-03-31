@@ -2,7 +2,7 @@ import numpy as np
 import time
 
 from pfvs.c_kernels import coni_kernel
-from pfvs.lattice import coni_kernel_njit
+from pfvs.util import coni_kernel_njit
 
 # coni_kernel
 # ===========

@@ -31,7 +31,7 @@ from collections.abc import Generator
 from numpy.typing import ArrayLike
 
 # local imports
-from . import lattice, cydata, coniZp
+from . import util, cydata, coniZp
 from .cydata import CYData
 
 class PFV():

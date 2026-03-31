@@ -33,7 +33,7 @@ import os
 from numpy.typing import ArrayLike
 
 # local imports
-from . import lattice
+from . import util
 from .c_kernels import coni_kernel
 from .cydata import CYData
 
@@ -570,12 +570,16 @@ def coniZpM(
                         continue
 
                     lattice_points, rawQs, status = coni_kernel(
+                        # ellipsoid definition
                         U=np.ascontiguousarray(L.T),
                         Q=Q,
                         dilation=ellipsoid_dilation,
+                        # M0 cuts
                         linvec=np.ascontiguousarray(Binter[0,:].astype(np.int32)),
                         linmin=M0min,
+                        # gcd cuts
                         H=H,
+                        # misc
                         max_N_out=max_N_pfvs,
                         eps=1e-4
                     )
@@ -583,22 +587,6 @@ def coniZpM(
                     if status != 0:
                         print(f"KERNEL RETURNED STATUS {status}!!!",
                               flush=True)
-
-                    rawQs_check = np.sum(
-                        lattice_points*(lattice_points@mat.T), axis=1)
-                    if extra_checks and (not np.allclose(rawQs, rawQs_check)):
-                        print(lattice_points.tolist())
-                        print(rawQs.tolist())
-                        print(mat.tolist())
-                        print(Q)
-                        print(ellipsoid_dilation),
-                        print(Binter[0,:].tolist()),
-                        print(H.tolist())
-                        print(max_N_pfvs)
-                        print(np.linalg.cholesky(mat).T.dtype,
-                              Binter[0,:].astype(np.int32).dtype,
-                              H.dtype)
-                        raise Exception
 
                 # use GCD lattices
                 # ----------------
@@ -615,11 +603,12 @@ def coniZpM(
                         vs, vQs = lattice.fp_iterative_njit(
                             # ellipsoid definition
                             L=np.linalg.cholesky(Bgcd.T@mat@Bgcd),
-                            Q=gcd*Q,
-                            # M0 cuts:
+                            Q=Q,
+                            dilation=gcd,
+                            # M0 cuts
                             linvec = (Binter@Bgcd)[0],
                             linmin = 13,
-                            # misc:
+                            # misc
                             max_N_out=max_N_pfvs)
 
                         # concatenate

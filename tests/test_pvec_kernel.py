@@ -18,7 +18,7 @@
 import numpy as np
 
 from pfvs.c_kernels import pvec_kernel
-from pfvs.lattice import kannan_box_mat_njit
+from pfvs.util import kannan_box_mat_njit
 
 # =============================================================================
 # Hard-coded Manwe data (from https://arxiv.org/abs/2406.13751)

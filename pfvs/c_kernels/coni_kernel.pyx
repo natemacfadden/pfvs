@@ -48,59 +48,53 @@ def coni_kernel(U,
                 long max_N_out,
                 double eps = 1e-12):
     """
-    **Description:**
-    Adaptation of the (iterative) Fincke-Pohst algorithm for utility in
-    constructing coni-PFVs. I.e., solves
-        0 <= vec^T @ mat     @ vec <= dilation*Q.
-        0 <= vec^T @ (U.T@U) @ vec <= dilation*Q
-    as well as (M[0] cuts)
-        linmin <= dot(linvec, vec)
-    as well as (K'>0 cuts)
-        (vec^T @ mat @ vec)//Q <= gcd(Kperp)
-                                = gcd([0, 1]@Z@Binter@vec)
-                                = gcd(H@vec)
-    for H the row-HNF of [0, 1]@Z@Binter (this matrix computes Kperp from vec).
+    Adaptation of the (iterative) Fincke-Pohst algorithm for constructing
+    coni-PFVs. Finds integer vectors ``vec`` satisfying:
 
-    Any `vec` satisfying all of the above can generate a coni-PFV, as long as
-    det(N) != 0.
+    - Ellipsoid:  ``0 <= vec^T @ (U.T@U) @ vec <= dilation * Q``
+    - M0 cut:     ``linmin <= dot(linvec, vec)``
+    - K' cut:     ``(vec^T @ (U.T@U) @ vec) // Q <= gcd(H @ vec)``
 
-    Most of the work is in writing to `out`, `Qs`, and `N_out`.
+    where ``H`` is the row-HNF of the matrix ``G`` such that ``Kperp = G @ vec``.
+    Any ``vec`` passing all three cuts can generate a coni-PFV (provided
+    ``det(N) != 0``).
 
-    **Arguments:**
-    // output objects
-    - `out`:       A container for the lattice points vec.
-    - `Qs`:        A container for the valuations of vec^T @ mat @ vec of the
-                   outputs.
-    - `N_out`:     An integer we write to, indicating the number of outputs.
-    // ellipsoid def
-    - `dim`      : The dimension of the problem.
-    - `U`:         The upper triangular matrix such that mat = U.T@U
-    - `Q`:         The ellipsoid bound.
-    - `dilation`:  The maximum allowed dilation to allow... As long as
-                   gcd(Kperp) >= (vec^T @ mat @ vec)//Q, the vector vec can
-                   still define coni-PFV.
-    // M0 cuts
-    - `linvec`:    Binter[0,:]. The vector such that dot(linvec,vec)=M0.
-                   REQUIRED THAT COLUMNS OF BINTER ARE ORDERED S.T. ALL 0s OF
-                   linvec ARE LEADING
-    - `linmin`:    The minimum value of M0 permitted. Inclusive.
-    // Kprime cuts
-    - `H`:         Let G be the matrix such that Kperp = G@vec. Then H = HNF(G).
-    // misc specs
-    - `max_N_out`: The maximum number of output allowed.
-    - `eps`:       A small number used for correctly setting bounds despite
-                   floating point errors.
+    Parameters
+    ----------
+    U : array-like of shape (dim, dim), dtype float64
+        Upper-triangular Cholesky factor: ``mat = U.T @ U``.
+    Q : int
+        Tadpole charge bound (exact equality for coni).
+    dilation : float
+        Maximum dilation factor. Vectors with
+        ``vec^T @ mat @ vec <= dilation * Q`` are accepted.
+    linvec : array-like of shape (dim,), dtype int32
+        First row of ``Binter`` (= ``Binter[0, :]``), so that
+        ``dot(linvec, vec) = M0``. All leading entries must be zero
+        (required by the C kernel).
+    linmin : float
+        Minimum value of ``M0 = dot(linvec, vec)``. Inclusive.
+    H : array-like of shape (dim, dim), dtype int64
+        Row-HNF of the matrix mapping ``vec`` to ``Kperp``.
+    max_N_out : long
+        Maximum number of output vectors allowed.
+    eps : float, optional
+        Small tolerance for floating-point bound corrections. Default 1e-12.
 
-    **Returns:**
-    The vectors `vec` in the ellipsoid and obeying the extra constraints.
-    The valuation `vec^T @ mat @ vec`.
-    A status code according to following list:
-        0: success
-        -6: problem dimension too high (currently >256)
-        -4: not all 0s of linvec are leading
-        -100: dilation overflows uint32_t
-        -5: no vectors
-        -2: exceed max_N_out outputs
+    Returns
+    -------
+    out : ndarray of shape (N, dim), dtype int32
+        Lattice points satisfying all constraints.
+    Qs : ndarray of shape (N,), dtype float
+        Valuations ``vec^T @ mat @ vec`` for each output vector.
+    status : int
+        Status code:
+             0: success
+            -6: problem dimension too high (currently >256)
+            -4: not all zeros of linvec are leading
+          -100: dilation overflows uint32_t
+            -5: no vectors found
+            -2: exceeded max_N_out outputs
     """
     # convert inputs to C-contiguous arrays with correct dtype
     # this ensures we always have the right memory layout
@@ -152,7 +146,7 @@ def coni_kernel(U,
             mpz_clear(H_gmp[i])
         free(H_gmp)
         raise MemoryError("Failed to allocate c_out")
-    cdef float *c_Qs = <float *>malloc(max_N_out * sizeof(int))
+    cdef float *c_Qs = <float *>malloc(max_N_out * sizeof(float))
     if c_Qs == NULL:
         for i in range(dim * dim):
             mpz_clear(H_gmp[i])

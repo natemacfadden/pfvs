@@ -31,34 +31,35 @@ def pvec_kernel(B: int,
                 long max_N_out,
                 long max_N_iter = -1):
     """
-    Enumerate lattice points x obeying linmat@x >= linmin and |x_i| <= B using
-    Kannan's algorithm.
+    Enumerate lattice points x obeying ``linmat @ x >= linmin`` and
+    ``|x_i| <= B`` using Kannan's algorithm. Columns of ``linmat`` are
+    internally sorted by L1 norm (strictest constraints first) before calling
+    the C kernel, then the output is un-sorted before returning.
 
-    VERY preferable that you the columns of linmat so stricter components come
-    first.
+    Parameters
+    ----------
+    B : int
+        Box half-width: each component satisfies ``|x_i| <= B``.
+    linmat : int[:, ::1] of shape (numhyps, dim)
+        Hyperplane constraint matrix. Each row defines one inequality
+        ``linmat[i] @ x >= linmin``.
+    linmin : int
+        Minimum value each hyperplane constraint must satisfy. Inclusive.
+    max_N_out : long
+        Maximum number of output vectors allowed.
+    max_N_iter : long, optional
+        Maximum number of Kannan iterations. Defaults to ``1000 * max_N_out``.
 
-    **Arguments:**
-    // output objects
-    - `out`:        A container for the lattice points vec.
-    - `N_out`:      An integer we write to, indicating the number of outputs.
-    // box definition
-    - `dim`:        The dimension of the problem.
-    - `B`:          The bounds |x_i| <= B
-    // cone definition cuts
-    - `linmat`:     The matrix defining the cone.
-    - `linmin`:     The closest permitted distance to a hyperplane.
-    - `numhyps`:    The number of hyperplane constraints.
-    // misc specs
-    - `max_N_out`:  The maximum number of output allowed.
-    - `max_N_iter`: The maximum number of iterations allowed.
-
-    **Returns:**
-    The vectors `vec` in the ellipsoid and obeying the extra constraints.
-    A status code according to following list:
-        0: success
-        -6: problem dimension too high (currently >256)
-        -5: no vectors
-        -2: exceed max_N_out outputs
+    Returns
+    -------
+    out : ndarray of shape (N, dim), dtype int32
+        Lattice points satisfying all constraints.
+    status : int
+        Status code:
+            0: success
+           -6: problem dimension too high (currently >256)
+           -5: no vectors found
+           -2: exceeded max_N_out outputs
     """
     # read some inputs
     cdef int dim     = linmat.shape[1]

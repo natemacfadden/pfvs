@@ -28,7 +28,7 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 # local imports
-from . import lattice
+from . import util
 from .cydata import CYData
 
 # Zp helpers
