@@ -17,7 +17,7 @@
 
 import numpy as np
 
-from pfvs.c_kernels import pvec_kernel
+from pfvs.c_kernels import pvec_kernel  # TODO: migrate to latticepts
 from pfvs.util import kannan_box_mat_njit
 
 # =============================================================================

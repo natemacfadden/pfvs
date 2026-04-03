@@ -17,7 +17,7 @@
 
 import numpy as np
 
-from pfvs.c_kernels import coni_kernel
+from pfvs.coni_kernel import coni_kernel
 from pfvs.util import coni_kernel_njit
 
 # =============================================================================

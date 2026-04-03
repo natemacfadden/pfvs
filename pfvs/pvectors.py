@@ -29,7 +29,7 @@ from ortools.sat.python import cp_model
 from numpy.typing import ArrayLike
 
 # local imports
-from .c_kernels import pvec_kernel
+from latticepts import enum_lattice_points
 from .cydata import CYData
 
 def pvecs(
@@ -44,9 +44,9 @@ def pvecs(
     hyperplanes of a particular facet of this Kahler cone (for coniPFVs). Only
     primitive vectors (GCD(p) = 1) are returned.
 
-    Wraps `pvec_kernel`, which searches within an L-inf box |p_i| <= B.
-    Iteratively increases B until at least `min_N_pts` p-vectors are found,
-    using a log-log extrapolation to estimate the required B.
+    Wraps `latticepts.enum_lattice_points`, which searches within an L-inf box
+    |p_i| <= B and iteratively increases B until at least `min_N_pts` p-vectors
+    are found.
 
     Parameters
     ----------
@@ -67,93 +67,12 @@ def pvecs(
     if min_N_pts <= 0:
         raise ValueError(f"min_N_pts must be > 0, got {min_N_pts}.")
 
-    # pvec_kernel has a safety max number of iterations, outputs
-    # set both to a large number
-    max_N_out  = 10*min_N_pts
-    max_N_iter = 1_000_000*min_N_pts
-
     # read hyperplanes (varies for coni and non-coni PFVs)
     if data.coni: H = data.H_cob
     else:         H = data.H
 
-    # get the p-vectors
-    Bs_fit   = []
-    Npts_fit = []
-
-    i     = -1
-    B     = 1
-    Nlast = 0
-    while True:
-        i += 1
-        if verbosity >= 1:
-            print(f"Attempt #{i}: computing p-vectors in box |p_i| <= {B}...",
-                  flush=True)
-
-        # the actual work
-        pts, status = pvec_kernel(
-            B=B,
-            linmat=H.astype(np.int32),
-            linmin=1,
-            max_N_out=max_N_out,
-            max_N_iter=max_N_iter
-        )
-        N = len(pts)
-
-        if (status != 0) and (status != -5):
-            # status -5 means no vectors are found
-            warnings.warn(f"pvec kernel returned unexpected status {status}.")
-
-        # remove points with nontrivial GCDs
-        if N > 0:
-            gcds = np.gcd.reduce(pts,axis=1)
-            primitive = (gcds == 1)
-            pts = pts[primitive]
-
-        # check if done
-        if N >= min_N_pts:
-            break
-        if verbosity >= 1:
-            print(f"Attempt #{i}: found {N} p-vectors. Compare to ", end=" ")
-            print(f"previous iteration ({Nlast})...",
-                  flush=True)
-
-        # save data for estimating next bounds B to try
-        if N > 0 and N > Nlast:
-            Nlast = N
-            Bs_fit.append(np.log(B))
-            Npts_fit.append(np.log(N))
-
-        # guess the B to scale it to using some fitting:
-        # log(N) = m log(B) + b
-        # log(N1)-log(N0) = m(log(B1)-log(B0))
-        # (ensure there are at least 3x data points. Otherwise, fit empirically
-        #  untrustworthy)
-        if len(Bs_fit) > 2:  # require >=3 points before trusting the fit
-            m = (Npts_fit[-1]-Npts_fit[-2])/(Bs_fit[-1]-Bs_fit[-2])
-            # Inflate slope by 1.5x: the true N(B) curve is convex in
-            # log-log space, so the local slope overestimates the global
-            # slope. Inflating it causes B to be underestimated (i.e. we
-            # take a smaller step), which is safer than overshooting.
-            m *= 1.5
-
-            Bguess = (np.log(min_N_pts)-Npts_fit[-1])/m + Bs_fit[-1]
-            Bguess = np.exp(Bguess)
-            # With few p-vectors the log-log fit is noisy, so cap the step
-            # at 5% of B to avoid large jumps on unreliable extrapolation.
-            if N <= 200:
-                Bstep  = min(Bguess - B, 0.05*B)
-            else:
-                Bstep = Bguess - B
-            Bstep = int(np.ceil(Bstep))
-            if Bstep <= 0:
-                raise ValueError
-
-            B += Bstep
-        else:
-            # be very conservative with B if we have few pvecs
-            B += min(3, int(np.ceil(0.05*B)))
-
-    return pts
+    return enum_lattice_points(
+        H, rhs=1, min_N_pts=min_N_pts, primitive=True, verbosity=verbosity)
 
 def pvecs_cpsat(
     data: CYData,

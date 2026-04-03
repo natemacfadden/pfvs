@@ -34,7 +34,7 @@ from numpy.typing import ArrayLike
 
 # local imports
 from . import util
-from .c_kernels import coni_kernel
+from .coni_kernel import coni_kernel
 from .cydata import CYData
 
 # coniZp helpers

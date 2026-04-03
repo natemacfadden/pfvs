@@ -25,16 +25,10 @@ kernels = [
         "impl": "CONI_KERNEL_IMPLEMENTATION",
         "libraries": ["gmp"],
     },
-    {
-        "name": "pvec_kernel",
-        "pyx": "pvec_kernel.pyx",
-        "include": ".",
-        "impl": "PVEC_KERNEL_IMPLEMENTATION",
-    },
 ]
 
 extensions = []
-package_path = "pfvs/c_kernels"
+package_path = "pfvs/coni_kernel"
 gmp_paths = get_gmp_paths()
 
 for k in kernels:
@@ -48,7 +42,7 @@ for k in kernels:
     
     extensions.append(
         Extension(
-            f"pfvs.c_kernels.{k['name']}",
+            f"pfvs.coni_kernel.{k['name']}",
             sources=[os.path.join(package_path, k["pyx"])],
             include_dirs=include_dirs,
             library_dirs=library_dirs,

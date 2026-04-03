@@ -20,6 +20,7 @@ classifiers = [
 dependencies = [
     "python-flint",
     "joblib",
+    "latticepts",
     "numba",
     "numpy",
     "ortools",
@@ -38,7 +39,7 @@ test = [
 Repository = "https://github.com/natemacfadden/pfvs"
 
 [tool.setuptools]
-packages = ["pfvs", "pfvs.c_kernels"]
+packages = ["pfvs", "pfvs.coni_kernel"]
 
 [tool.setuptools.package-data]
-"pfvs.c_kernels" = ["*.so", "*.pyd"]
+"pfvs.coni_kernel" = ["*.so", "*.pyd"]
