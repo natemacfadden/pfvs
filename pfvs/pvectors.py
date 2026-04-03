@@ -268,7 +268,7 @@ def pvecs_cpsat(
     model  = cp_model.CpModel()
     if max_Linf is None:
         warnings.warn(
-            "max_Linf not set — search will be very slow. "
+            "max_Linf not set; search will be very slow. "
             "Setting max_Linf explicitly is strongly recommended.",
             stacklevel=2
         )

@@ -35,7 +35,7 @@ test = [
 ]
 
 [project.urls]
-Repository = "https://github.com/LiamMcAllisterGroup/pfvs"
+Repository = "https://github.com/natemacfadden/pfvs"
 
 [tool.setuptools]
 packages = ["pfvs", "pfvs.c_kernels"]

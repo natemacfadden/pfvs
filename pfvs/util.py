@@ -126,7 +126,7 @@ def orthogonal_lattice(p: ArrayLike) -> np.ndarray:
     # At the end, w = (gcd(p), 0, ..., 0), so U[1:] @ p_original = 0,
     # meaning the rows of U[1:] span the orthogonal complement.
     for k in range(1,n):
-        # w[k] is already zero — this component was cleared by a prior step
+        # w[k] is already zero, cleared by a prior step
         if w[k] == 0:
             continue
 

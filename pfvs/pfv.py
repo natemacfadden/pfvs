@@ -1015,7 +1015,7 @@ class PFV():
         else:
             self.series()
 
-            print("(format is (GV_i)·(M.q_i) + ...)")
+            print("(format is (GV_i)*(M.q_i) + ...)")
 
             for q,gv,c,e in zip(self._all_charges,
                                 self._all_gvs,
@@ -1025,7 +1025,7 @@ class PFV():
 
                 first = True
                 if verbosity>2:
-                    print(f"{self.M.tolist()}·(", end="")
+                    print(f"{self.M.tolist()}*(", end="")
                     for _q,_gv in zip(q, gv):
                         if not first:
                             print(" + ", end="")
@@ -1040,5 +1040,5 @@ class PFV():
                             print(" + ", end="")
                         else:
                             first = False
-                        print(f"({_gv})·({_c//_gv})", end="")
+                        print(f"({_gv})*({_c//_gv})", end="")
                 print()

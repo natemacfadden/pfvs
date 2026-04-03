@@ -629,7 +629,7 @@ def ZpK(
             Ainv, _ = util.inv_scaled(A)
         except Exception as e:
             raise ValueError(
-                f"inv_scaled failed for p={p.tolist()} — kappa@p@Mbasis "
+                f"inv_scaled failed for p={p.tolist()}; kappa@p@Mbasis "
                 f"may be singular."
             ) from e
 
