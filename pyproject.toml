@@ -20,7 +20,7 @@ classifiers = [
 dependencies = [
     "python-flint",
     "joblib",
-    "latticepts",
+    "latticepts>=0.1.2",
     "numba",
     "numpy",
     "ortools",
