@@ -81,6 +81,8 @@ pfvs/
 
 *: This C code originally was the bottleneck/core of the problem, hence the name 'kernel'. In the current state, unless one is studying large $p_{denom}$, these kernels represent a relatively small fracton of the total computation
 
+**Note:** `util.py` also contains `coni_kernel_njit`, a Numba implementation of the same algorithm. It is not recommended for production use; prefer `coni_kernel`.
+
 ## Installation
 
 ### Using conda (recommended):

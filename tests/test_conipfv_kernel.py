@@ -58,6 +58,9 @@ EXPECTATIONS = [0, 0,  0,  1,     2,     2,     2,     2,     2]
 # Tests
 # =============================================================================
 
+# coni_kernel_njit is used here for verification only. It is NOT recommended
+# for production use: it lacks GMP arithmetic and can silently produce wrong
+# results for large integers.
 def test_njit():
     for dilation, expected in zip(DILATIONS, EXPECTATIONS):
         out, Niter = coni_kernel_njit(

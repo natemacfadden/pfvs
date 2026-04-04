@@ -841,6 +841,8 @@ def coni_kernel_njit(
     Any vec passing all constraints can generate a coni-PFV as long as
     det(N) != 0.
 
+    NOT recommended for production use. Use `coni_kernel` instead.
+
     Parameters
     ----------
     L : ArrayLike
