@@ -1,3 +1,6 @@
+# macOS
+.DS_Store
+
 # custom
 pfvs/c_kernels/*.c
 PFVSTRINGS-*
@@ -7,39 +10,29 @@ PFVSTRINGS-*
 .pytest_cache/
 .benchmarks/
 .coverage
-pfvs/c_kernels/testing_benchmarks/test_coni_kernel
+pfvs/c_kernels/testing_benchmarks/test_conipfv_kernel
 pfvs/c_kernels/testing_benchmarks/test_pvec_kernel
-
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
+
+# C extensions and build artifacts
+*.so
+*.dylib
+*.o
+*.a
+*.dSYM/
+
+# Cython-generated C files
+pfvs/pfvs/conipfv_kernel/conipfv_kernel.c
+pfvs/pfvs/pfv_kernel/pfv_kernel.c
 
 # Distribution / packaging
 build/
 dist/
 *.egg-info/
-.eggs/
 *.egg
-*.whl
 
-# macOS
-.DS_Store
-
-# Jupyter Notebook checkpoints
+# Jupyter
 .ipynb_checkpoints
-
-# C / Cython build artifacts
-*.so
-*.pyd
-*.dll
-*.dylib
-*.o
-*.obj
-*.a
-*.lib
-
-# Debug / IDE files
-*.dSYM/
-
