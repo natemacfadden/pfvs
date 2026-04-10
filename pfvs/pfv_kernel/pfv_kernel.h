@@ -549,6 +549,6 @@ int _pfv_kernel_c(
         return status;
 }
 
-#endif // PFV_KERNEL_IMPL
+#endif // PFV_KERNEL_IMPLEMENTATION
 
 #endif // PFV_KERNEL_H

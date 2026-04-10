@@ -64,14 +64,12 @@ The demos are currently in demo_notebooks/. This will be modified soon.
 ```
 pfvs/
 ├── pfvs/
-│   ├── c_kernels/               # "kernels"* written in C
-│   │   ├── testing_benchmarks/  # C-code testing/benchmarks
-│   │   ├── pvec_kernel.h        # generates vectors in the strict interior of a cone
-│   │   └── conipfv_kernel.h     # generates coniPFVs
-│   ├── lattice.py               # lattice-related utilities
-|   ├── cydata.py                # simple class holding CY-related data
-|   ├── Zp.py                    # main methods for generating PFVs
-|   └── diagnostics.py           # validation/verification class for PFVs
+│   ├── conipfv_kernel/          # C kernel* for coniPFV enumeration
+│   │   └── testing_benchmarks/  # C-code testing/benchmarks
+│   ├── pfv_kernel/              # C kernel* for non-coni PFV enumeration
+│   ├── cydata.py                # simple class holding CY-related data
+│   ├── Zp.py                    # main methods for generating PFVs
+│   └── diagnostics.py           # validation/verification class for PFVs
 ├── tests/
 │   └─ FILL IN
 ├── environment.yml

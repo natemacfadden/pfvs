@@ -583,6 +583,6 @@ int _conipfv_kernel_c(
         return status;
 }
 
-#endif // CONIPFV_KERNEL_IMPL
+#endif // CONIPFV_KERNEL_IMPLEMENTATION
 
 #endif // CONIPFV_KERNEL_H
