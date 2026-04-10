@@ -1,5 +1,5 @@
-#ifndef CONI_KERNEL_H
-#define CONI_KERNEL_H
+#ifndef CONIPFV_KERNEL_H
+#define CONIPFV_KERNEL_H
 
 // HEADER
 // ======
@@ -59,7 +59,7 @@ A status code according to following list:
     -5: no vectors
     -2: exceed max_N_out outputs
 */
-int _coni_kernel_c(
+int _conipfv_kernel_c(
     int32_t * restrict out,
     float * restrict Qs,
     int * restrict N_out,
@@ -77,7 +77,7 @@ int _coni_kernel_c(
 
 // IMPLEMENTATION
 // ==============
-#ifdef CONI_KERNEL_IMPLEMENTATION
+#ifdef CONIPFV_KERNEL_IMPLEMENTATION
 
 #include <math.h>
 #include <stdbool.h>
@@ -239,7 +239,7 @@ static inline int set_bounds(
 }
 
 // custom FP code for coniPFVs
-int _coni_kernel_c(
+int _conipfv_kernel_c(
     int32_t * restrict out,
     float * restrict Qs,
     int * restrict N_out,
@@ -583,6 +583,6 @@ int _coni_kernel_c(
         return status;
 }
 
-#endif // CONI_KERNEL_IMPL
+#endif // CONIPFV_KERNEL_IMPL
 
-#endif // CONI_KERNEL_H
+#endif // CONIPFV_KERNEL_H

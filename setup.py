@@ -7,42 +7,52 @@ import os
 def get_gmp_paths():
     """Find GMP from conda environment or system."""
     conda_prefix = os.environ.get('CONDA_PREFIX')
-    
+
     if conda_prefix:
         return {
             'include': os.path.join(conda_prefix, 'include'),
             'library': os.path.join(conda_prefix, 'lib'),
         }
-    
+
     # Fallback to system default paths (empty = use system defaults)
     return None
 
 kernels = [
     {
-        "name": "coni_kernel",
-        "pyx": "coni_kernel.pyx",
+        "package": "pfvs/conipfv_kernel",
+        "name": "conipfv_kernel",
+        "pyx": "conipfv_kernel.pyx",
+        "impl": "CONIPFV_KERNEL_IMPLEMENTATION",
         "include": ".",
-        "impl": "CONI_KERNEL_IMPLEMENTATION",
+        "libraries": ["gmp"],
+    },
+    {
+        "package": "pfvs/pfv_kernel",
+        "name": "pfv_kernel",
+        "pyx": "pfv_kernel.pyx",
+        "impl": "PFV_KERNEL_IMPLEMENTATION",
+        "include": ".",
         "libraries": ["gmp"],
     },
 ]
 
 extensions = []
-package_path = "pfvs/coni_kernel"
 gmp_paths = get_gmp_paths()
 
 for k in kernels:
+    package_path = k["package"]
     include_dirs = [os.path.join(package_path, k["include"])]
     library_dirs = []
-    
+
     # Add GMP paths if needed and available
     if "gmp" in k.get("libraries", []) and gmp_paths:
         include_dirs.append(gmp_paths['include'])
         library_dirs.append(gmp_paths['library'])
-    
+
+    pkg_name = package_path.replace("/", ".")
     extensions.append(
         Extension(
-            f"pfvs.coni_kernel.{k['name']}",
+            f"{pkg_name}.{k['name']}",
             sources=[os.path.join(package_path, k["pyx"])],
             include_dirs=include_dirs,
             library_dirs=library_dirs,

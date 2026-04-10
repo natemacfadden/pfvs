@@ -4,7 +4,7 @@
 #include <errno.h>
 #include <time.h>
 
-#define CONI_KERNEL_IMPLEMENTATION
+#define CONIPFV_KERNEL_IMPLEMENTATION
 #include "coni_kernel.h"
 
 int main(int argc, char *argv[])

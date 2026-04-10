@@ -766,7 +766,7 @@ def kannan_box_mat_njit(
 # FP-style methods but tailored to coniZpM
 # ----------------------------------------
 @njit
-def _coni_kernel_set_bounds(
+def _conipfv_kernel_set_bounds(
     sp,
     remQ,
     ci_offset,
@@ -775,7 +775,7 @@ def _coni_kernel_set_bounds(
     stack_val_len,
     eps) -> int:
     """
-    ***For use only in coni_kernel_njit.***
+    ***For use only in conipfv_kernel_njit.***
 
     Sets the candidate integer range for vec[i] from the remaining quadratic
     budget remQ. Feasible bounds (with R = sqrt(remQ)):
@@ -818,7 +818,7 @@ def _coni_kernel_set_bounds(
     return num
 
 @njit
-def coni_kernel_njit(
+def conipfv_kernel_njit(
         L: ArrayLike,
         Q: int,
         dilation: int,
@@ -841,7 +841,7 @@ def coni_kernel_njit(
     Any vec passing all constraints can generate a coni-PFV as long as
     det(N) != 0.
 
-    NOT recommended for production use. Use `coni_kernel` instead.
+    NOT recommended for production use. Use `conipfv_kernel` instead.
 
     Parameters
     ----------
@@ -929,7 +929,7 @@ def coni_kernel_njit(
     stack_M0[sp]   = 0
     stack_gcd[sp]  = 0
 
-    k = _coni_kernel_set_bounds(
+    k = _conipfv_kernel_set_bounds(
         sp,
         Q_upper,
         0,
@@ -1041,7 +1041,7 @@ def coni_kernel_njit(
         stack_Hveci[sp] = Hvec_i
 
         # set candidate values of vec[i-1]
-        _coni_kernel_set_bounds(
+        _conipfv_kernel_set_bounds(
             sp,
             new_rem,
             ci_offset,

@@ -34,7 +34,7 @@ from numpy.typing import ArrayLike
 
 # local imports
 from . import util
-from .coni_kernel import coni_kernel
+from .conipfv_kernel import conipfv_kernel
 from .cydata import CYData
 
 # coniZp helpers
@@ -569,7 +569,7 @@ def coniZpM(
                         print(e)
                         continue
 
-                    lattice_points, rawQs, status = coni_kernel(
+                    lattice_points, rawQs, status = conipfv_kernel(
                         # ellipsoid definition
                         U=np.ascontiguousarray(L.T),
                         Q=Q,

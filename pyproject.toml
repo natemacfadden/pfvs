@@ -39,7 +39,8 @@ test = [
 Repository = "https://github.com/natemacfadden/pfvs"
 
 [tool.setuptools]
-packages = ["pfvs", "pfvs.coni_kernel"]
+packages = ["pfvs", "pfvs.conipfv_kernel", "pfvs.pfv_kernel"]
 
 [tool.setuptools.package-data]
-"pfvs.coni_kernel" = ["*.so", "*.pyd"]
+"pfvs.conipfv_kernel" = ["*.so", "*.pyd"]
+"pfvs.pfv_kernel" = ["*.so", "*.pyd"]

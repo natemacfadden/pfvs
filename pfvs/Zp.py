@@ -23,6 +23,7 @@
 # -----------------------------------------------------------------------------
 
 # external imports
+import flint
 import numpy as np
 
 from numpy.typing import ArrayLike
@@ -297,9 +298,45 @@ def K_ellipsoid(p: ArrayLike,
 
     return mat, B
 
-def H_matrix():
-    """[WIP: not yet implemented.]"""
-    raise NotImplementedError
+def H_matrix(ZBinter: ArrayLike):
+    """
+    Compute the H-matrix for use in non-coni ZpM. This is the HNF of Z@Binter.
+
+    Analogous to `coni_H_matrix` in coniZp.py, but without the projection that
+    drops K[0]: in the non-coni context, K = Z @ Binter @ c directly (no free
+    K[0] component), so the full matrix is used.
+
+    In ZpM, one wants to ensure GCD(K) is sufficiently large. A point c in the
+    M-ellipsoid has an associated valuation c^T @ mat @ c. For dilated ellipsoids,
+    this can have c^T @ mat @ c > Qmax. This would give rise to a K and M which
+    violates tadpole (i.e., -dot(K,M) > Qmax) unless
+        GCD(K) >= (c^T @ mat @ c)/Qmax,
+    in which case one can divide K by GCD(K) to bring the solution under tadpole.
+
+    Recall that K = Z @ Binter @ c. Since H is the row-HNF of Z @ Binter,
+    GCD(H @ c) = GCD(K), and GCD(H[-m:,-m:] @ c[-m:]) >= GCD(H[-n:,-n:] @ c[-n:])
+    for m < n. This gives a monotonically decreasing upper bound on GCD(K) as FP
+    sets components of c from right to left, enabling early pruning.
+
+    Parameters
+    ----------
+    ZBinter : ndarray of shape (h11, h11-1)
+        The product of matrices Z and Binter from M_ellipsoid. Has interpretation
+        that K = ZBinter @ c.
+
+    Returns
+    -------
+    H : ndarray of shape (h11, h11-1)
+        The row-HNF of Z@Binter. Has interpretation that GCD(H@c) = GCD(K) and
+        that GCD(H[-m:,-m:]@c[-m:]) >= GCD(H[-n:,-n:]@c[-n:]) for m<n.
+    """
+    H    = ZBinter
+    H_fl = flint.fmpz_mat(H.tolist())
+
+    H_list = H_fl.hnf().tolist()
+    H      = np.array([[int(x) for x in row] for row in H_list], dtype=object)
+
+    return H
 
 # non-coni Zp
 # ===========
@@ -311,6 +348,7 @@ def ZpM(
     Qmin: int = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
     # algorithm selection
+    use_c_kernel: bool = False,
     n_jobs: int = -1,
     # misc
     extra_checks: bool = False,
@@ -329,9 +367,7 @@ def ZpM(
         2 a lattice point c in this ellipsoid defines an M-vector via Binter@c.
           this also defines a K-vector via K = Z @ Binter @ c
     so one wants to enumerate such c-vectors. This is done via Fincke-Pohst.
-    GCD re-introduction is applied post-hoc via `_allow_gcds`. [WIP: GCD
-    pruning will be integrated into the Fincke-Pohst solver, as in
-    `coniZpM`.]
+    GCD re-introduction is applied post-hoc via `_allow_gcds`.
 
     Parameters
     ----------
@@ -348,6 +384,10 @@ def ZpM(
     ellipsoid_dilation : float, optional
         The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
         Empirically, runtime scales linearly with this value. Defaults to 1.
+    use_c_kernel : bool, optional
+        Enumeration backend. False (default) uses `util.fp_iterative_njit`
+        (Numba, no GCD pruning). True uses `pfv_kernel` (C, with GCD pruning;
+        faster for dilated ellipsoids). Both produce the same output.
     n_jobs : int, optional
         [WIP: parallelism not yet implemented, will follow `coniZpM` scheme.]
     extra_checks : bool, optional
@@ -430,18 +470,43 @@ def ZpM(
 
         # the core enumeration
         # --------------------
-        try:
-            lattice_points, _ = util.fp_ellipsoid_njit(
-                mat=mat,
-                Q=ellipsoid_dilation*Qmax,
+        if use_c_kernel:
+            from .pfv_kernel import pfv_kernel
+            ZBinter = np.ascontiguousarray(Z @ Binter)
+            try:
+                H = H_matrix(ZBinter)
+            except Exception as e:
+                print(f"H_matrix failed for p={p.tolist()} :(", flush=True)
+                print(e)
+                continue
+            try:
+                L = np.linalg.cholesky(mat)
+            except Exception as e:
+                print(f"couldn't compute cholesky for p={p.tolist()} :(", flush=True)
+                print(e)
+                continue
+            lattice_points, _, status = pfv_kernel(
+                U=np.ascontiguousarray(L.T),
+                Q=Qmax,
+                dilation=ellipsoid_dilation,
+                H=H,
                 max_N_out=max_N_pfvs,
-                recursive=False,
-                verbosity=verbosity-1)
-        except Exception as e:
-            raise RuntimeError(
-                f"Kernel failed for p={np.array(p).tolist()}. "
-                f"mat may not be positive definite: mat={mat.tolist()}"
-            ) from e
+                eps=1e-4
+            )
+            if status != 0:
+                print(f"KERNEL RETURNED STATUS {status}!!!", flush=True)
+        else:
+            try:
+                L = np.linalg.cholesky(mat)
+                lattice_points, _ = util.fp_iterative_njit(
+                    L=L,
+                    Q=ellipsoid_dilation*Qmax,
+                    max_N_out=max_N_pfvs)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Kernel failed for p={np.array(p).tolist()}. "
+                    f"mat may not be positive definite: mat={mat.tolist()}"
+                ) from e
 
         # only keep primitive lattice points (can reclaim other PFVs easily)
         primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
@@ -644,12 +709,11 @@ def ZpK(
         # the core enumeration
         # --------------------
         try:
-            lattice_points, _ = util.fp_ellipsoid_njit(
-                mat,
-                ellipsoid_dilation*Qmax,
-                max_N_out=max_N_pfvs,
-                recursive=False,
-                verbosity=verbosity-1)
+            L = np.linalg.cholesky(mat)
+            lattice_points, _ = util.fp_iterative_njit(
+                L=L,
+                Q=ellipsoid_dilation*Qmax,
+                max_N_out=max_N_pfvs)
         except Exception as e:
             raise RuntimeError(
                 f"Kernel failed for p={np.array(p).tolist()}. "

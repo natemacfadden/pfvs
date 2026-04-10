@@ -67,7 +67,7 @@ pfvs/
 │   ├── c_kernels/               # "kernels"* written in C
 │   │   ├── testing_benchmarks/  # C-code testing/benchmarks
 │   │   ├── pvec_kernel.h        # generates vectors in the strict interior of a cone
-│   │   └── coni_kernel.h        # generates coniPFVs
+│   │   └── conipfv_kernel.h     # generates coniPFVs
 │   ├── lattice.py               # lattice-related utilities
 |   ├── cydata.py                # simple class holding CY-related data
 |   ├── Zp.py                    # main methods for generating PFVs
@@ -81,7 +81,7 @@ pfvs/
 
 *: This C code originally was the bottleneck/core of the problem, hence the name 'kernel'. In the current state, unless one is studying large $p_{denom}$, these kernels represent a relatively small fracton of the total computation
 
-**Note:** `util.py` also contains `coni_kernel_njit`, a Numba implementation of the same algorithm. It is not recommended for production use; prefer `coni_kernel`.
+**Note:** `util.py` also contains `conipfv_kernel_njit`, a Numba implementation of the same algorithm. It is not recommended for production use; prefer `conipfv_kernel`. The Numba version uses native integer arithmetic and can silently produce wrong results when H-matrix entries overflow 64-bit integers — the C version uses GMP for arbitrary-precision arithmetic and handles these cases correctly.
 
 ## Installation
 
