@@ -434,6 +434,9 @@ def ZpM(
         )
     if len(ps) == 0:
         raise ValueError("ps must be non-empty.")
+    ps = np.array(ps)
+    if not np.all(data.H @ ps.T >= 1):
+        raise ValueError("some p-vectors are not in the kahler cone (H@ps.T >= 1 failed)")
 
     # misc (left for future debugging)
     only_positive_news = False
@@ -662,6 +665,9 @@ def ZpK(
         )
     if len(ps) == 0:
         raise ValueError("ps must be non-empty.")
+    ps = np.array(ps)
+    if not np.all(data.H @ ps.T >= 1):
+        raise ValueError("some p-vectors are not in the kahler cone (H@ps.T >= 1 failed)")
 
     # misc (left for future debugging)
     only_positive_news = False

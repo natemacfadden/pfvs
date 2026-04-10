@@ -497,6 +497,9 @@ def coniZpM(
         )
     if len(ps) == 0:
         raise ValueError("ps must be non-empty.")
+    ps = np.array(ps)
+    if not np.all(data.H_cob @ ps.T >= 1):
+        raise ValueError("some p-vectors are not in the kahler cone (H_cob@ps.T >= 1 failed)")
     if ellipsoid_dilation <= 0:
         raise ValueError(f"ellipsoid_dilation must be > 0, got {ellipsoid_dilation}.")
 
