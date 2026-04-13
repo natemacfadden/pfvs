@@ -67,7 +67,7 @@ def pvecs(
     if min_N_pts <= 0:
         raise ValueError(f"min_N_pts must be > 0, got {min_N_pts}.")
 
-    # read hyperplanes (varies for coni and non-coni PFVs)
+    # read hyperplanes (differs for coni and non-coni PFVs)
     if data.coni: H = data.H_cob
     else:         H = data.H
 
@@ -93,6 +93,10 @@ def pvecs_cpsat(
     Same goal as `pvecs`: finds integral vectors p satisfying H @ p > 0, where H
     are the hyperplanes of the Kahler cone (non-coni) or a particular facet of
     the Kahler cone (coni).
+
+    This differs from `pvecs` by defining a grading vector when then searching
+    up to a max degree. This bounds the cone by capping it, rather than
+    intersecting it with a box (which is how `pvecs` does it).
 
     Parameters
     ----------
