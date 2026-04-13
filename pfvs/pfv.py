@@ -463,7 +463,7 @@ class PFV():
             gcd = functools.reduce(math.gcd, self._pgrading)
             self._pgrading = self._pgrading/gcd
             self._pgrading = self._pgrading.transpose()
-            self._pgrading = np.array(self._pgrading.tolist()).astype(int)
+            self._pgrading = np.array(self._pgrading.tolist()).astype(int).flatten()
 
         # save scaling
         self._p_denom = self.Ninv[1]/gcd # NON INTEGRAL
