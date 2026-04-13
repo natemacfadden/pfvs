@@ -25,8 +25,8 @@ __pycache__/
 *.dSYM/
 
 # Cython-generated C files
-pfvs/pfvs/conipfv_kernel/conipfv_kernel.c
-pfvs/pfvs/pfv_kernel/pfv_kernel.c
+pfvs/conipfv_kernel/conipfv_kernel.c
+pfvs/pfv_kernel/pfv_kernel.c
 
 # Distribution / packaging
 build/
