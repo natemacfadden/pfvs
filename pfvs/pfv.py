@@ -77,6 +77,7 @@ class PFV():
 
         # GVs/series info
         self._gvs         = None
+        self._gvs_set     = False
         self._series      = []
         self._all_exps    = []
         self._all_gvs     = []
@@ -357,7 +358,7 @@ class PFV():
         """
         The Gopakumar-Vafa invariants in coo format, or None if not yet set.
         """
-        if self._gvs is not None:
+        if self._gvs_set:
             return self._gvs.copy()
 
     # N-matrix and its inverse
@@ -490,6 +491,7 @@ class PFV():
             ) from e
 
         self._gvs = self.cy.compute_gvs(max_deg=max_deg).coo
+        self._gvs_set = True
 
     @gvs.setter
     def gvs(self, val: np.ndarray | None):
@@ -530,6 +532,7 @@ class PFV():
 
         # set the value :)
         self._gvs  = val.copy()
+        self._gvs_set = True
 
     # checkers
     # ========
@@ -650,7 +653,7 @@ class PFV():
         """
         Generator yielding the coefficient, exponent of each term in the series
         """
-        if self._gvs is None:
+        if not self._gvs_set:
             raise ValueError("GVs must be set to get the series")
 
         # get the GVs, charges
