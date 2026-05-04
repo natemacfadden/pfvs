@@ -24,13 +24,16 @@
 
 # external imports
 import flint
+import joblib
 import numpy as np
+import os
 
 from numpy.typing import ArrayLike
 
 # local imports
 from . import util
 from .cydata import CYData
+from .pfv_kernel import pfv_kernel
 
 # Zp helpers
 # ==========
@@ -291,7 +294,13 @@ def K_ellipsoid(p: ArrayLike,
     B = util.lll_reduce(B)
 
     # find lattice points in tadpole
-    mat = -B.T@np.linalg.inv(kappa@p)@B
+    try:
+        Ainv = np.linalg.inv(kappa@p)
+    except np.linalg.LinAlgError as e:
+        raise ValueError(
+            f"K_ellipsoid: kappa@p is singular for p={np.array(p).tolist()}."
+        ) from e
+    mat = -B.T@Ainv@B
 
     if np.allclose(mat, np.round(mat)):
         mat = np.rint(mat).astype(int)
@@ -389,7 +398,8 @@ def ZpM(
         (Numba, no GCD pruning). True uses `pfv_kernel` (C, with GCD pruning;
         faster for dilated ellipsoids). Both produce the same output.
     n_jobs : int, optional
-        [WIP: parallelism not yet implemented, will follow `coniZpM` scheme.]
+        How many jobs to spawn for per-p-vector parallelism. Defaults to twice
+        the CPU count.
     extra_checks : bool, optional
         Whether to do extra sanity checks in the ellipsoid generation. Never
         seen these fail so defaults to False.
@@ -454,118 +464,138 @@ def ZpM(
     if ellipsoid_dilation <= 0:
         raise ValueError(f"ellipsoid_dilation must be > 0, got {ellipsoid_dilation}.")
 
+    if n_jobs == -1:
+        n_jobs = 2*os.cpu_count()
+
     # the search
     # ----------
-    all_Ks = np.zeros((0,h11), dtype=int)
-    all_Ms = np.zeros((0,h11), dtype=int)
-
     # iterate over p-vectors
-    print("WARNING CONVERT THIS TO PARALLELISM USING NJOBS AS IN CONI")
-    iterator = ps
-    for _i, p in enumerate(iterator):
-        mat, Z, Binter = M_ellipsoid(
-            p,
-            kappa=kappa,
-            Mbasis=Mbasis,
-            extra_lll_reduction=extra_lll_reduction,
-            extra_checks=extra_checks
-        )
+    chunk_size = max(100, len(ps)//n_jobs+1)
+    p_chunks   = [ps[i:i+chunk_size] for i in range(0,len(ps),chunk_size)]
 
-        # the core enumeration
-        # --------------------
-        if use_c_kernel:
-            from .pfv_kernel import pfv_kernel
-            ZBinter = np.ascontiguousarray(Z @ Binter)
-            try:
-                H = H_matrix(ZBinter)
-            except Exception as e:
-                print(f"H_matrix failed for p={p.tolist()} :(", flush=True)
-                print(e)
-                continue
-            try:
-                L = np.linalg.cholesky(mat)
-            except Exception as e:
-                print(f"couldn't compute cholesky for p={p.tolist()} :(", flush=True)
-                print(e)
-                continue
-            lattice_points, _, status = pfv_kernel(
-                U=np.ascontiguousarray(L.T),
-                Q=Qmax,
-                dilation=ellipsoid_dilation,
-                H=H,
-                max_N_out=max_N_pfvs,
-                eps=1e-4
+    def _make_pfvs(p_chunk, job_i=0):
+        # define a factory function here for later parallelization
+        all_Ks = np.zeros((0,h11), dtype=int)
+        all_Ms = np.zeros((0,h11), dtype=int)
+
+        for p in p_chunk:
+            mat, Z, Binter = M_ellipsoid(
+                p,
+                kappa=kappa,
+                Mbasis=Mbasis,
+                extra_lll_reduction=extra_lll_reduction,
+                extra_checks=extra_checks
             )
-            if status != 0:
-                print(f"KERNEL RETURNED STATUS {status}!!!", flush=True)
-        else:
-            try:
-                L = np.linalg.cholesky(mat)
-                lattice_points, _ = util.fp_iterative_njit(
-                    L=L,
-                    Q=ellipsoid_dilation*Qmax,
-                    max_N_out=max_N_pfvs)
-            except Exception as e:
-                raise RuntimeError(
-                    f"Kernel failed for p={np.array(p).tolist()}. "
-                    f"mat may not be positive definite: mat={mat.tolist()}"
-                ) from e
 
-        # only keep primitive lattice points (can reclaim other PFVs easily)
-        primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
-        lattice_points = lattice_points[primitiveQ]
+            # the core enumeration
+            # --------------------
+            if use_c_kernel:
+                ZBinter = np.ascontiguousarray(Z @ Binter)
+                try:
+                    H = H_matrix(ZBinter)
+                except Exception as e:
+                    print(f"H_matrix failed for p={p.tolist()} :(", flush=True)
+                    print(e)
+                    continue
+                try:
+                    L = np.linalg.cholesky(mat)
+                except Exception as e:
+                    print(f"couldn't compute cholesky for p={p.tolist()} :(", flush=True)
+                    print(e)
+                    continue
+                lattice_points, _, status = pfv_kernel(
+                    U=np.ascontiguousarray(L.T),
+                    Q=Qmax,
+                    dilation=ellipsoid_dilation,
+                    H=H,
+                    max_N_out=max_N_pfvs,
+                    eps=1e-4
+                )
+                if status != 0:
+                    print(f"KERNEL RETURNED STATUS {status}!!!", flush=True)
+            else:
+                try:
+                    L = np.linalg.cholesky(mat)
+                    lattice_points, _ = util.fp_iterative_njit(
+                        L=L,
+                        Q=ellipsoid_dilation*Qmax,
+                        max_N_out=max_N_pfvs)
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Kernel failed for p={np.array(p).tolist()}. "
+                        f"mat may not be positive definite: mat={mat.tolist()}"
+                    ) from e
 
-        # compute Ms
-        # ----------
-        Ms = Binter@lattice_points.T # as columns
+            # only keep primitive lattice points (can reclaim other PFVs easily)
+            primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
+            lattice_points = lattice_points[primitiveQ]
 
-        # filter by N invertibility
-        # -------------------------
-        batch_size = 5000
-        singular = []
-        for i in range(0, Ms.shape[1], batch_size):
-            chunk = Ms[:,i:i+batch_size]
+            # compute Ms
+            # ----------
+            Ms = Binter@lattice_points.T # as columns
 
-            Ns = (kappa.reshape(h11*h11,h11)@chunk).reshape(h11,h11,-1)
-            Ns = Ns.transpose(2,0,1) # (N,h11,h11)
+            # filter by N invertibility
+            # -------------------------
+            batch_size = 5000
+            singular = []
+            for i in range(0, Ms.shape[1], batch_size):
+                chunk = Ms[:,i:i+batch_size]
 
-            singular.append(_check_singular(Ns))
+                Ns = (kappa.reshape(h11*h11,h11)@chunk).reshape(h11,h11,-1)
+                Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
-        if not singular:
-            continue
-        singular = np.concatenate(singular)
+                singular.append(_check_singular(Ns))
 
-        if verbosity >= 2:
-            if len(singular) and not only_positive_news:
-                print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
+            if not singular:
+                continue
+            singular = np.concatenate(singular)
 
-        Ms = Ms[:,~singular]
+            if verbosity >= 2:
+                if len(singular) and not only_positive_news:
+                    print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
 
-        # compute Ks, reduce by GCDs
-        # --------------------------
-        Ks = Z@Ms
+            Ms = Ms[:,~singular]
 
-        K_gcds = np.gcd.reduce(Ks, axis=0)
-        Ks = Ks//K_gcds
+            # compute Ks, reduce by GCDs
+            # --------------------------
+            Ks = Z@Ms
 
-        # filter by tadpole
-        Qs = -np.sum(Ks*Ms,axis=0)
-        in_tadpole = (Qs>Qmin) & (Qs<Qmax)
-        if verbosity >= 2:
-            if not only_positive_news:
-                n_bad = len(in_tadpole) - sum(in_tadpole)
-                print(f"{n_bad}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
-            if sum(in_tadpole):
-                print(f"but {sum(in_tadpole)} in tadpole!!!")
-        Ks = Ks[:,in_tadpole]
-        Ms = Ms[:,in_tadpole]
+            K_gcds = np.gcd.reduce(Ks, axis=0)
+            Ks = Ks//K_gcds
 
-        # transpose to row-wise
-        Ks, Ms = Ks.T, Ms.T
+            # filter by tadpole
+            Qs = -np.sum(Ks*Ms,axis=0)
+            in_tadpole = (Qs>=Qmin) & (Qs<=Qmax)
+            if verbosity >= 2:
+                if not only_positive_news:
+                    n_bad = len(in_tadpole) - sum(in_tadpole)
+                    print(f"{n_bad}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
+                if sum(in_tadpole):
+                    print(f"but {sum(in_tadpole)} in tadpole!!!")
+            Ks = Ks[:,in_tadpole]
+            Ms = Ms[:,in_tadpole]
 
-        # save to data structures
-        all_Ks = np.vstack([all_Ks, Ks])
-        all_Ms = np.vstack([all_Ms, Ms])
+            # transpose to row-wise
+            Ks, Ms = Ks.T, Ms.T
+
+            # save to data structures
+            all_Ks = np.vstack([all_Ks, Ks])
+            all_Ms = np.vstack([all_Ms, Ms])
+
+        print(f"Finished job #{job_i}...",flush=True)
+
+        return all_Ks, all_Ms
+
+    # actually run the jobs
+    if n_jobs > 1:
+        output = joblib.Parallel(n_jobs=n_jobs)(
+            joblib.delayed(_make_pfvs)(p_chunk, job_i) for job_i, p_chunk in\
+                                                            enumerate(p_chunks))
+        all_Ks, all_Ms = zip(*output)
+        all_Ks = np.vstack(all_Ks)
+        all_Ms = np.vstack(all_Ms)
+    else:
+        all_Ks, all_Ms = _make_pfvs(ps)
 
     # return
     all_Ks, all_Ms = _allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
@@ -601,7 +631,7 @@ def ZpK(
           this also defines an M-vector via M = (kappa @ p)^{-1} @ B @ d
     so one wants to enumerate such d-vectors. This is done via Fincke-Pohst.
     GCD re-introduction is applied post-hoc via `_allow_gcds`. [WIP: GCD
-    pruning will be integrated into the Fincke-Pohst solver, as in
+    pruning is not yet integrated into the Fincke-Pohst solver here, unlike
     `coniZpM`.]
 
     Parameters
@@ -620,7 +650,8 @@ def ZpK(
         The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
         Empirically, runtime scales linearly with this value. Defaults to 1.
     n_jobs : int, optional
-        [WIP: parallelism not yet implemented, will follow `coniZpM` scheme.]
+        How many jobs to spawn for per-p-vector parallelism. Defaults to twice
+        the CPU count.
     extra_checks : bool, optional
         Whether to do extra sanity checks in the ellipsoid generation. Never
         seen these fail so defaults to False.
@@ -685,101 +716,122 @@ def ZpK(
     if ellipsoid_dilation <= 0:
         raise ValueError(f"ellipsoid_dilation must be > 0, got {ellipsoid_dilation}.")
 
+    if n_jobs == -1:
+        n_jobs = 2*os.cpu_count()
+
     # the search
     # ----------
-    all_Ks = np.zeros((0,data.h11), dtype=int)
-    all_Ms = np.zeros((0,data.h11), dtype=int)
-
     # iterate over p-vectors
-    print("WARNING CONVERT THIS TO PARALLELISM USING NJOBS AS IN CONI")
-    iterator = ps
-    for _i, p in enumerate(iterator):
-        # helper variables
-        A = kappa@p@Mbasis
-        try:
-            Ainv, _ = util.inv_scaled(A)
-        except Exception as e:
-            raise ValueError(
-                f"inv_scaled failed for p={p.tolist()}; kappa@p@Mbasis "
-                f"may be singular."
-            ) from e
+    chunk_size = max(100, len(ps)//n_jobs+1)
+    p_chunks   = [ps[i:i+chunk_size] for i in range(0,len(ps),chunk_size)]
 
-        mat, B = K_ellipsoid(
-            p,
-            kappa=kappa,
-            Mbasis=Mbasis,
-            extra_lll_reduction=extra_lll_reduction,
-            extra_checks=extra_checks
-        )
+    def _make_pfvs(p_chunk, job_i=0):
+        # define a factory function here for later parallelization
+        all_Ks = np.zeros((0,h11), dtype=int)
+        all_Ms = np.zeros((0,h11), dtype=int)
 
-        # the core enumeration
-        # --------------------
-        try:
-            L = np.linalg.cholesky(mat)
-            lattice_points, _ = util.fp_iterative_njit(
-                L=L,
-                Q=ellipsoid_dilation*Qmax,
-                max_N_out=max_N_pfvs)
-        except Exception as e:
-            raise RuntimeError(
-                f"Kernel failed for p={np.array(p).tolist()}. "
-                f"mat may not be positive definite: mat={mat.tolist()}"
-            ) from e
+        for p in p_chunk:
+            # helper variables
+            A = kappa@p@Mbasis
+            try:
+                Ainv, _ = util.inv_scaled(A)
+            except Exception as e:
+                raise ValueError(
+                    f"inv_scaled failed for p={p.tolist()}; kappa@p@Mbasis "
+                    f"may be singular."
+                ) from e
 
-        # only keep primitive lattice points (can reclaim other PFVs easily)
-        primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
-        lattice_points = lattice_points[primitiveQ]
+            mat, B = K_ellipsoid(
+                p,
+                kappa=kappa,
+                Mbasis=Mbasis,
+                extra_lll_reduction=extra_lll_reduction,
+                extra_checks=extra_checks
+            )
 
-        # compute Ms, Ks, and reduced by GCD
-        # ----------------------------------
-        # read the data
-        cs = ((Ainv@B)@lattice_points.T).T
-        gcds = np.gcd.reduce(cs,axis=1)
-        cs_scaled = cs//gcds.reshape(-1,1)
+            # the core enumeration
+            # --------------------
+            try:
+                L = np.linalg.cholesky(mat)
+                lattice_points, _ = util.fp_iterative_njit(
+                    L=L,
+                    Q=ellipsoid_dilation*Qmax,
+                    max_N_out=max_N_pfvs)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Kernel failed for p={np.array(p).tolist()}. "
+                    f"mat may not be positive definite: mat={mat.tolist()}"
+                ) from e
 
-        Ks = B@lattice_points.T # as columns
-        Ms = Mbasis@cs_scaled.T
+            # only keep primitive lattice points (can reclaim other PFVs easily)
+            primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
+            lattice_points = lattice_points[primitiveQ]
 
-        # filter on tadpole
-        Qs = -np.sum(Ks*Ms,axis=0)
-        in_tadpole = (Qs>Qmin) & (Qs<Qmax)
-        if verbosity >= 2:
-            if not only_positive_news:
-                n_bad = len(in_tadpole) - sum(in_tadpole)
-                print(f"{n_bad}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
-            if sum(in_tadpole):
-                print(f"but {sum(in_tadpole)} in tadpole!!!")
-        Ks = Ks[:,in_tadpole]
-        Ms = Ms[:,in_tadpole]
+            # compute Ms, Ks, and reduced by GCD
+            # ----------------------------------
+            # read the data
+            cs = ((Ainv@B)@lattice_points.T).T
+            gcds = np.gcd.reduce(cs,axis=1)
+            cs_scaled = cs//gcds.reshape(-1,1)
 
-        # filter by N invertibility
-        batch_size = 5000
-        singular = []
-        for i in range(0, Ms.shape[1], batch_size):
-            chunk = Ms[:,i:i+batch_size]
+            Ks = B@lattice_points.T # as columns
+            Ms = Mbasis@cs_scaled.T
 
-            Ns = (kappa.reshape(h11*h11,h11)@chunk).reshape(h11,h11,-1)
-            Ns = Ns.transpose(2,0,1) # (N,h11,h11)
+            # filter on tadpole
+            Qs = -np.sum(Ks*Ms,axis=0)
+            in_tadpole = (Qs>=Qmin) & (Qs<=Qmax)
+            if verbosity >= 2:
+                if not only_positive_news:
+                    n_bad = len(in_tadpole) - sum(in_tadpole)
+                    print(f"{n_bad}/{len(in_tadpole)} 'PFVs' violated tadpole :(")
+                if sum(in_tadpole):
+                    print(f"but {sum(in_tadpole)} in tadpole!!!")
+            Ks = Ks[:,in_tadpole]
+            Ms = Ms[:,in_tadpole]
 
-            singular.append(_check_singular(Ns))
+            # filter by N invertibility
+            batch_size = 5000
+            singular = []
+            for i in range(0, Ms.shape[1], batch_size):
+                chunk = Ms[:,i:i+batch_size]
 
-        if not singular:
-            continue
-        singular = np.concatenate(singular)
+                Ns = (kappa.reshape(h11*h11,h11)@chunk).reshape(h11,h11,-1)
+                Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
-        if verbosity >= 2:
-            if not only_positive_news:
-                print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
+                singular.append(_check_singular(Ns))
 
-        Ks = Ks[:,~singular]
-        Ms = Ms[:,~singular]
+            if not singular:
+                continue
+            singular = np.concatenate(singular)
 
-        # transpose to row-wise
-        Ks, Ms = Ks.T, Ms.T
+            if verbosity >= 2:
+                if not only_positive_news:
+                    print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
 
-        # save to data structures
-        all_Ks = np.vstack([all_Ks, Ks])
-        all_Ms = np.vstack([all_Ms, Ms])
+            Ks = Ks[:,~singular]
+            Ms = Ms[:,~singular]
+
+            # transpose to row-wise
+            Ks, Ms = Ks.T, Ms.T
+
+            # save to data structures
+            all_Ks = np.vstack([all_Ks, Ks])
+            all_Ms = np.vstack([all_Ms, Ms])
+
+        print(f"Finished job #{job_i}...",flush=True)
+
+        return all_Ks, all_Ms
+
+    # actually run the jobs
+    if n_jobs > 1:
+        output = joblib.Parallel(n_jobs=n_jobs)(
+            joblib.delayed(_make_pfvs)(p_chunk, job_i) for job_i, p_chunk in\
+                                                            enumerate(p_chunks))
+        all_Ks, all_Ms = zip(*output)
+        all_Ks = np.vstack(all_Ks)
+        all_Ms = np.vstack(all_Ms)
+    else:
+        all_Ks, all_Ms = _make_pfvs(ps)
 
     # return
     all_Ks, all_Ms = _allow_gcds(all_Ks, all_Ms, Qmax, data.h11)
