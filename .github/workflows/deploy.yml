@@ -1,0 +1,80 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+  release:
+    types:
+      - published
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-tests:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install numpy cython && pip install -e ".[test]"
+      - name: Test
+        run: pytest tests/
+
+  make-sdist:
+    name: Make SDist
+    runs-on: ubuntu-latest
+    needs: run-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build SDist
+        run: pipx run build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-sdist
+          path: dist/*.tar.gz
+
+  make-wheels:
+    name: Make Wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: run-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows excluded: box_enum.h uses C99 VLAs which MSVC does not support
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21
+        env:
+          CIBW_BUILD: cp39-* cp310-* cp311-* cp312-* cp313-*
+          CIBW_ARCHS_LINUX: x86_64
+          CIBW_ARCHS_MACOS: x86_64 arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
+  deploy-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    needs: [make-sdist, make-wheels]
+    environment:
+      name: pypi
+      url: https://pypi.org/p/latticepts
+    permissions:
+      id-token: write
+    if: github.event_name == 'release' && github.event.action == 'published'
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ci-*
+          path: dist
+          merge-multiple: true
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
