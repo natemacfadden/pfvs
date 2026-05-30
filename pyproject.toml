@@ -21,6 +21,7 @@ dependencies = [
     "python-flint",
     "joblib",
     "latticepts>=0.1.2",
+    "matplotlib",
     "numba",
     "numpy",
     "ortools",
@@ -32,7 +33,6 @@ requires-python = ">=3.9"
 test = [
   "pytest",
   "pytest-benchmark",
-  "matplotlib",
 ]
 
 [project.urls]
