@@ -17,8 +17,8 @@
 
 import numpy as np
 
-from pfvs.coni_kernel import coni_kernel
-from pfvs.util import coni_kernel_njit
+from pfvs.conipfv_kernel import conipfv_kernel as coni_kernel
+from pfvs.util import conipfv_kernel_njit as coni_kernel_njit
 
 # =============================================================================
 # Hard-coded Manwe data (from https://arxiv.org/abs/2406.13751)
