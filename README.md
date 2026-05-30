@@ -68,8 +68,7 @@ pfvs/
 │   │   └── testing_benchmarks/  # C-code testing/benchmarks
 │   ├── pfv_kernel/              # C kernel* for non-coni PFV enumeration
 │   ├── cydata.py                # simple class holding CY-related data
-│   ├── Zp.py                    # main methods for generating PFVs
-│   └── diagnostics.py           # validation/verification class for PFVs
+│   └── Zp.py                    # main methods for generating PFVs
 ├── tests/
 │   └─ FILL IN
 ├── environment.yml
