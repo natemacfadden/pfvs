@@ -2,8 +2,12 @@ name: pfvs
 channels:
   - conda-forge
 dependencies:
-  - python>=3.8
+  - python>=3.9
   - numpy
   - cython
   - gmp
+  - python-flint
   - setuptools
+  - pip
+  - pip:
+    - -e .
