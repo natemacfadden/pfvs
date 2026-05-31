@@ -522,8 +522,7 @@ def ZpM(
                         max_N_out=max_N_pfvs)
                 except Exception as e:
                     raise RuntimeError(
-                        f"Kernel failed for p={np.array(p).tolist()}. "
-                        f"mat may not be positive definite: mat={mat.tolist()}"
+                        f"Kernel failed for p={np.array(p).tolist()}: {type(e).__name__}: {e}"
                     ) from e
 
             # only keep primitive lattice points (can reclaim other PFVs easily)
@@ -759,8 +758,7 @@ def ZpK(
                     max_N_out=max_N_pfvs)
             except Exception as e:
                 raise RuntimeError(
-                    f"Kernel failed for p={np.array(p).tolist()}. "
-                    f"mat may not be positive definite: mat={mat.tolist()}"
+                    f"Kernel failed for p={np.array(p).tolist()}: {type(e).__name__}: {e}"
                 ) from e
 
             # only keep primitive lattice points (can reclaim other PFVs easily)

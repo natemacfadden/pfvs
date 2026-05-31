@@ -632,8 +632,7 @@ def coniZpM(
 
             except Exception as e:
                 raise RuntimeError(
-                    f"Kernel failed for p={np.array(p).tolist()}. "
-                    f"mat may not be positive definite: mat={mat.tolist()}"
+                    f"Kernel failed for p={np.array(p).tolist()}: {type(e).__name__}: {e}"
                 ) from e
 
             lattice_points = lattice_points.T
