@@ -1,10 +1,10 @@
 import numpy as np
 import time
 
-from pfvs.coni_kernel import coni_kernel
-from pfvs.util import coni_kernel_njit
+from pfvs.conipfv_kernel import conipfv_kernel
+from pfvs.util import conipfv_kernel_njit
 
-# coni_kernel
+# conipfv_kernel
 # ===========
 # Manwe from dSv1
 # ---------------
@@ -40,16 +40,16 @@ print("CONI-PFV TESTING")
 print("----------------")
 for dilation in [1,2,10,20] + [10_000*i for i in range(1,20+1)]:
     tic = time.time()
-    out, Qs, status = coni_kernel(
+    out, Qs, status = conipfv_kernel(
         U, Q, dilation, linvec, linmin, H, max_N_out
     )
     toc = time.time()
-    
+
     print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s using C code...")
 
 
     tic = time.time()
-    out, Niter = coni_kernel_njit(
+    out, Niter = conipfv_kernel_njit(
         L=U.T,
         Q=Q,
         dilation=dilation,
@@ -59,5 +59,5 @@ for dilation in [1,2,10,20] + [10_000*i for i in range(1,20+1)]:
         max_N_out=max_N_out
     )
     toc = time.time()
-    
+
     print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s using njit code...")
