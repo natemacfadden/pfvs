@@ -54,7 +54,7 @@ DUAL_BASES = [DUAL_B_DIAG, DUAL_B_UNIMOD, DUAL_B_RANK1]
 # LLL test bases (columns are basis vectors)
 # =============================================================================
 
-# 2x2 trivial basis — already reduced, change-of-basis should be identity
+# 2x2 trivial basis -- already reduced, change-of-basis should be identity
 BASIS_2X2_IDENTITY = np.array([
     [1, 0],
     [0, 1],
@@ -160,4 +160,4 @@ def test_lll_reduce_same_lattice(B):
     # unimodular: |det| = 1
     det = np.linalg.det(T)
     assert abs(abs(det) - 1.0) < 1e-8, \
-        f"Change-of-basis matrix determinant is {det}, expected ±1"
+        f"Change-of-basis matrix determinant is {det}, expected +/-1"

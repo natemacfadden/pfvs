@@ -502,7 +502,7 @@ int _pfv_kernel_c(
             mpz_set(stack_gcd[sp], temp_gcd);
 
         // compute the new ci, Hvec_i offset value for i-1 using this vector
-        // H[(i-1)*dim + j] in coni → H[i*dim + j] here (zero row shifts index by 1)
+        // H[(i-1)*dim + j] in coni -> H[i*dim + j] here (zero row shifts index by 1)
         double ci_offset = 0.0;
         mpz_set_ui(stack_Hveci[sp], 0);
         if (i > 0) {
