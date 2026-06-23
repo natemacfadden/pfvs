@@ -15,12 +15,15 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # =============================================================================
 
+import itertools
 import math
 
 import numpy as np
 import pytest
 
-from pfvs.util import dual_lattice, extended_euclidean, lll_reduce
+import flint
+
+from pfvs.util import dual_lattice, extended_euclidean, fp_iterative_njit, inv_scaled, lll_reduce, orthogonal_lattice
 
 # =============================================================================
 # Test bases
@@ -161,3 +164,130 @@ def test_lll_reduce_same_lattice(B):
     det = np.linalg.det(T)
     assert abs(abs(det) - 1.0) < 1e-8, \
         f"Change-of-basis matrix determinant is {det}, expected +/-1"
+
+
+# =============================================================================
+# orthogonal_lattice tests
+# =============================================================================
+
+ORTH_VECS = [
+    np.array([1, 0, 0],    dtype=np.int64),  # axis vector
+    np.array([1, 1, 1],    dtype=np.int64),  # uniform
+    np.array([2, 3, 5],    dtype=np.int64),  # coprime 3D
+    np.array([0, 0, 1, 0], dtype=np.int64),  # 4D axis
+    np.array([2, 4, 6, 3], dtype=np.int64),  # 4D mixed
+]
+
+@pytest.mark.parametrize("p", ORTH_VECS)
+def test_orthogonal_lattice_perpendicularity(p):
+    """Every column of the result must be orthogonal to p."""
+    B = orthogonal_lattice(p)
+    assert np.all(p @ B == 0)
+
+@pytest.mark.parametrize("p", ORTH_VECS)
+def test_orthogonal_lattice_rank(p):
+    """The result must be a full-rank basis of the orthogonal complement."""
+    B = orthogonal_lattice(p)
+    assert B.shape == (len(p), len(p) - 1)
+    assert np.linalg.matrix_rank(B) == len(p) - 1
+
+@pytest.mark.parametrize("p", ORTH_VECS)
+def test_orthogonal_lattice_contains_flint(p):
+    """flint's nullspace must be a sublattice of orthogonal_lattice's result."""
+    B = orthogonal_lattice(p)
+
+    # flint method (might give sublattice...)
+    dim = len(p)
+    nullity = dim - 1
+    mat_fl = flint.fmpz_mat(p.reshape(1, -1).tolist())
+    null, _ = mat_fl.nullspace()
+    null = null.transpose().hnf().transpose()
+    B_flint = np.array([[int(null[i, j]) for j in range(nullity)] for i in range(dim)])
+    gcds = np.array([np.gcd.reduce(B_flint[:, j]) for j in range(nullity)])
+    B_flint = B_flint // gcds # this often makes B_flint a true basis
+
+    # sublattice check: each column of B_flint must be an integer linear
+    # combination of B's columns, i.e. B @ T = B_flint has an integer solution
+    T = np.linalg.lstsq(B.astype(float), B_flint.astype(float), rcond=None)[0]
+    assert np.allclose(T, np.rint(T), atol=1e-8), \
+        "flint nullspace vectors are not integer combinations of orthogonal_lattice columns"
+
+# =============================================================================
+# inv_scaled tests
+# =============================================================================
+
+INV_SCALED_MATRICES = [
+    np.array([[1, 0], [0, 1]], dtype=np.int64),          # identity
+    np.array([[2, 0], [0, 3]], dtype=np.int64),          # diagonal
+    np.array([[1, 1], [0, 1]], dtype=np.int64),          # unimodular
+    np.array([[2, 1], [1, 1]], dtype=np.int64),          # det=1, off-diagonal
+    np.array([[6, 4], [3, 2]], dtype=np.int64),          # singular (should raise)
+    np.array([[2, 1, 0], [1, 3, 1], [0, 1, 2]], dtype=np.int64),  # 3x3
+]
+
+@pytest.mark.parametrize("A", INV_SCALED_MATRICES[:4] + INV_SCALED_MATRICES[5:])
+def test_inv_scaled(A):
+    """B @ A must equal s * I, with B integer and s a positive integer."""
+    B, s = inv_scaled(A)
+    assert np.issubdtype(B.dtype, np.integer)
+    assert isinstance(s, int) and s > 0
+    assert np.all(B @ A == s * np.eye(len(A), dtype=np.int64))
+
+def test_inv_scaled_singular():
+    """inv_scaled must raise ValueError on a singular matrix."""
+    with pytest.raises(ValueError, match="singular"):
+        inv_scaled(INV_SCALED_MATRICES[4])
+
+# =============================================================================
+# fp_iterative_njit tests
+# =============================================================================
+
+# (mat, Q)
+FP_CASES = [
+    (np.eye(2),                                  4.0),  # 2D unit sphere
+    (np.diag([1.0, 2.0, 3.0]),                   7.0),  # 3D diagonal
+    (np.array([[4.0, 2.0], [2.0, 3.0]]),        10.0),  # 2D off-diagonal
+]
+
+# (mat, Q, linvec, linmin)  -- linvec must have zeros before non-zeros
+FP_CASES_LIN = [
+    (np.diag([1.0, 2.0, 3.0]), 7.0, np.array([0.0, 1.0, 2.0]), 2),
+    (np.array([[4.0, 2.0], [2.0, 3.0]]), 10.0, np.array([0.0, 1.0]), 1),
+]
+
+def _brute_force_ellipsoid(mat, Q, linvec=None, linmin=None):
+    dim = mat.shape[0]
+    lam_min = np.linalg.eigvalsh(mat).min()
+    bound = int(np.ceil(np.sqrt(Q / lam_min))) + 1
+    vecs = []
+    for tup in itertools.product(range(-bound, bound + 1), repeat=dim):
+        v = np.array(tup, dtype=np.int64)
+        if np.all(v == 0):
+            continue
+        q = float(v @ mat @ v)
+        if q < 0 or q > Q + 1e-9:
+            continue
+        if linvec is not None and float(linvec @ v) < linmin:
+            continue
+        vecs.append(tuple(v))
+    return set(vecs)
+
+@pytest.mark.parametrize("mat,Q", FP_CASES)
+def test_fp_iterative_no_linvec(mat, Q):
+    """fp_iterative_njit must find exactly the same vectors as brute force."""
+    L = np.linalg.cholesky(mat)
+    out, qs = fp_iterative_njit(L, Q)
+
+    assert set(map(tuple, out)) == _brute_force_ellipsoid(mat, Q)
+    for v, q in zip(out, qs):
+        assert abs(float(v @ mat @ v) - float(q)) < 1e-3
+
+@pytest.mark.parametrize("mat,Q,linvec,linmin", FP_CASES_LIN)
+def test_fp_iterative_with_linvec(mat, Q, linvec, linmin):
+    """fp_iterative_njit with linvec must match brute force with the same filter."""
+    L = np.linalg.cholesky(mat)
+    out, qs = fp_iterative_njit(L, Q, linvec=linvec, linmin=linmin)
+
+    assert set(map(tuple, out)) == _brute_force_ellipsoid(mat, Q, linvec=linvec, linmin=linmin)
+    for v, q in zip(out, qs):
+        assert abs(float(v @ mat @ v) - float(q)) < 1e-3
