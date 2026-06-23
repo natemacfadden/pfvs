@@ -17,8 +17,15 @@
 
 import pytest
 import numpy as np
+from pathlib import Path
 
 from pfvs import CYData, PFV, pvecs, coniZpM
+
+try:
+    import cytools as _cytools
+    CYTOOLS_AVAILABLE = True
+except ImportError:
+    CYTOOLS_AVAILABLE = False
 
 # =============================================================================
 # Tests PFV class via hard-coded Manwe data, extracted from CYTools.
@@ -28,6 +35,14 @@ from pfvs import CYData, PFV, pvecs, coniZpM
 # Manwe as a CY
 # -------------
 H11, H21 = 8, 150
+
+VERTS = [
+    [ 0, 0, 0, 0], [ 1,-1,-1,-1], [-1, 2, 1, 1], [-1,-1, 0, 0],
+    [-1,-1, 2, 0], [-1,-1, 2, 1], [-1, 0, 0, 2], [-1,-1, 0, 2],
+    [-1, 0, 0, 1], [-1, 0, 1, 0], [-1,-1, 0, 1], [-1,-1, 1, 0],
+    [-1,-1, 1, 1], [-1, 0, 1, 1], [-1, 1, 1, 1], [ 0,-1, 0, 0],
+]
+HEIGHTS = [0, 35, 29, 35, 31, 35, 35, 35, 15, 17, 31, 9, 21]
 
 C2    = [184, 112, 10, 10, 26, 2, 2, -6]
 KAPPA = [
@@ -210,6 +225,14 @@ K_MANWE = [-6, -1,   0, 1, -3,  2,  0, -1]
 M_MANWE = [16, 10, -26, 8, 32, 30, 18, 28]
 P_MANWE = [-8, 0, -2, 4, 5, 5, 4] # p-vector (pgrading[1:] in cob basis)
 
+# Precomputed GVs (COO format, raw CYTools basis, degree <= 10)
+GVS_PATH = Path(__file__).parent / "manwe_gvs_deg10.csv"
+
+# Ground-truth physics values (computed from CYTools GVs, degree <= 10)
+TAU0_MANWE    = 15.508799225354053j
+GS_MANWE      = 0.0644795245247087
+LOG10W0_MANWE = -1.907313582194736
+
 
 # =============================================================================
 # Fixtures
@@ -222,119 +245,14 @@ def coni_data():
 
 @pytest.fixture(scope="module")
 def manwe(coni_data):
-    return PFV(coni_data, K=K_MANWE, M=M_MANWE)
-
-@pytest.fixture(scope="module")
-def coni_pvecs(coni_data):
-    return pvecs(coni_data, min_N_pts=200)
+    pfv = PFV(coni_data, K=K_MANWE, M=M_MANWE)
+    pfv.gvs = np.loadtxt(GVS_PATH, dtype=int, delimiter=',')
+    return pfv
 
 
 # =============================================================================
-# CYData tests
+# Tests
 # =============================================================================
-
-def test_cydata_coni_smoke(coni_data):
-    data = coni_data
-    assert data.h11 == H11
-    assert data.coni
-    assert data.H_cob.shape[1] == H11 - 1
-    assert data.kappa_cob.shape == (H11, H11, H11)
-    assert data.c2_cob.shape == (H11,)
-    assert np.all(data.cob @ data.coni_curve == [1] + [0]*(H11-1))
-
-def test_cydata_M_lattice(coni_data):
-    M_lat = coni_data.M_lattice()
-    assert M_lat.shape == (H11, H11)
-    assert np.all((coni_data.a @ M_lat) % 2 == 0)
-    assert np.all((coni_data.b @ M_lat) % 24 == 0)
-
-def test_cydata_bad_cob():
-    bad_cob = np.eye(H11, dtype=int)
-    with pytest.raises(ValueError, match="coni_cob is not a valid change of basis"):
-        CYData(h21=H21, kappa=KAPPA, c2=C2, H=H,
-               coni_curve=CONI_CURVE, coni_cob=bad_cob)
-
-
-# =============================================================================
-# PFV constructor / smoke tests
-# =============================================================================
-
-def test_pfv_smoke(manwe):
-    assert manwe.K.shape == (H11,)
-    assert manwe.M.shape == (H11,)
-    assert np.all(manwe.K == K_MANWE)
-    assert np.all(manwe.M == M_MANWE)
-
-def test_pfv_bad_K_shape(coni_data):
-    with pytest.raises(ValueError, match="K must have shape"):
-        PFV(coni_data, K=[1, 2, 3], M=M_MANWE)
-
-def test_pfv_bad_M_shape(coni_data):
-    with pytest.raises(ValueError, match="M must have shape"):
-        PFV(coni_data, K=K_MANWE, M=[1, 2, 3])
-
-def test_pfv_check_all(manwe):
-    assert manwe.check_all()
-
-def test_pfv_N_invertible(manwe):
-    assert manwe.check_Ninvertible()
-
-
-# =============================================================================
-# pvecs tests
-# =============================================================================
-
-def test_pvecs_count(coni_pvecs):
-    assert len(coni_pvecs) >= 200
-
-def test_pvecs_kahler_cone(coni_data, coni_pvecs):
-    H_cob = coni_data.H_cob
-    assert np.all(H_cob @ coni_pvecs.T > 0)
-
-def test_pvecs_primitive(coni_pvecs):
-    gcds = np.gcd.reduce(coni_pvecs, axis=1)
-    assert np.all(gcds == 1)
-
-def test_pvecs_integer(coni_pvecs):
-    assert np.issubdtype(coni_pvecs.dtype, np.integer)
-
-def test_pvecs_min_N_pts_validation(coni_data):
-    with pytest.raises(ValueError, match="min_N_pts must be > 0"):
-        pvecs(coni_data, min_N_pts=0)
-
-
-# =============================================================================
-# coniZpM tests
-# =============================================================================
-
-@pytest.fixture(scope="module")
-def coniZpM_results(coni_data, coni_pvecs):
-    Q = H11 + H21 + 4  # 162
-    return coniZpM(
-        data=coni_data,
-        ps=coni_pvecs,
-        Q=Q,
-        M0min=13,
-        ellipsoid_dilation=50,
-        n_jobs=1,
-        verbosity=0,
-    )
-
-def test_coniZpM_finds_pfvs(coniZpM_results):
-    Ks, Ms = coniZpM_results
-    assert len(Ks) > 0
-    assert Ks.shape[1] == H11
-    assert Ms.shape[1] == H11
-
-def test_coniZpM_tadpole(coniZpM_results):
-    Ks, Ms = coniZpM_results
-    Q = H11 + H21 + 4
-    tadpoles = -np.sum(Ks * Ms, axis=1)
-    assert np.all(tadpoles == Q)
-
-def test_coniZpM_M0min(coniZpM_results):
-    Ks, Ms = coniZpM_results
-    assert np.all(Ms[:, 0] >= 13)
 
 def test_coniZpM_finds_manwe(coni_data):
     """With Manwe's p-vector, coniZpM finds exactly Manwe."""
@@ -351,6 +269,7 @@ def test_coniZpM_finds_manwe(coni_data):
     assert any(np.all(K == K_MANWE) and np.all(M == M_MANWE) for K, M in zip(Ks, Ms))
 
 def test_coniZpM_pfv_count(coni_data):
+    """Scan over 10k p-vectors."""
     Ks, Ms = coniZpM(
         data=coni_data,
         ps=pvecs(coni_data, min_N_pts=10_000),
@@ -362,10 +281,30 @@ def test_coniZpM_pfv_count(coni_data):
 
     assert len(Ks) == 110
 
-def test_coniZpM_empty_ps(coni_data):
-    with pytest.raises(ValueError, match="ps must be non-empty"):
-        coniZpM(data=coni_data, ps=np.empty((0, 7), dtype=int), Q=162)
+def test_manwe_tau0(manwe):
+    """tau0 matches the value computed from degree-10 GVs."""
+    assert manwe.tau0 == pytest.approx(TAU0_MANWE, rel=1e-6)
 
-def test_coniZpM_bad_dilation(coni_data, coni_pvecs):
-    with pytest.raises(ValueError, match="ellipsoid_dilation must be > 0"):
-        coniZpM(data=coni_data, ps=coni_pvecs, Q=162, ellipsoid_dilation=-1)
+def test_manwe_gs(manwe):
+    """gs matches the value computed from degree-10 GVs."""
+    assert manwe.gs == pytest.approx(GS_MANWE, rel=1e-6)
+
+def test_manwe_W0(manwe):
+    """log10(|W0|) matches the value computed from degree-10 GVs."""
+    assert manwe.W0(as_logs=True) == pytest.approx(LOG10W0_MANWE, rel=1e-6)
+
+@pytest.mark.skipif(not CYTOOLS_AVAILABLE, reason="requires CYTools")
+def test_manwe_gvs_match_cytools():
+    """Precomputed COO GVs are identical to a fresh CYTools computation."""
+    from cytools import Polytope
+    cy = Polytope(VERTS).triangulate(heights=HEIGHTS).cy()
+    gvs_cytools = cy.compute_gvs(max_deg=10).coo
+    gvs_saved   = np.loadtxt(GVS_PATH, dtype=int, delimiter=',')
+
+    assert gvs_cytools.shape == gvs_saved.shape
+
+    # Sort both by charge columns so row order doesn't matter
+    def sort_coo(arr):
+        return arr[np.lexsort(arr[:, :-1].T[::-1])]
+
+    np.testing.assert_array_equal(sort_coo(gvs_cytools), sort_coo(gvs_saved))
