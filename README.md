@@ -1,4 +1,6 @@
 # pfvs
+*[Nate MacFadden](https://github.com/natemacfadden), Liam McAllister Group, Cornell*
+
 Tools for computing/verifying perturbatively flat vacua (PFVs). For some references on PFVs, see
 - [Vacua with Small Flux Superpotential](https://arxiv.org/abs/1912.10047) by Mehmet Demirtas, Manki Kim, Liam McAllister, Jakob Moritz
 - [Small Cosmological Constants in String Theory](https://arxiv.org/abs/1912.10047) by Mehmet Demirtas, Manki Kim, Liam McAllister, Jakob Moritz, Andres Rios-Tascon, and
@@ -6,39 +8,8 @@ Tools for computing/verifying perturbatively flat vacua (PFVs). For some referen
 
 as well as their references. This repo focuses solely on PFVs as a combinatorial problem abstracted from the physics. In this light, there are also unpublished notes by Richard Nally/Mehmet Demirtas that much of this builds off of. The relevant aspects of such notes will be briefly restated below.
 
-## Performance
-
-The core of the coniPFV search is enumerating integer vectors in a (dilated) ellipsoid subject to several cuts (see the [Algorithm](#algorithm) section for what "dilation" means -- it is the flux denominator $p_{denom}$). The current kernel, `conipfv_kernel` (C, with a Numba twin `conipfv_kernel_njit`), does this with a Fincke-Pohst lattice walk that prunes on every cut *during* enumeration. The previous implementation used in [arXiv:2406.13751](https://arxiv.org/abs/2406.13751) ("dSv1") instead materialized a bounding box, filtered it down to the ellipsoid, then rejection-sampled the cuts.
-
-Both are the same ellipsoid (Zp-style) approach and return identical results -- they differ only in *how* they enumerate the ellipsoid. Both store the output vectors; the new kernel adds only an $O(h^{1,1})$ recursion stack, whereas dSv1 must additionally materialize the whole bounding box, which scales as $(Q\cdot p_{denom})^{h^{1,1}/2}$ -- so its time and memory explode with dilation. On the $h^{1,1}=7$ "Manwe" example from dSv1 (identical inputs, identical output, same cuts):
-
-| dilation $p_{denom}$ | C (ms) | njit (ms) | dSv1 (ms) | speedup (C / njit) | dSv1 box (predicted) | memory reduction |
-|---:|---:|---:|---:|---:|---:|---:|
-| 1     | 0.010 | 0.032 | 2.0  | 196x / 64x       | 0.4 MB | ~1x |
-| 2     | 0.011 | 0.031 | 2.7  | 244x / 88x       | 11 MB  | >11x |
-| 5     | 0.012 | 0.035 | 8.0  | 638x / 227x      | 40 MB  | >40x |
-| 10    | 0.013 | 0.032 | 86   | 6,815x / 2,685x  | 354 MB | >354x |
-| 15    | 0.019 | 0.046 | 336  | 18,031x / 7,374x | 1.4 GB | >1,363x |
-| 20    | 0.025 | 0.041 | 1036 | 42,149x / 25,349x| 3.3 GB | >3,312x |
-| >~30  | ~0.03 | ~0.03 | --   | --               | out of memory (>~20 GB) | -- |
-
-- Because it never builds the box, the new kernel's footprint is just the output plus a tiny stack -- sub-MB on this example (<=2 output vectors) -- while dSv1 grows as $\sim p_{denom}^{\,3.5}$ and exhausts a 34 GB machine by $p_{denom}\approx30$. The "memory reduction" column is a conservative lower bound (the new kernel measures below 1 MB): it is the box overhead that is eliminated. For a search returning many vectors, both methods pay the output cost equally; the new kernel's win is specifically avoiding the box.
-- The speedup grows with dilation for the same reason: at $p_{denom}=20$ the C kernel is already $\sim$42,000x faster (and the Numba twin $\sim$25,000x). The new kernel comfortably runs $p_{denom}=200{,}000$ in $\sim$2 s with flat memory -- a regime dSv1 cannot reach at all.
-- C vs Numba: roughly on par at small dilation (the per-call overhead dominates); on heavy work the Numba twin runs $\sim$1.3x faster than C, but it lacks GMP arithmetic (see the note in [Organization](#organization)). For a C-vs-Numba sweep across the full dilation range, see `benchmarks/benchmark_conipfv.py`.
-
-Caveats:
-
-- One machine, one run. The new-kernel times are sub-microsecond, so the small-dilation speedups are noisy -- the large-dilation figures are the robust ones.
-- The new kernel's memory measures below RSS resolution, so "memory reduction" is a lower bound (dSv1 memory over a 1 MB ceiling); its real working set is $\sim$1 KB (output + an $O(h^{1,1})$ stack), so the true factor is far larger. "Memory" is resident memory touched -- the new kernel also reserves an untouched `max_N_out` buffer (64 MB here) that is not counted.
-- The "dSv1 box (predicted)" column is the analytic candidate-box footprint $(Q\cdot p_{denom})^{h^{1,1}/2}$ (the benchmark's `predict_box_gb`), not a measured RSS: at high dilation the box is too large to materialize (the harness skips it via an OOM budget guard), and even at low dilation RSS does not reliably capture it. The *timings*, by contrast, are measured.
-- dSv1 is a faithful stand-in: verbatim `points_in_ellipsoid` plus a reimplemented metric-LLL, giving identical output and box memory, with `maximum_box_size` lifted to infinity (else it truncates) and `fluxbound=2`.
-
-Reproduce (self-contained, needs only this repo):
-```bash
-python benchmarks/benchmark_dSv1_vs_new.py
-```
-
 ## Problem Statement
+
 The goal will be to construct many (coni)PFVs for an input Calabi-Yau manifold. The relevant (fixed) data from the CY includes
 - hodge numbers $h^{1,1}\in\mathbb{Z}\_{\geq 1}$ and $h^{2,1}\in\mathbb{Z}\_{\geq 1}$,
 - triple intersection numbers $\kappa\in\mathbb{Z}^{h^{1,1},h^{1,1},h^{1,1}}$ which are totally symmetric (invariant under transposition of any two axes),
@@ -78,6 +49,7 @@ In some ways, the problem of enumerating coniPFVs is easier since, e.g., $p$ liv
 In either case, for PFVs or coniPFVs, specification of $K$ and $M$ suffices to define the object. This will be the standard output.
 
 ## Algorithm
+
 We provide only cursory descriptions of the algorithms here. - full detail will be provided in an upcoming (as of March 2026) paper. There are subtle differences between the non-coni and coniPFV algorithms - the following discussion will implicitly be non-coni PFV focused.
 
 There are two general classes of algorithms
@@ -87,30 +59,6 @@ There are two general classes of algorithms
 Zp algorithms require special care with $p_{denom}$. Focus on ZpM and call $0\leq -M^T (\kappa \hat{p}) M \leq Q$ the 'base' ellipsoid. To generate a non-coni PFV with $p_{denom}=d$, one needs to dilate the base ellipsoid $d$-times. An $M$ in this $d$-dilated ellipsoid only gives rise to $p_{denom}=d$ if $g | (\kappa M) \hat{p}$. This is a strong cut on an increasingly wide search space, making large $p_{denom}$ expensive/difficult to find with ZpM (in contrast to box which has no difficulty finding such $p_{denom}$). The purpose of ZpK was to invert this: the base ellipsoid in ZpK is sensitive to any $p_{denom} \geq 1$.
 
 This gets to the point of efficiency (no careful analysis is done here). First, box-style algorithms are efficient at low $h^{1,1}$ but scale poorly with $h^{1,1}$. This is potentially due to the increasing narrowness of the Kähler cone $\\{x : Hx\geq 0\\}$ as dimension increases. In contrast, Zp-style algorithms typically scale better with $h^{1,1}$ than box. ZpM is particularly efficient, arguably running up to $h^{1,1}=60$. Unfortunately, the base ZpK ellipsoid is typically too large for ZpK to be usable.
-
-## Demos
-Example notebooks are in `demo_notebooks/`; `manwe_demo.ipynb` is the self-contained starting point -- it finds the perturbatively-flat vacua of the "Manwe" geometry from scratch.
-
-## Organization
-
-```
-pfvs/
-├── pfvs/
-│   ├── conipfv_kernel/          # C kernel* for coniPFV enumeration
-│   │   └── testing_benchmarks/  # C-code testing/benchmarks
-│   ├── pfv_kernel/              # C kernel* for non-coni PFV enumeration
-│   ├── cydata.py                # simple class holding CY-related data
-│   └── Zp.py                    # main methods for generating PFVs
-├── tests/
-│   └─ FILL IN
-├── environment.yml
-├── pyproject.toml
-└── setup.py
-```
-
-*: This C code originally was the bottleneck/core of the problem, hence the name 'kernel'. In the current state, unless one is studying large $p_{denom}$, these kernels represent a relatively small fracton of the total computation
-
-**Note:** `util.py` also contains `conipfv_kernel_njit`, a Numba implementation of the same algorithm. It is not recommended for production use; prefer `conipfv_kernel`. The Numba version uses native integer arithmetic and can silently produce wrong results when H-matrix entries overflow 64-bit integers -- the C version uses GMP for arbitrary-precision arithmetic and handles these cases correctly.
 
 ## Installation
 
@@ -126,3 +74,62 @@ pip install -e .
 conda install -c conda-forge gmp numpy cython
 pip install -e .
 ```
+
+## Demos
+
+Example notebooks are in `demo_notebooks/`; `manwe_demo.ipynb` is the self-contained starting point -- it finds the perturbatively-flat vacua of the "Manwe" geometry from scratch.
+
+## Performance
+
+The core of the coniPFV search is enumerating integer vectors in a (dilated) ellipsoid subject to several cuts (see the [Algorithm](#algorithm) section for what "dilation" means -- it is the flux denominator $p_{denom}$). The current kernel, `conipfv_kernel` (C, with a Numba twin `conipfv_kernel_njit`), does this with a Fincke-Pohst lattice walk that prunes on every cut *during* enumeration. The previous implementation used in [arXiv:2406.13751](https://arxiv.org/abs/2406.13751) ("dSv1") instead materialized a bounding box, filtered it down to the ellipsoid, then rejection-sampled the cuts.
+
+Both are the same ellipsoid (Zp-style) approach and return identical results -- they differ only in *how* they enumerate the ellipsoid. Both store the output vectors; the new kernel adds only an $O(h^{1,1})$ recursion stack, whereas dSv1 must additionally materialize the whole bounding box, which scales as $(Q\cdot p_{denom})^{h^{1,1}/2}$ -- so its time and memory explode with dilation. On the $h^{1,1}=7$ "Manwe" example from dSv1 (identical inputs, identical output, same cuts):
+
+| dilation $p_{denom}$ | C (ms) | njit (ms) | dSv1 (ms) | speedup (C / njit) | dSv1 box (predicted) | memory reduction |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1     | 0.010 | 0.032 | 2.0  | 196x / 64x       | 0.4 MB | ~1x |
+| 2     | 0.011 | 0.031 | 2.7  | 244x / 88x       | 11 MB  | >11x |
+| 5     | 0.012 | 0.035 | 8.0  | 638x / 227x      | 40 MB  | >40x |
+| 10    | 0.013 | 0.032 | 86   | 6,815x / 2,685x  | 354 MB | >354x |
+| 15    | 0.019 | 0.046 | 336  | 18,031x / 7,374x | 1.4 GB | >1,363x |
+| 20    | 0.025 | 0.041 | 1036 | 42,149x / 25,349x| 3.3 GB | >3,312x |
+| >~30  | ~0.03 | ~0.03 | --   | --               | out of memory (>~20 GB) | -- |
+
+- Because it never builds the box, the new kernel's footprint is just the output plus a tiny stack -- sub-MB on this example (<=2 output vectors) -- while dSv1 grows as $\sim p_{denom}^{\,3.5}$ and exhausts a 34 GB machine by $p_{denom}\approx30$. The "memory reduction" column is a conservative lower bound (the new kernel measures below 1 MB): it is the box overhead that is eliminated. For a search returning many vectors, both methods pay the output cost equally; the new kernel's win is specifically avoiding the box.
+- The speedup grows with dilation for the same reason: at $p_{denom}=20$ the C kernel is already $\sim$42,000x faster (and the Numba twin $\sim$25,000x). The new kernel comfortably runs $p_{denom}=200{,}000$ in $\sim$2 s with flat memory -- a regime dSv1 cannot reach at all.
+- C vs Numba: roughly on par at small dilation (the per-call overhead dominates); on heavy work the Numba twin runs $\sim$1.3x faster than C, but it lacks GMP arithmetic (see the note in [Organization](#organization)). For a C-vs-Numba sweep across the full dilation range, see `benchmarks/benchmark_conipfv.py`.
+
+Caveats:
+
+- One machine, one run. The new-kernel times are sub-microsecond, so the small-dilation speedups are noisy -- the large-dilation figures are the robust ones.
+- The new kernel's memory measures below RSS resolution, so "memory reduction" is a lower bound (dSv1 memory over a 1 MB ceiling); its real working set is $\sim$1 KB (output + an $O(h^{1,1})$ stack), so the true factor is far larger. "Memory" is resident memory touched -- the new kernel also reserves an untouched `max_N_out` buffer (64 MB here) that is not counted.
+- The "dSv1 box (predicted)" column is the analytic candidate-box footprint $(Q\cdot p_{denom})^{h^{1,1}/2}$ (the benchmark's `predict_box_gb`), not a measured RSS: at high dilation the box is too large to materialize (the harness skips it via an OOM budget guard), and even at low dilation RSS does not reliably capture it. The *timings*, by contrast, are measured.
+- dSv1 is a faithful stand-in: verbatim `points_in_ellipsoid` plus a reimplemented metric-LLL, giving identical output and box memory, with `maximum_box_size` lifted to infinity (else it truncates) and `fluxbound=2`.
+
+Reproduce (self-contained, needs only this repo):
+```bash
+python benchmarks/benchmark_dSv1_vs_new.py
+```
+
+## Organization
+
+```
+pfvs/
+├── pfvs/
+│   ├── conipfv_kernel/    # C kernel* + Cython binding for coni-PFV enumeration
+│   ├── pfv_kernel/        # C kernel* + Cython binding for non-coni PFV enumeration
+│   ├── coniZp.py          # coniZpM: coni-PFV generation pipeline
+│   ├── Zp.py              # ZpM / ZpK: PFV generation pipeline
+│   ├── cydata.py          # CYData: CY-data holder
+│   ├── pfv.py             # PFV class + diagnostics
+│   ├── pvectors.py        # p-vector generation
+│   └── util.py            # shared helpers (+ njit kernels)
+├── tests/                 # test_manwe.py, test_conipfv_kernel.py, test_util.py
+├── benchmarks/            # benchmark_dSv1_vs_new.py (headline), benchmark_conipfv.py
+├── demo_notebooks/        # manwe_demo.ipynb (self-contained)
+├── environment.yml
+├── pyproject.toml
+└── setup.py
+```
+
+*: This C code was originally the bottleneck/core of the problem, hence the name 'kernel'. In the current state, unless one is studying large $p_{denom}$, these kernels are a relatively small fraction of the total computation.
