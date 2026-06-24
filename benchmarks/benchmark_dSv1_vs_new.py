@@ -2,8 +2,8 @@
 Benchmark: two implementations of the same ellipsoid (Zp-style) lattice-point
 enumeration --
 
-    * current `conipfv_kernel` (C) and `conipfv_kernel_njit` (Numba): a
-      Fincke-Pohst walk that prunes on every cut during enumeration, and
+    * the current `conipfv_kernel` (C): a Fincke-Pohst search that prunes on
+      every cut during enumeration, and
     * the old "dSv1" `points_in_ellipsoid` (from arXiv:2406.13751): enumerates
       the ellipsoid by materializing a temporary bounding box, filtering it to
       the ellipsoid, then rejection-sampling the cuts.
@@ -31,7 +31,7 @@ rejection sampling. The two methods are checked to return identical vector sets.
 
 Usage:
     python benchmarks/benchmark_dSv1_vs_new.py            # full sweep + tables
-    python benchmarks/benchmark_dSv1_vs_new.py _run <c|njit|old> <dilation> <reps>
+    python benchmarks/benchmark_dSv1_vs_new.py _run <c|old> <dilation> <reps>
         # internal: one isolated measurement, prints a json line
 """
 import os
@@ -69,7 +69,7 @@ H = np.array([
     [0, 0, 0, 0, 0, 0, 0],
 ], dtype=np.int64)
 
-# the njit kernel uses mat = L @ L.T with L = U.T, so the metric is Z = U.T @ U
+# the ellipsoid metric mat = U.T @ U (the C kernel takes U, the dSv1 path takes Z)
 Z = U.T @ U
 
 # realistic output cap (actual counts are tiny). The repo default of 1e8 would
@@ -173,12 +173,6 @@ def run_c(dilation):
     out, _, _ = conipfv_kernel(U, Q, dilation, LINVEC, LINMIN, H, MAX_N_OUT)
     return out
 
-def run_njit(dilation):
-    from pfvs.util import conipfv_kernel_njit
-    out, _ = conipfv_kernel_njit(L=U.T, Q=Q, dilation=dilation, Binter0=LINVEC,
-                                 M0min=LINMIN, H=H, max_N_out=MAX_N_OUT)
-    return out
-
 def run_old(dilation):
     return apply_cuts(points_in_ellipsoid(Z, Q * dilation), dilation)
 
@@ -192,7 +186,7 @@ def _peak_rss_mb():
 
 def _measure(method, dilation, repeats):
     result = {"method": method, "dilation": dilation}
-    runner = {"c": run_c, "njit": run_njit, "old": run_old}[method]
+    runner = {"c": run_c, "old": run_old}[method]
 
     if method == "old":
         gb = predict_box_gb(dilation)
@@ -255,7 +249,7 @@ def main():
     results = {}
     print("Running sweep (each measurement in an isolated process)...\n")
     for dil in DILATIONS:
-        for m in ("c", "njit", "old"):
+        for m in ("c", "old"):
             r = _spawn(m, dil, 3 if dil <= 10 else 2)
             results[(m, dil)] = r
             st = r.get("status")
@@ -276,7 +270,7 @@ def main():
         return f"{r['rss_delta_mb']:.1f}" if r.get("status") == "ok" else (
             "oom" if r.get("status") == "skipped_oom" else "n/a")
     def nfound(d):
-        for m in ("c", "njit", "old"):
+        for m in ("c", "old"):
             r = results.get((m, d), {})
             if r.get("status") == "ok":
                 return r["n_found"]
@@ -288,14 +282,14 @@ def main():
         return "oom" if ro.get("status") == "skipped_oom" else "n/a"
 
     print("\n=== wall time (ms, min of warm runs) ===")
-    print(f"{'dilation':>9} {'C':>9} {'njit':>9} {'dSv1':>9} {'n_found':>9}")
+    print(f"{'dilation':>9} {'C':>9} {'dSv1':>9} {'n_found':>9}")
     for d in DILATIONS:
-        print(f"{d:>9} {t('c',d):>9} {t('njit',d):>9} {t('old',d):>9} {str(nfound(d)):>9}")
+        print(f"{d:>9} {t('c',d):>9} {t('old',d):>9} {str(nfound(d)):>9}")
 
     print("\n=== peak working memory (MB, rss over baseline) ===")
-    print(f"{'dilation':>9} {'C':>9} {'njit':>9} {'dSv1':>9}")
+    print(f"{'dilation':>9} {'C':>9} {'dSv1':>9}")
     for d in DILATIONS:
-        print(f"{d:>9} {mem('c',d):>9} {mem('njit',d):>9} {mem('old',d):>9}")
+        print(f"{d:>9} {mem('c',d):>9} {mem('old',d):>9}")
 
     def mem_reduction(d):
         # both methods store the same output; the new kernel adds only an O(h11)
@@ -321,9 +315,9 @@ def main():
           "conservative lower bounds -- the box overhead is what is eliminated.)")
 
     print("\n=== speedup of new kernel over dSv1 (dSv1_time / new_time) ===")
-    print(f"{'dilation':>9} {'C':>12} {'njit':>12}")
+    print(f"{'dilation':>9} {'C':>12}")
     for d in DILATIONS:
-        print(f"{d:>9} {speedup('c',d):>12} {speedup('njit',d):>12}")
+        print(f"{d:>9} {speedup('c',d):>12}")
     print("(speedup grows ~d^3.5: the dSv1 box scales as (Q*d)^(dim/2), while the "
           "kernel is roughly flat over this range.)")
 

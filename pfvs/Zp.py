@@ -27,6 +27,7 @@ import flint
 import joblib
 import numpy as np
 import os
+import warnings
 
 from numpy.typing import ArrayLike
 
@@ -137,7 +138,7 @@ def M_ellipsoid(p: ArrayLike,
           mat = -Binter^T @ Z @ Binter.
     That last constraint c^T @ mat @ c <= Qmax is the ellipsoid constraint. One
     can actually dilate the ellipsoid as long as
-    GCD(Kperp) >= (c^T @ mat @ c)/Qmax. This is subtlely different fron coni
+    GCD(Kperp) >= (c^T @ mat @ c)/Qmax. This is subtly different from coni
     contexts since, here, we don't typically enforce K[0] > 0
 
     Parameters
@@ -436,7 +437,7 @@ def ZpM(
         ``ellipsoid_dilation <= 0``, or if ``_allow_gcds`` finds no valid
         GCD expansions.
     """
-    print("WARNING NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")
+    warnings.warn("non-coni Zp methods are slightly outdated relative to the coni path", stacklevel=2)
     if data.coni:
         raise ValueError(
             "Methods in Zp.py only apply to non-coni contexts. "
@@ -687,7 +688,7 @@ def ZpK(
         ``ellipsoid_dilation <= 0``, or if ``_allow_gcds`` finds no valid
         GCD expansions.
     """
-    print("WARNING NON CONI Zp METHOD ARE SLIGHTLY OUTDATED... THEY EXCLUDE GCD PRUNING, E.G.")
+    warnings.warn("non-coni Zp methods are slightly outdated relative to the coni path", stacklevel=2)
     if data.coni:
         raise ValueError(
             "Methods in Zp.py only apply to non-coni contexts. "

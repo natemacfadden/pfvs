@@ -18,7 +18,6 @@
 import numpy as np
 
 from pfvs.conipfv_kernel import conipfv_kernel
-from pfvs.util import conipfv_kernel_njit
 
 # =============================================================================
 # Hard-coded Manwe data (from https://arxiv.org/abs/2406.13751)
@@ -58,22 +57,6 @@ EXPECTATIONS = [0, 0,  0,  1,     2,     2,     2,     2,     2]
 # Tests
 # =============================================================================
 
-# conipfv_kernel_njit is used here for verification only. It is NOT recommended
-# for production use: it lacks GMP arithmetic and can silently produce wrong
-# results for large integers.
-def test_njit():
-    for dilation, expected in zip(DILATIONS, EXPECTATIONS):
-        out, Niter = conipfv_kernel_njit(
-            L=U.T,
-            Q=Q,
-            dilation=dilation,
-            Binter0=LINVEC,
-            M0min=LINMIN,
-            H=H,
-            max_N_out=MAX_N_OUT,
-        )
-        assert out.shape[0] == expected
-
 def test_c():
     for dilation, expected in zip(DILATIONS, EXPECTATIONS):
         out, Qs, status = conipfv_kernel(
@@ -86,13 +69,6 @@ def test_c():
 # =============================================================================
 # Benchmarks
 # =============================================================================
-
-def test_bench_conipfv_kernel_njit(benchmark):
-    benchmark(
-        conipfv_kernel_njit,
-        L=U.T, Q=Q, dilation=50000,
-        Binter0=LINVEC, M0min=LINMIN, H=H, max_N_out=MAX_N_OUT,
-    )
 
 def test_bench_conipfv_kernel_c(benchmark):
     benchmark(conipfv_kernel, U, Q, 50000, LINVEC, LINMIN, H, MAX_N_OUT)

@@ -29,6 +29,7 @@ import math
 import numba
 import numpy as np
 import os
+import warnings
 
 from numpy.typing import ArrayLike
 
@@ -560,8 +561,7 @@ def coniZpM(
                     try:
                         H = coni_H_matrix(ZBinter, proj)
                     except Exception as e:
-                        print(f"C long error for p={p.tolist()} :(",flush=True)
-                        print(e)
+                        warnings.warn(f"skipping p={p.tolist()}: coni_H_matrix failed ({e})", stacklevel=2)
                         continue
 
                     try:
@@ -594,7 +594,7 @@ def coniZpM(
                 # use GCD lattices
                 # ----------------
                 else:
-                    print("WARNING LIKELY OLD CODE THAT COULD BE REFRESHED")
+                    warnings.warn("the GCD-lattice branch is old code and may be stale", stacklevel=2)
                     # i.e., encode gcd(Kperp) == val as a lattice
                     # scan in each lattice
                     lattice_points = np.empty((0,Binter.shape[1]), dtype=int)

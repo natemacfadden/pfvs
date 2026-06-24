@@ -24,7 +24,6 @@ dependencies = [
     "matplotlib",
     "numba",
     "numpy",
-    "ortools",
     "scipy",
 ]
 requires-python = ">=3.9"

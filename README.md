@@ -50,11 +50,11 @@ In either case, for PFVs or coniPFVs, specification of $K$ and $M$ suffices to d
 
 ## Algorithm
 
-We provide only cursory descriptions of the algorithms here. - full detail will be provided in an upcoming (as of March 2026) paper. There are subtle differences between the non-coni and coniPFV algorithms - the following discussion will implicitly be non-coni PFV focused.
+We provide only cursory descriptions of the algorithms here. Full detail will be provided in an upcoming (as of March 2026) paper. There are subtle differences between the non-coni and coniPFV algorithms - the following discussion will implicitly be non-coni PFV focused.
 
 There are two general classes of algorithms
 1. 'box-style algorithms': (non-exhaustively) enumerate $K$ and $M$ satisfying constraints #1, #2, and #5. This can be done by trying all $|K_i|\leq bound_K$ and $|M_i|\leq bound_M$, hence the name 'box' (there are better ways of enumerating such $K$, $M$ though). One can then rejection sample on constraint #6. Likewise, one can compute $p$ using #7 and then allows checking of constraints #3 and #4.
-2. 'Zp-style algorithms': (non-exhaustively) enumerate $\hat{p} \in \mathbb{Z}^{h^{1,1}}$ obeying #3. Define $p = \hat{p}/p_{denom}$ for some $p\_{denom} \in \mathbb{Z}\_{>0}$. Use #7 to rewrite constraint #5 as an ellipsoidal constraint on $M$, $0\leq -M^T (\kappa \hat{p}) M \leq p_{denom} Q$. This defines the 'ZpM algorithm'. For non-coni PFVs only, one can invert constraint #7 to rewrite constraint #5 as an allipsoid on $K$, $0\leq -K^T (\kappa \hat{p})^{-1} K \leq Q/p_{denom}$. This defines the 'ZpK algorithm'. One can integrate constraints #1, #2, and #4 as modifications to the ellipsoid via certain lattice bases.
+2. 'Zp-style algorithms': (non-exhaustively) enumerate $\hat{p} \in \mathbb{Z}^{h^{1,1}}$ obeying #3. Define $p = \hat{p}/p_{denom}$ for some $p\_{denom} \in \mathbb{Z}\_{>0}$. Use #7 to rewrite constraint #5 as an ellipsoidal constraint on $M$, $0\leq -M^T (\kappa \hat{p}) M \leq p_{denom} Q$. This defines the 'ZpM algorithm'. For non-coni PFVs only, one can invert constraint #7 to rewrite constraint #5 as an ellipsoid on $K$, $0\leq -K^T (\kappa \hat{p})^{-1} K \leq Q/p_{denom}$. This defines the 'ZpK algorithm'. One can integrate constraints #1, #2, and #4 as modifications to the ellipsoid via certain lattice bases.
 
 Zp algorithms require special care with $p_{denom}$. Focus on ZpM and call $0\leq -M^T (\kappa \hat{p}) M \leq Q$ the 'base' ellipsoid. To generate a non-coni PFV with $p_{denom}=d$, one needs to dilate the base ellipsoid $d$-times. An $M$ in this $d$-dilated ellipsoid only gives rise to $p_{denom}=d$ if $g | (\kappa M) \hat{p}$. This is a strong cut on an increasingly wide search space, making large $p_{denom}$ expensive/difficult to find with ZpM (in contrast to box which has no difficulty finding such $p_{denom}$). The purpose of ZpK was to invert this: the base ellipsoid in ZpK is sensitive to any $p_{denom} \geq 1$.
 
@@ -70,8 +70,10 @@ pip install -e .
 ```
 
 ### Or install dependencies separately:
+`gmp` is the only non-Python dependency; `pip install -e .` resolves the rest
+(numpy, cython, python-flint, numba, scipy, latticepts, joblib, matplotlib).
 ```bash
-conda install -c conda-forge gmp numpy cython
+conda install -c conda-forge gmp
 pip install -e .
 ```
 
@@ -81,23 +83,22 @@ Example notebooks are in `demo_notebooks/`; `manwe_demo.ipynb` is the self-conta
 
 ## Performance
 
-The core of the coniPFV search is enumerating integer vectors in a (dilated) ellipsoid subject to several cuts (see the [Algorithm](#algorithm) section for what "dilation" means -- it is the flux denominator $p_{denom}$). The current kernel, `conipfv_kernel` (C, with a Numba twin `conipfv_kernel_njit`), does this with a Fincke-Pohst lattice walk that prunes on every cut *during* enumeration. The previous implementation used in [arXiv:2406.13751](https://arxiv.org/abs/2406.13751) ("dSv1") instead materialized a bounding box, filtered it down to the ellipsoid, then rejection-sampled the cuts.
+The core of the coniPFV search is enumerating integer vectors in a (dilated) ellipsoid subject to several cuts (see the [Algorithm](#algorithm) section for what "dilation" means -- it is the flux denominator $p_{denom}$). The current kernel, `conipfv_kernel` (C), does this with a Fincke-Pohst search that prunes on every cut as it goes. The previous implementation used in [arXiv:2406.13751](https://arxiv.org/abs/2406.13751) ("dSv1") instead materialized a bounding box, filtered it down to the ellipsoid, then rejection-sampled the cuts.
 
 Both are the same ellipsoid (Zp-style) approach and return identical results -- they differ only in *how* they enumerate the ellipsoid. Both store the output vectors; the new kernel adds only an $O(h^{1,1})$ recursion stack, whereas dSv1 must additionally materialize the whole bounding box, which scales as $(Q\cdot p_{denom})^{h^{1,1}/2}$ -- so its time and memory explode with dilation. On the $h^{1,1}=7$ "Manwe" example from dSv1 (identical inputs, identical output, same cuts):
 
-| dilation $p_{denom}$ | C (ms) | njit (ms) | dSv1 (ms) | speedup (C / njit) | dSv1 box (predicted) | memory reduction |
-|---:|---:|---:|---:|---:|---:|---:|
-| 1     | 0.010 | 0.032 | 2.0  | 196x / 64x       | 0.4 MB | ~1x |
-| 2     | 0.011 | 0.031 | 2.7  | 244x / 88x       | 11 MB  | >11x |
-| 5     | 0.012 | 0.035 | 8.0  | 638x / 227x      | 40 MB  | >40x |
-| 10    | 0.013 | 0.032 | 86   | 6,815x / 2,685x  | 354 MB | >354x |
-| 15    | 0.019 | 0.046 | 336  | 18,031x / 7,374x | 1.4 GB | >1,363x |
-| 20    | 0.025 | 0.041 | 1036 | 42,149x / 25,349x| 3.3 GB | >3,312x |
-| >~30  | ~0.03 | ~0.03 | --   | --               | out of memory (>~20 GB) | -- |
+| dilation $p_{denom}$ | C (ms) | dSv1 (ms) | speedup | dSv1 box (predicted) | memory reduction |
+|---:|---:|---:|---:|---:|---:|
+| 1     | 0.010 | 2.0  | 196x    | 0.4 MB | ~1x |
+| 2     | 0.011 | 2.7  | 244x    | 11 MB  | >11x |
+| 5     | 0.012 | 8.0  | 638x    | 40 MB  | >40x |
+| 10    | 0.013 | 86   | 6,815x  | 354 MB | >354x |
+| 15    | 0.019 | 336  | 18,031x | 1.4 GB | >1,363x |
+| 20    | 0.025 | 1036 | 42,149x | 3.3 GB | >3,312x |
+| >~30  | ~0.03 | --   | --      | out of memory (>~20 GB) | -- |
 
 - Because it never builds the box, the new kernel's footprint is just the output plus a tiny stack -- sub-MB on this example (<=2 output vectors) -- while dSv1 grows as $\sim p_{denom}^{\,3.5}$ and exhausts a 34 GB machine by $p_{denom}\approx30$. The "memory reduction" column is a conservative lower bound (the new kernel measures below 1 MB): it is the box overhead that is eliminated. For a search returning many vectors, both methods pay the output cost equally; the new kernel's win is specifically avoiding the box.
-- The speedup grows with dilation for the same reason: at $p_{denom}=20$ the C kernel is already $\sim$42,000x faster (and the Numba twin $\sim$25,000x). The new kernel comfortably runs $p_{denom}=200{,}000$ in $\sim$2 s with flat memory -- a regime dSv1 cannot reach at all.
-- C vs Numba: roughly on par at small dilation (the per-call overhead dominates); on heavy work the Numba twin runs $\sim$1.3x faster than C, but it lacks GMP arithmetic (see the note in [Organization](#organization)). For a C-vs-Numba sweep across the full dilation range, see `benchmarks/benchmark_conipfv.py`.
+- The speedup grows with dilation for the same reason: at $p_{denom}=20$ the C kernel is already $\sim$42,000x faster. The new kernel comfortably runs $p_{denom}=200{,}000$ in seconds with flat memory -- a regime dSv1 cannot reach at all.
 
 Caveats:
 

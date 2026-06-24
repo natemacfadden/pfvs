@@ -2,7 +2,6 @@ import numpy as np
 import time
 
 from pfvs.conipfv_kernel import conipfv_kernel
-from pfvs.util import conipfv_kernel_njit
 
 # conipfv_kernel
 # ===========
@@ -46,18 +45,3 @@ for dilation in [1,2,10,20] + [10_000*i for i in range(1,20+1)]:
     toc = time.time()
 
     print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s using C code...")
-
-
-    tic = time.time()
-    out, Niter = conipfv_kernel_njit(
-        L=U.T,
-        Q=Q,
-        dilation=dilation,
-        Binter0=linvec,
-        M0min=linmin,
-        H=H,
-        max_N_out=max_N_out
-    )
-    toc = time.time()
-
-    print(f"dilation = {dilation}; found {out.shape[0]} vectors in {toc-tic}s using njit code...")
