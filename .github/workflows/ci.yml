@@ -1,0 +1,34 @@
+name: CI
+
+# Build the (coni-)PFV kernels + Cython binding and run the test suite on every
+# push and PR. CYTools is not installed here, so test_manwe_gvs_match_cytools
+# skips; the kernel, lattice-primitive, and Manwe-physics tests still run.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build + test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install libgmp
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev
+      - name: Build + install (with test extras)
+        run: pip install -e .[test]
+      - name: Run the test suite
+        run: pytest tests/ -v

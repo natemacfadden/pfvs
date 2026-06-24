@@ -44,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows excluded: box_enum.h uses C99 VLAs which MSVC does not support
+        # Windows excluded: the C kernels use C99 VLAs, which MSVC does not support
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
@@ -65,10 +65,12 @@ jobs:
     needs: [make-sdist, make-wheels]
     environment:
       name: pypi
-      url: https://pypi.org/p/latticepts
+      url: https://pypi.org/p/pfvs
     permissions:
       id-token: write
-    if: github.event_name == 'release' && github.event.action == 'published'
+    # publishing disabled until the pfvs PyPI project exists; restore the gate
+    # below (github.event_name == 'release' && github.event.action == 'published')
+    if: false
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
