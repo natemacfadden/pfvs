@@ -378,7 +378,6 @@ int _pfv_kernel_c(
             stack_val_len,
             eps);
     if (k == 0) {
-        printf("ERROR NO VECTORS");
         status = -5;
         goto end;
     }

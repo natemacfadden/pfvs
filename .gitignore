@@ -2,7 +2,6 @@
 .DS_Store
 
 # custom
-pfvs/c_kernels/*.c
 PFVSTRINGS-*
 *.png
 
@@ -10,8 +9,7 @@ PFVSTRINGS-*
 .pytest_cache/
 .benchmarks/
 .coverage
-pfvs/c_kernels/testing_benchmarks/test_conipfv_kernel
-pfvs/c_kernels/testing_benchmarks/test_pvec_kernel
+pfvs/conipfv_kernel/testing_benchmarks/test_conipfv_kernel
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -36,3 +34,11 @@ dist/
 
 # Jupyter
 .ipynb_checkpoints
+
+# internal demo notebooks (depend on the private cornell-dev lib; kept local, not shipped)
+demo_notebooks/benchmark_across_h11.ipynb
+demo_notebooks/benchmark_single_coni.ipynb
+demo_notebooks/fancier.ipynb
+demo_notebooks/harvesting.ipynb
+demo_notebooks/scans.ipynb
+demo_notebooks/vol_cap.ipynb

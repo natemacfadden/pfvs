@@ -89,7 +89,7 @@ Zp algorithms require special care with $p_{denom}$. Focus on ZpM and call $0\le
 This gets to the point of efficiency (no careful analysis is done here). First, box-style algorithms are efficient at low $h^{1,1}$ but scale poorly with $h^{1,1}$. This is potentially due to the increasing narrowness of the Kähler cone $\\{x : Hx\geq 0\\}$ as dimension increases. In contrast, Zp-style algorithms typically scale better with $h^{1,1}$ than box. ZpM is particularly efficient, arguably running up to $h^{1,1}=60$. Unfortunately, the base ZpK ellipsoid is typically too large for ZpK to be usable.
 
 ## Demos
-The demos are currently in demo_notebooks/. This will be modified soon.
+Example notebooks are in `demo_notebooks/`; `manwe_demo.ipynb` is the self-contained starting point -- it finds the perturbatively-flat vacua of the "Manwe" geometry from scratch.
 
 ## Organization
 

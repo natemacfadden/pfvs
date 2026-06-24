@@ -5,7 +5,7 @@
 #include <time.h>
 
 #define CONIPFV_KERNEL_IMPLEMENTATION
-#include "coni_kernel.h"
+#include "conipfv_kernel.h"
 
 int main(int argc, char *argv[])
 {
@@ -53,7 +53,7 @@ int main(int argc, char *argv[])
 
     // initialize output array
     int32_t *out = malloc((size_t)max_N_out * dim * sizeof(int32_t));
-    float *Qs    = malloc((size_t)max_N_out * sizeof(float));
+    double *Qs   = malloc((size_t)max_N_out * sizeof(double));
     if (!out || !Qs) {
         perror("malloc out and Qs");
         return 1;
@@ -63,7 +63,7 @@ int main(int argc, char *argv[])
     int N_out = 0;
 
     clock_t start = clock();
-    int rc = _coni_kernel_c(
+    int rc = _conipfv_kernel_c(
         out,
         Qs,
         &N_out,
@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
     double eval_time = (double)(end - start) / CLOCKS_PER_SEC;
     
     if (rc != 0) {
-        fprintf(stderr, "_coni_kernel_c failed (%d)\n", rc);
+        fprintf(stderr, "_conipfv_kernel_c failed (%d)\n", rc);
     } else {
         printf("Generated %d vectors in %fs\n", N_out, eval_time);
         for (int i=0; i<N_out; ++i) {

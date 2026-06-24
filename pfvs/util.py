@@ -676,7 +676,6 @@ def conipfv_kernel_njit(
         stack_val_len,
         eps)
     if k == 0:
-        print("ERROR NO VECTORS")
         return out[:op, :], Qs[:op]
 
     # process stack until empty
