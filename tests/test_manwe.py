@@ -262,6 +262,7 @@ def test_coniZpM_finds_manwe(coni_data):
         Q=H11 + H21 + 4,
         M0min=13,
         ellipsoid_dilation=50,
+        max_N_pfvs=10_000_000,
         n_jobs=1,
         verbosity=0,
     )
@@ -275,6 +276,7 @@ def test_coniZpM_pfv_count(coni_data):
         ps=pvecs(coni_data, min_N_pts=10_000),
         M0min=13,
         ellipsoid_dilation=50,
+        max_N_pfvs=10_000_000,
         n_jobs=1,
         verbosity=0,
     )

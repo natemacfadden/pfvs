@@ -24,7 +24,7 @@ cdef extern from "gmp.h":
 cdef extern from "pfv_kernel.h":
     int _pfv_kernel_c(
         int32_t *out,
-        float *Qs,
+        double *Qs,
         int *N_out,
         int dim,
         double *U,
@@ -132,7 +132,7 @@ def pfv_kernel(U,
             mpz_clear(H_gmp[i])
         free(H_gmp)
         raise MemoryError("Failed to allocate c_out")
-    cdef float *c_Qs = <float *>malloc(max_N_out * sizeof(float))
+    cdef double *c_Qs = <double *>malloc(max_N_out * sizeof(double))
     if c_Qs == NULL:
         for i in range(h_rows * dim):
             mpz_clear(H_gmp[i])

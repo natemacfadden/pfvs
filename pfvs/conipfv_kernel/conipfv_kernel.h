@@ -61,7 +61,7 @@ A status code according to following list:
 */
 int _conipfv_kernel_c(
     int32_t * restrict out,
-    float * restrict Qs,
+    double * restrict Qs,
     int * restrict N_out,
     int dim,
     double * restrict U,
@@ -241,7 +241,7 @@ static inline int set_bounds(
 // custom FP code for coniPFVs
 int _conipfv_kernel_c(
     int32_t * restrict out,
-    float * restrict Qs,
+    double * restrict Qs,
     int * restrict N_out,
     int dim,
     double * restrict U,
@@ -431,7 +431,7 @@ int _conipfv_kernel_c(
                 goto end;
             }
 
-            float Qsave = Q_upper-remQ;
+            double Qsave = Q_upper-remQ;
             if (Qsave > -eps) {
                 int32_t *dst = &out[op * dim];
 
