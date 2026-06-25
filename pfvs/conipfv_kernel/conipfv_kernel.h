@@ -476,7 +476,7 @@ int _conipfv_kernel_c(
         double ci = U[dim*i + i]*veci + stack_ci_offset[sp];
         double new_rem = remQ - ci*ci;
 
-        // cut of no more Q left...
+        // cut if no more Q left...
         if (new_rem < 0 - eps) {
             DEBUG_LOG("SKIPPED SINCE TADPOLE %f < %f\n",new_rem,-eps);
             continue;

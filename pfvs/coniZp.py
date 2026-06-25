@@ -512,7 +512,7 @@ def coniZpM(
         n_jobs = 2*os.cpu_count()
 
     if max_Kperp_gcd > 1:
-        print("WARNING This code hasn't been well-tested for max_Kperp_gcd > 1...")
+        warnings.warn("max_Kperp_gcd > 1 is not well-tested", stacklevel=2)
 
     # misc (left for future debugging)
     only_positive_news = False
@@ -567,9 +567,7 @@ def coniZpM(
                     try:
                         L = np.linalg.cholesky(mat)
                     except Exception as e:
-                        print(f"couldn't compute cholesky decomposition of "
-                              f"mat for p={p.tolist()} :(", flush=True)
-                        print(e)
+                        warnings.warn(f"skipping p={p.tolist()}: cholesky of mat failed ({e})", stacklevel=2)
                         continue
 
                     lattice_points, rawQs, status = conipfv_kernel(
@@ -588,8 +586,7 @@ def coniZpM(
                     )
 
                     if status != 0:
-                        print(f"KERNEL RETURNED STATUS {status}!!!",
-                              flush=True)
+                        warnings.warn(f"conipfv_kernel returned status {status} for p={p.tolist()}", stacklevel=2)
 
                 # use GCD lattices
                 # ----------------

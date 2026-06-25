@@ -158,7 +158,7 @@ class CYData:
             import cytools
         except ImportError as e:
             raise ImportError(
-                "cytools is required reading data from a CalabiYau object..."
+                "cytools is required for reading data from a CalabiYau object..."
             ) from e
 
         # read the data

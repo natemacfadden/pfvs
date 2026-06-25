@@ -477,7 +477,7 @@ def fp_iterative_njit(
         ci      = L[i,i]*veci + ci_offsets[i]
         new_rem = remQ - ci*ci
 
-        # cut of no more Q left...
+        # cut if no more Q left...
         if new_rem < 0 - eps:
             continue
 

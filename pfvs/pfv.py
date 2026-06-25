@@ -562,7 +562,6 @@ class PFV():
             if not getattr(self, check)():
                 # failed a check!
                 if not self.silent:
-                    # printit!
                     print(f"Check '{check}' failed...")
                 passes = False
                 if stop_at_fail:
@@ -951,7 +950,7 @@ class PFV():
         else:
             print()
 
-        # coni-diagonstics
+        # coni-diagnostics
         if self.coni:
             print("Coni:")
             print("-----")
@@ -987,7 +986,7 @@ class PFV():
             print()
 
         # plot the data
-        print("Plotting the series... evauluated at tau0 from 2-term")
+        print("Plotting the series... evaluated at tau0 from 2-term")
         self.plot_series()
 
     def plot_series(self) -> None:

@@ -495,14 +495,12 @@ def ZpM(
                 try:
                     H = H_matrix(ZBinter)
                 except Exception as e:
-                    print(f"H_matrix failed for p={p.tolist()} :(", flush=True)
-                    print(e)
+                    warnings.warn(f"skipping p={p.tolist()}: H_matrix failed ({e})", stacklevel=2)
                     continue
                 try:
                     L = np.linalg.cholesky(mat)
                 except Exception as e:
-                    print(f"couldn't compute cholesky for p={p.tolist()} :(", flush=True)
-                    print(e)
+                    warnings.warn(f"skipping p={p.tolist()}: cholesky of mat failed ({e})", stacklevel=2)
                     continue
                 lattice_points, _, status = pfv_kernel(
                     U=np.ascontiguousarray(L.T),
@@ -513,7 +511,7 @@ def ZpM(
                     eps=1e-4
                 )
                 if status != 0:
-                    print(f"KERNEL RETURNED STATUS {status}!!!", flush=True)
+                    warnings.warn(f"pfv_kernel returned status {status} for p={p.tolist()}", stacklevel=2)
             else:
                 try:
                     L = np.linalg.cholesky(mat)

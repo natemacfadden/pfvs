@@ -96,7 +96,7 @@ static inline uint64_t gcd(uint64_t u, uint64_t v, uint64_t min_allowed_gcd)
     /*
     **Description:**
     Modification of Stein's binary GCD algorithm gcd(u,v) with an explicit
-    minum allowed GCD. If gcd(u,v) < min_allowed_gcd, then quit early, returning
+    minimum allowed GCD. If gcd(u,v) < min_allowed_gcd, then quit early, returning
     1.
 
     **Arguments:**
