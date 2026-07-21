@@ -30,8 +30,8 @@ The dSv1 method gets the ellipsoid for free and applies the M0 and gcd cuts by
 rejection sampling. The two methods are checked to return identical vector sets.
 
 Usage:
-    python benchmarks/benchmark_dSv1_vs_new.py            # full sweep + tables
-    python benchmarks/benchmark_dSv1_vs_new.py _run <c|old> <dilation> <reps>
+    python benchmarks/benchmark_dSv1_vs_coniZpM.py            # full sweep + tables
+    python benchmarks/benchmark_dSv1_vs_coniZpM.py _run <c|old> <dilation> <reps>
         # internal: one isolated measurement, prints a json line
 """
 import os
@@ -160,10 +160,10 @@ def apply_cuts(vecs, dilation):
 # peak ~3x the candidate array (coords + candidates@Zp + their product held at once)
 _PEAK_OVERHEAD = 3
 
-def predict_box_gb(dilation):
+def predict_box_gb(dilation, fluxbound=2):
     new_basis = lll_reduce_wrt_metric(Z)
     Zp = new_basis @ Z @ new_basis.T
-    bounds = np.rint(2 * np.sqrt(Q * dilation / np.diagonal(Zp))).astype(int)
+    bounds = np.rint(fluxbound * np.sqrt(Q * dilation / np.diagonal(Zp))).astype(int)
     elems = float(np.prod(2.0 * bounds + 1))
     return _PEAK_OVERHEAD * elems * len(Z) * 8 / 1e9
 
@@ -209,6 +209,14 @@ def run_old(dilation):
         prepare_old()
     return apply_cuts(points_in_ellipsoid_prepped(Q * dilation), dilation)
 
+# timing-only baseline: dSv1 with fluxbound=1. undersizes the box (dSv1 default
+# is 2, tight-safe ~1.17), so it can drop points -- output is incomplete, not
+# equality-checked, just a lower bound on a fair box's time. lll hoisted as for fb2.
+def run_old_fb1(dilation):
+    if _OLD_PREP is None:
+        prepare_old()
+    return apply_cuts(points_in_ellipsoid_prepped(Q * dilation, fluxbound=1), dilation)
+
 
 # ---------------------------------------------------------------------------
 # one isolated measurement (subprocess): time (min of warm runs) + peak rss
@@ -242,10 +250,11 @@ def _reset_peak_rss():
 
 def _measure(method, dilation, repeats):
     result = {"method": method, "dilation": dilation}
-    runner = {"c": run_c, "old": run_old}[method]
+    runner = {"c": run_c, "old": run_old, "old_fb1": run_old_fb1}[method]
 
-    if method == "old":
-        gb = predict_box_gb(dilation)
+    if method in ("old", "old_fb1"):
+        fb = 1 if method == "old_fb1" else 2
+        gb = predict_box_gb(dilation, fluxbound=fb)
         result["pred_box_gb"] = round(gb, 3)
         if gb > BUDGET_GB:
             result["status"] = "skipped_oom"
@@ -307,7 +316,7 @@ def main():
     results = {}
     print("Running sweep (each measurement in an isolated process)...\n")
     for dil in DILATIONS:
-        for m in ("c", "old"):
+        for m in ("c", "old", "old_fb1"):
             r = _spawn(m, dil, 3 if dil <= 10 else 2)
             results[(m, dil)] = r
             st = r.get("status")
@@ -333,16 +342,46 @@ def main():
             if r.get("status") == "ok":
                 return r["n_found"]
         return "?"
+    def nfound_m(m, d):
+        r = results.get((m, d), {})
+        return r["n_found"] if r.get("status") == "ok" else (
+            "oom" if r.get("status") == "skipped_oom" else "n/a")
     def speedup(m, d):
         ro, rn = results.get(("old", d), {}), results.get((m, d), {})
         if ro.get("status") == "ok" and rn.get("status") == "ok" and rn["t_min_s"] > 0:
             return f"{ro['t_min_s'] / rn['t_min_s']:,.0f}x"
         return "oom" if ro.get("status") == "skipped_oom" else "n/a"
+    def speedup_fb1(d):
+        # conservative speedup: dSv1 with an undersized (fluxbound=1), incomplete
+        # box vs the new kernel -- an optimistic lower bound on a fair box's time.
+        ro, rn = results.get(("old_fb1", d), {}), results.get(("c", d), {})
+        if ro.get("status") == "ok" and rn.get("status") == "ok" and rn["t_min_s"] > 0:
+            return f"{ro['t_min_s'] / rn['t_min_s']:,.0f}x"
+        return "oom" if ro.get("status") == "skipped_oom" else "n/a"
 
     print("\n=== wall time (ms, min of warm runs) ===")
-    print(f"{'dilation':>9} {'C':>9} {'dSv1':>9} {'n_found':>9}")
+    print("  dSv1     = fluxbound=2 (dSv1's published default: the faithful, complete baseline)")
+    print("  dSv1_fb1 = fluxbound=1 (undersized, incomplete box; timing only -- an optimistic")
+    print("             lower bound on a fair box's time; not checked for output equality)")
+    print(f"{'dilation':>9} {'C':>10} {'dSv1':>10} {'dSv1_fb1':>10} {'n(fb2)':>8} {'n(fb1)':>8}")
     for d in DILATIONS:
-        print(f"{d:>9} {t('c',d):>9} {t('old',d):>9} {str(nfound(d)):>9}")
+        print(f"{d:>9} {t('c',d):>10} {t('old',d):>10} {t('old_fb1',d):>10} "
+              f"{str(nfound_m('old',d)):>8} {str(nfound_m('old_fb1',d)):>8}")
+
+    print("\n=== dSv1 fluxbound=1 completeness (points found vs complete fluxbound=2 result) ===")
+    print(f"{'dilation':>9} {'n(fb2)':>8} {'n(fb1)':>8} {'missed':>8} {'status':>14}")
+    for d in DILATIONS:
+        n2, n1 = nfound_m('old', d), nfound_m('old_fb1', d)
+        if isinstance(n2, int) and isinstance(n1, int):
+            missed = n2 - n1
+            print(f"{d:>9} {n2:>8} {n1:>8} {missed:>8} "
+                  f"{('incomplete' if missed > 0 else 'same count'):>14}")
+        else:
+            print(f"{d:>9} {str(n2):>8} {str(n1):>8} {'-':>8} {'-':>14}")
+    print("(fluxbound=1 undersizes the box, so it silently drops lattice points: wherever")
+    print(" 'missed' > 0 its output set is strictly incomplete, yet it is still slower than")
+    print(" the new kernel [see conservative speedup below]. Where counts match, the smaller")
+    print(" box happened to still cover every feasible point at that dilation.)")
 
     print("\n=== peak working memory (MB, rss over baseline) ===")
     print(f"{'dilation':>9} {'C':>9} {'dSv1':>9}")
@@ -372,12 +411,17 @@ def main():
           "a handful of outputs here the new kernel stays sub-MB. Reductions are "
           "conservative lower bounds -- the box overhead is what is eliminated.)")
 
-    print("\n=== speedup of new kernel over dSv1 (dSv1_time / new_time) ===")
-    print(f"{'dilation':>9} {'C':>12}")
+    print("\n=== speedup of new kernel over dSv1 ===")
+    print("  headline     = dSv1(fluxbound=2, faithful & complete) time / new time")
+    print("  conservative = dSv1(fluxbound=1, undersized & incomplete box) time / new time")
+    print("                 (optimistic lower bound on a fair box's time)")
+    print(f"{'dilation':>9} {'headline':>12} {'conservative':>14}")
     for d in DILATIONS:
-        print(f"{d:>9} {speedup('c',d):>12}")
-    print("(speedup grows ~d^3.5: the dSv1 box scales as (Q*d)^(dim/2), while the "
-          "kernel is roughly flat over this range.)")
+        print(f"{d:>9} {speedup('c',d):>12} {speedup_fb1(d):>14}")
+    print("(headline speedup is defined against fluxbound=2, dSv1's faithful default. The")
+    print(" conservative column is a lower bound: even spotting the old method an undersized,")
+    print(" incomplete box, the new kernel still wins. Speedup grows ~d^3.5: the dSv1 box")
+    print(" scales as (Q*d)^(dim/2), while the kernel is roughly flat over this range.)")
 
 
 if __name__ == "__main__":
