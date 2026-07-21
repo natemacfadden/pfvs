@@ -76,8 +76,8 @@ Z = U.T @ U
 # reserve a multi-gigabyte virtual output buffer that distorts the rss reading.
 MAX_N_OUT = 1_000_000
 
-# dSv1 memory guard: predicted candidate-box bytes above this are skipped
-BUDGET_GB = 6.0
+# dSv1 skipped when its estimated peak footprint exceeds this (keep < machine RAM)
+BUDGET_GB = 18.0
 
 
 # ---------------------------------------------------------------------------
@@ -157,12 +157,15 @@ def apply_cuts(vecs, dilation):
     return vecs[keep]
 
 
+# peak ~3x the candidate array (coords + candidates@Zp + their product held at once)
+_PEAK_OVERHEAD = 3
+
 def predict_box_gb(dilation):
     new_basis = lll_reduce_wrt_metric(Z)
     Zp = new_basis @ Z @ new_basis.T
     bounds = np.rint(2 * np.sqrt(Q * dilation / np.diagonal(Zp))).astype(int)
     elems = float(np.prod(2.0 * bounds + 1))
-    return elems * len(Z) * 8 / 1e9
+    return _PEAK_OVERHEAD * elems * len(Z) * 8 / 1e9
 
 
 # ---------------------------------------------------------------------------

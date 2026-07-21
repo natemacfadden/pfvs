@@ -89,28 +89,28 @@ Both take the same ellipsoid (Zp-style) approach and return identical results; t
 
 Measured on the $h^{1,1}=7$ "Manwe" example (identical inputs, identical output, same cuts), on one CPU (Intel Core Ultra 7 270K, 24 cores, 30 GB), three runs each, reported as mean $\pm$ std:
 
-| dilation $p_{denom}$ | C (ms) | dSv1 (ms) | speedup | dSv1 memory | box (analytic) |
+| dilation $p_{denom}$ | C (ms) | dSv1 (ms) | speedup | dSv1 memory | box (est.) |
 |---:|---:|---:|---:|---:|---:|
-| 1   | 0.005 $\pm$ 0.000 | 0.29 $\pm$ 0.03 | 53x      | 0.3 MB  | 0.4 MB |
-| 2   | 0.006 $\pm$ 0.000 | 0.91 $\pm$ 0.02 | 150x     | 3.6 MB  | 1 MB   |
-| 5   | 0.006 $\pm$ 0.000 | 11.3 $\pm$ 5.6  | 1,921x   | 38 MB   | 10 MB  |
-| 10  | 0.007 $\pm$ 0.000 | 84 $\pm$ 4      | 12,028x  | 354 MB  | 110 MB |
-| 15  | 0.011 $\pm$ 0.000 | 293 $\pm$ 3     | 26,699x  | 1.24 GB | 427 MB |
-| 20  | 0.014 $\pm$ 0.000 | 711 $\pm$ 4     | 49,282x  | 3.02 GB | 1.05 GB |
-| 25  | 0.018 $\pm$ 0.001 | 1,545 $\pm$ 46  | 86,820x  | 6.4 GB  | 2.23 GB |
-| 30  | 0.022 $\pm$ 0.002 | 6,131 $\pm$ 159 | 281,495x | 13.4 GB | 4.69 GB |
-| 40  | 0.031 $\pm$ 0.004 | out of memory   | --       | --      | 8.3 GB |
-| 60  | 0.049 $\pm$ 0.001 | out of memory   | --       | --      | 40 GB  |
-| 100 | 0.094 $\pm$ 0.001 | out of memory   | --       | --      | 220 GB |
+| 1   | 0.005 $\pm$ 0.000 | 0.29 $\pm$ 0.03 | 53x      | 0.3 MB  | 1 MB    |
+| 2   | 0.006 $\pm$ 0.000 | 0.91 $\pm$ 0.02 | 150x     | 3.6 MB  | 3 MB    |
+| 5   | 0.006 $\pm$ 0.000 | 11.3 $\pm$ 5.6  | 1,921x   | 38 MB   | 30 MB   |
+| 10  | 0.007 $\pm$ 0.000 | 84 $\pm$ 4      | 12,028x  | 354 MB  | 330 MB  |
+| 15  | 0.011 $\pm$ 0.000 | 293 $\pm$ 3     | 26,699x  | 1.24 GB | 1.28 GB |
+| 20  | 0.014 $\pm$ 0.000 | 711 $\pm$ 4     | 49,282x  | 3.02 GB | 3.14 GB |
+| 25  | 0.018 $\pm$ 0.001 | 1,545 $\pm$ 46  | 86,820x  | 6.4 GB  | 6.68 GB |
+| 30  | 0.022 $\pm$ 0.002 | 6,131 $\pm$ 159 | 281,495x | 13.4 GB | 14.1 GB |
+| 40  | 0.031 $\pm$ 0.004 | out of memory   | --       | --      | 24.9 GB |
+| 60  | 0.049 $\pm$ 0.001 | out of memory   | --       | --      | 120 GB  |
+| 100 | 0.094 $\pm$ 0.001 | out of memory   | --       | --      | 659 GB  |
 
-- The new kernel's working set is just its output and the recursion stack, below RSS resolution here (at most two output vectors), so its speedup keeps growing with dilation while dSv1 follows its box. dSv1's measured memory tracks the analytic $(Q\cdot p_{denom})^{h^{1,1}/2}$ estimate at about 2.9x, since the box build also allocates the quadratic-form intermediate and a copy, not just the candidate array.
-- By $p_{denom}=30$ the box is 13.4 GB (measured). Past that the harness skips dSv1 rather than risk exhausting the 30 GB machine: the budget guard triggers once the analytic box crosses its threshold, which is why those rows show only "box (analytic)". The C kernel keeps running at flat cost through $p_{denom}=100$ (0.09 ms), where dSv1's box would need hundreds of GB.
+- The new kernel's working set is just its output and the recursion stack, below RSS resolution here (at most two output vectors), so its speedup keeps growing with dilation while dSv1 follows its box. The "box (est.)" column is $3\times$ the candidate array $(Q\cdot p_{denom})^{h^{1,1}/2}$: the vectorized ellipsoid test holds three same-size arrays at once (the integer coordinate grid, the float `candidates @ Zp` product, and their elementwise product) before the sum reduces them. Measured memory matches this estimate from $p_{denom}\gtrsim 5$; below that the box is smaller than page/pool granularity and RSS reads under it.
+- By $p_{denom}=30$ the box is 13.4 GB (measured). Past that the harness skips dSv1 rather than risk exhausting the 30 GB machine: the budget guard triggers once the estimated box crosses its threshold, which is why those rows show only "box (est.)". The C kernel keeps running at flat cost through $p_{denom}=100$ (0.09 ms), where dSv1's box would need hundreds of GB.
 
 Notes:
 
 - Results are three runs on one machine, reported as mean $\pm$ std. dSv1 timings under about 10 ms have larger relative spread from system noise on short measurements (for example $p_{denom}=5$); the larger-dilation figures are tight.
 - Memory is peak resident set above the run's baseline (Linux VmHWM, reset per measurement so a fork-inherited high-water mark cannot leak in). The C kernel also reserves an untouched `max_N_out` output buffer that never becomes resident and is not counted.
-- The "box (analytic)" column is the candidate-box footprint $(Q\cdot p_{denom})^{h^{1,1}/2}$ (`predict_box_gb`). The harness's budget guard uses it to skip runs that would exhaust memory, so the high-dilation rows read "out of memory" rather than a measured number.
+- The "box (est.)" column is `predict_box_gb`: $3\times$ the candidate-box footprint $(Q\cdot p_{denom})^{h^{1,1}/2}$. The harness's budget guard uses it to skip runs that would exhaust memory, so the high-dilation rows read "out of memory" rather than a measured number.
 - The dSv1 baseline is a faithful reimplementation: verbatim `points_in_ellipsoid` plus a reimplemented metric-LLL, giving identical output and box memory, with `maximum_box_size` set to infinity (else it truncates) and `fluxbound=2`.
 - Both methods are timed on enumeration only: the C kernel receives its factorization ($U$) precomputed, so the baseline's metric-LLL is likewise hoisted out of the timed region (reported separately as `prep_lll_s`).
 
