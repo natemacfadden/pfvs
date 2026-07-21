@@ -173,8 +173,38 @@ def run_c(dilation):
     out, _, _ = conipfv_kernel(U, Q, dilation, LINVEC, LINMIN, H, MAX_N_OUT)
     return out
 
+# fairness: the C kernel receives its factorization (U) precomputed, so the
+# baseline gets the same treatment -- the metric-LLL is hoisted out of the
+# timed region and its one-time cost is reported separately as prep_lll_s.
+# `points_in_ellipsoid` above stays verbatim; the prepped path below is
+# identical except the reduction is done once, outside the timing loop.
+_OLD_PREP = None
+
+def prepare_old():
+    """One-time dSv1 prep (PD check + metric-LLL); returns its wall time."""
+    global _OLD_PREP
+    t0 = time.perf_counter()
+    assert min(np.linalg.eig(Z)[0]) >= 1e-3
+    new_basis = lll_reduce_wrt_metric(Z)
+    Zp = new_basis @ Z @ new_basis.T
+    _OLD_PREP = (new_basis, Zp)
+    return time.perf_counter() - t0
+
+def points_in_ellipsoid_prepped(Qbound, fluxbound=2, maximum_box_size=np.inf):
+    new_basis, Zp = _OLD_PREP
+    dimension = len(Z)
+    bounds = np.rint(fluxbound * np.sqrt(Qbound / np.diagonal(Zp))).astype(int)
+    box_vol = np.prod(2 * bounds)
+    if box_vol > maximum_box_size:
+        bounds = np.rint(bounds * (maximum_box_size / box_vol) ** (1 / dimension)).astype(int)
+    candidates = np.indices(bounds * 2 + 1).reshape(len(bounds), -1).T - bounds
+    solsp = candidates[np.sum(candidates * (candidates @ Zp.T), axis=1) <= Qbound]
+    return solsp @ new_basis
+
 def run_old(dilation):
-    return apply_cuts(points_in_ellipsoid(Z, Q * dilation), dilation)
+    if _OLD_PREP is None:
+        prepare_old()
+    return apply_cuts(points_in_ellipsoid_prepped(Q * dilation), dilation)
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +212,30 @@ def run_old(dilation):
 # ---------------------------------------------------------------------------
 _RSS_SCALE = 1.0 if platform.system() == "Darwin" else 1024.0  # bytes vs kB
 def _peak_rss_mb():
+    """Peak resident set, in MB. Prefer Linux VmHWM (resettable, see below);
+    fall back to ru_maxrss elsewhere."""
+    try:
+        for line in open("/proc/self/status"):
+            if line.startswith("VmHWM:"):
+                return int(line.split()[1]) / 1024.0          # kB -> MB
+    except OSError:
+        pass
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * _RSS_SCALE / 1e6
+
+def _reset_peak_rss():
+    """Reset the process's peak-RSS high-water mark to its current RSS.
+
+    ru_maxrss / VmHWM are monotonic high-water marks, and fork() copies the
+    parent's mark into the child -- so a measurement child forked after the
+    parent built the 3 GB box would inherit a ~3 GB baseline and its box delta
+    would collapse to ~0. Writing '5' to /proc/self/clear_refs resets VmHWM to
+    the current RSS (Linux >= 4.0), making each measurement fork-immune. No-op
+    (best effort) where unsupported."""
+    try:
+        with open("/proc/self/clear_refs", "w") as f:
+            f.write("5\n")
+    except OSError:
+        pass
 
 def _measure(method, dilation, repeats):
     result = {"method": method, "dilation": dilation}
@@ -194,11 +247,13 @@ def _measure(method, dilation, repeats):
         if gb > BUDGET_GB:
             result["status"] = "skipped_oom"
             return result
+        result["prep_lll_s"] = round(prepare_old(), 6)
     else:
         # warm up the new kernels so the one-time jit-compile / extension-init
         # cost lands in the baseline, not in the per-call memory delta
         runner(dilation)
 
+    _reset_peak_rss()          # clear any fork-inherited high-water mark first
     base = _peak_rss_mb()
     times = []
     for _ in range(repeats):
@@ -219,7 +274,7 @@ def _measure(method, dilation, repeats):
 # ---------------------------------------------------------------------------
 # driver
 # ---------------------------------------------------------------------------
-DILATIONS = [1, 2, 5, 10, 15, 20]
+DILATIONS = [1, 2, 5, 10, 15, 20, 25, 30, 40, 60, 100]
 
 def _spawn(method, dilation, repeats):
     p = subprocess.run([sys.executable, os.path.abspath(__file__),
