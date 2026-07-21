@@ -438,20 +438,21 @@ def fp_iterative_njit(
             lo = int(np.ceil(( -R - ci_offsets[i]) * L_diag_inv[i] - eps))
             hi = int(np.floor(( R - ci_offsets[i]) * L_diag_inv[i] + eps))
 
-            # values of veci to iterate over
-            k = 0
-            for v in range(lo,hi+1):
-                stack_vals[sp,k] = v
-                k += 1
+            # number of veci values to iterate over
+            k = hi - lo + 1
 
             # kill node if no valid veci values
-            if k == 0:
+            if k <= 0:
                 sp -= 1
                 continue
             # kill execution if there are too many values
             elif k>COORD_BUFF_SIZE:
                 msg = f"Assumed |hi-lo| <= {COORD_BUFF_SIZE}, but got {k}"
                 raise ValueError(msg)
+
+            # values of veci to iterate over
+            for j in range(k):
+                stack_vals[sp,j] = lo + j
 
             # yes valid veci values
             stack_val_len[sp] = k
