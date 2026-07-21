@@ -106,15 +106,11 @@ def pfv_kernel(U,
     for i in range(h_rows):
         for j in range(dim):
             mpz_init(H_gmp[i * dim + j])
-
-            # Get Python int
             val = H_obj[i, j]
-
-            # Convert to GMP
             if abs(val) < 2**63:
                 mpz_set_si(H_gmp[i * dim + j], <long> val)
             else:
-                # For larger values, convert via bytes
+                # too big for signed long -- import |val| via bytes, negate after
                 is_negative = (val < 0)
                 abs_val = abs(val)
 

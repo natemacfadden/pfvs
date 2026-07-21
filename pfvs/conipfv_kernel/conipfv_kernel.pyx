@@ -96,8 +96,7 @@ def conipfv_kernel(U,
             -5: no vectors found
             -2: exceeded max_N_out outputs
     """
-    # convert inputs to C-contiguous arrays with correct dtype
-    # this ensures we always have the right memory layout
+    # C-contiguous copies with the dtypes the C kernel expects
     cdef double[:, ::1] U_c = np.ascontiguousarray(U, dtype=np.float64)
     cdef int[::1] linvec_c = np.ascontiguousarray(linvec, dtype=np.int32)
 
@@ -118,17 +117,11 @@ def conipfv_kernel(U,
     for i in range(dim):
         for j in range(dim):
             mpz_init(H_gmp[i * dim + j])
-
-            # Get Python int
             val = H_obj[i, j]
-
-            # Convert to GMP
-            # For values that fit in unsigned long
             if abs(val) < 2**63:
                 mpz_set_si(H_gmp[i * dim + j], <long> val)
             else:
-                # For larger values, convert via bytes
-                # Handle sign separately
+                # too big for signed long -- import |val| via bytes, negate after
                 is_negative = (val < 0)
                 abs_val = abs(val)
 
