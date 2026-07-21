@@ -116,7 +116,7 @@ Notes:
 
 Reproduce (self-contained, needs only this repo):
 ```bash
-python benchmarks/benchmark_dSv1_vs_new.py
+python benchmarks/benchmark_dSv1_vs_coniZpM.py
 ```
 
 ## Organization
@@ -133,7 +133,7 @@ pfvs/
 │   ├── pvectors.py        # p-vector generation
 │   └── util.py            # shared helpers (+ njit kernels)
 ├── tests/                 # test_manwe.py, test_conipfv_kernel.py, test_util.py
-├── benchmarks/            # benchmark_dSv1_vs_new.py (headline), benchmark_conipfv.py
+├── benchmarks/            # benchmark_dSv1_vs_coniZpM.py (headline), benchmark_conipfv.py
 ├── demo_notebooks/        # manwe_demo.ipynb (self-contained)
 ├── environment.yml
 ├── pyproject.toml
