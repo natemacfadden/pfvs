@@ -180,7 +180,7 @@ class PFV():
            pass
         else:
             #msg += f"    cy      = Polytope({verts}).triangulate(heights={heights}).cy()\n"
-            msg += f"cy      = Polytope(verts).triangulate(heights=heights).cy()\n"
+            msg += "cy      = Polytope(verts).triangulate(heights=heights).cy()\n"
         if self.coni:
             msg +=  "### for (original-basis) conifold curve\n"
             msg += f"q = {self.coni_curve.tolist()}\n"
@@ -907,7 +907,7 @@ class PFV():
         info. At higher verbosity, dumps the full series and plots corrections.
         """
         # generic info
-        print(f"Dumping info for:\n")
+        print("Dumping info for:\n")
         print(self)
         print()
 
@@ -967,7 +967,7 @@ class PFV():
 
         print( "Series:")
         print( "-------")
-        print(f"The two leading terms have p-graded degrees: ", end="")
+        print("The two leading terms have p-graded degrees: ", end="")
         print(f"{deg0} and {deg1}")
         print(f"Resultant W0 exponent is {deg1}/({deg1}-{deg0})=", end="")
         print(f"{deg1/(deg1-deg0)}...")

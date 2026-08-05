@@ -25,7 +25,6 @@ import functools
 import math
 from numba import njit
 import numpy as np
-import scipy as sp
 
 from numpy.typing import ArrayLike
 
