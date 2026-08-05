@@ -141,3 +141,7 @@ pfvs/
 ```
 
 *: This C code was originally the bottleneck/core of the problem, hence the name 'kernel'. In the current state, unless one is studying large $p_{denom}$, these kernels are a relatively small fraction of the total computation.
+
+## License
+
+[GPLv3 or later](LICENSE). Copyright (c) 2026 Nate MacFadden.
