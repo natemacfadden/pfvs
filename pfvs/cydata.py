@@ -248,8 +248,8 @@ class CYData:
         defined componentwise as
         \\begin{equation}
             \\tilde{a}_{ij} = \\begin{cases}
-                kappa_{ijj} & i\\geq j\\
-                kappa_{iij} & i < j.
+                kappa_{iij} & i\\geq j\\
+                kappa_{ijj} & i < j.
             \\end{cases}
         \\end{equation}
         See, e.g., eq 2.52 from https://arxiv.org/pdf/2406.13751.
