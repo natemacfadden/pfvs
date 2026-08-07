@@ -20,7 +20,7 @@ We will also define two auxiliary variables from these fixed data
 - the tadpole $Q = h^{1,1} + h^{2,1} + 2 \in\mathbb{Z}$ and
 - the 'a-matrix' $\tilde{a}\in\frac{1}{2}\mathbb{Z}^{h^{1,1},h^{1,1}}$ given by
 
-$$\tilde{a}\_{ij} = \frac{1}{2}\begin{cases} \kappa_{ijj} & i\geq j\\\\ \kappa_{iij} & \text{o.w.} \end{cases}$$
+$$\tilde{a}\_{ij} = \frac{1}{2}\begin{cases} \kappa_{iij} & i\geq j\\\\ \kappa_{ijj} & \text{o.w.} \end{cases}$$
 
 All of the above is fixed and (relatively cheaply) computable using software like [CYTools](https://github.com/LiamMcAllisterGroup/cytools). We now define, in terms of these variables, what a PFV and what a coniPFV is.
 
