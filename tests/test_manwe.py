@@ -15,6 +15,7 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # =============================================================================
 
+import collections
 import pytest
 import numpy as np
 from pathlib import Path
@@ -249,6 +250,19 @@ def manwe(coni_data):
     pfv.gvs = np.loadtxt(GVS_PATH, dtype=int, delimiter=',')
     return pfv
 
+@pytest.fixture(scope="module")
+def coni_scan(coni_data):
+    """coniZpM over 10k p-vectors (shared - the scan is the slow part)."""
+    return coniZpM(
+        data=coni_data,
+        ps=pvecs(coni_data, min_N_pts=10_000),
+        M0min=13,
+        ellipsoid_dilation=50,
+        max_N_pfvs=10_000_000,
+        n_jobs=1,
+        verbosity=0,
+    )
+
 
 # =============================================================================
 # Tests
@@ -269,19 +283,23 @@ def test_coniZpM_finds_manwe(coni_data):
 
     assert any(np.all(K == K_MANWE) and np.all(M == M_MANWE) for K, M in zip(Ks, Ms))
 
-def test_coniZpM_pfv_count(coni_data):
+def test_coniZpM_pfv_count(coni_scan):
     """Scan over 10k p-vectors."""
-    Ks, Ms = coniZpM(
-        data=coni_data,
-        ps=pvecs(coni_data, min_N_pts=10_000),
-        M0min=13,
-        ellipsoid_dilation=50,
-        max_N_pfvs=10_000_000,
-        n_jobs=1,
-        verbosity=0,
-    )
+    Ks, Ms = coni_scan
 
-    assert len(Ks) == 110
+    assert len(Ks) == 111
+
+def test_coniZpM_kperp_gcds(coni_scan):
+    """Kperp need not be primitive.
+
+    Kperp_gcd is bounded by Kperp_gcd < Q*K_gcd/Qs, not fixed to 1. Exactly one
+    PFV in this scan has GCD(K[1:]) = 2; a bare count assertion does not notice
+    if it goes missing, so pin the multiset.
+    """
+    Ks, Ms = coni_scan
+    gcds = np.gcd.reduce(np.asarray(Ks)[:,1:], axis=1)
+
+    assert sorted(collections.Counter(gcds.tolist()).items()) == [(1, 110), (2, 1)]
 
 def test_manwe_tau0(manwe):
     """tau0 matches the value computed from degree-10 GVs."""
