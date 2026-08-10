@@ -397,7 +397,6 @@ def coniZpM(
     ps: ArrayLike,
     Q: int | None = None,
     M0min: int = 13,
-    max_Kperp_gcd: int = 1,
     ellipsoid_dilation: float = 1, # typically want >=1
     # algorithm selection
     use_gcd_lattice: bool = False,
@@ -444,10 +443,6 @@ def coniZpM(
         provided, set to h11+h21+4.
     M0min : integer, optional
         Only return PFVs with M[0] >= M0min. Defaults to 13 to match physics.
-    max_Kperp_gcd : integer, optional
-        When solving for PFVs, one hardcodes the GCD of Kperp (since we
-        previously cleared the GCD, making Kperp primitive). Allow GCDs up to
-        this value. **Not well tested - defaults to 1.** Leave at default.
     ellipsoid_dilation : float, optional
         The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
         Empirically, runtime scales linearly with this value. Defaults to 1.
@@ -510,9 +505,6 @@ def coniZpM(
             n_jobs = 1
     if n_jobs == -1:
         n_jobs = 2*os.cpu_count()
-
-    if max_Kperp_gcd > 1:
-        warnings.warn("max_Kperp_gcd > 1 is not well-tested", stacklevel=2)
 
     # misc (left for future debugging)
     only_positive_news = False
@@ -717,10 +709,40 @@ def coniZpM(
                 Ms = np.zeros((h11,0), dtype=np.int32)
 
                 if Kperps.shape[1]:
-                    for Kperp_gcd in range(1,max_Kperp_gcd+1):
+                    # max Kperp_gcd
+                    # -------------
+                    # tadpole:  K0 = (Kperp_gcd*rawQperp - Q)/M0
+                    # K'>0:     K0 <  Kperp_gcd*natural_K0/K_gcd
+                    # eliminating K0 and using
+                    # rawQperp*K_gcd - M0*natural_K0 = Qs gives
+                    #     Kperp_gcd < Q*K_gcd/Qs
+                    gmax = int(((Q*K_gcds - 1)//np.maximum(Qs, 1)).max())
+
+                    for Kperp_gcd in range(1, gmax+1):
+                        # gmax is the largest endpoint over all candidates, so
+                        # drop those already past their own
+                        gmask = Qs*Kperp_gcd < Q*K_gcds
+                        if gmask.all():
+                            # typical at Kperp_gcd=1 - don't copy
+                            g_rawQperps   = rawQperps
+                            g_M0s         = M0s
+                            g_natural_K0s = natural_K0s
+                            g_K_gcds      = K_gcds
+                            g_Kperps      = Kperps
+                            g_cs          = cs
+                        elif not gmask.any():
+                            continue
+                        else:
+                            g_rawQperps   = rawQperps[gmask]
+                            g_M0s         = M0s[gmask]
+                            g_natural_K0s = natural_K0s[gmask]
+                            g_K_gcds      = K_gcds[gmask]
+                            g_Kperps      = Kperps[:,gmask]
+                            g_cs          = cs[:,gmask]
+
                         # ranges for K0 to exactly hit tadpole
                         # ------------------------------------
-                        Qperps = Kperp_gcd*rawQperps
+                        Qperps = Kperp_gcd*g_rawQperps
                         # Q             = Qperp - M[0]*K[0]
                         # Qmin         <= Qperp - M[0]*K[0] <= Qmax
                         # Qmin - Qperp <=       - M[0]*K[0] <= Qmax - Qperp
@@ -728,8 +750,8 @@ def coniZpM(
                         # if M[0] > 0:
                         #    (Qperp - Qmax)/M[0] <= K[0] <= (Qperp - Qmin)/M[0]
                         if M0min > 0:
-                            lo = np.ceil(( Qperps - Q)/M0s).astype(int)
-                            up = np.floor((Qperps - Q)/M0s).astype(int)
+                            lo = np.ceil(( Qperps - Q)/g_M0s).astype(int)
+                            up = np.floor((Qperps - Q)/g_M0s).astype(int)
                         else:
                             raise ValueError
 
@@ -739,7 +761,7 @@ def coniZpM(
                         # K'     = -K[0] + (natural K)[0] * Kperp_gcd/K_gcds
                         # K' > 0 => K[0] < (natural K)[0] * Kperp_gcd/K_gcds
                         # (subtract 1e-4 to enforce K'>0, not K'>=0)
-                        tmp = np.floor((natural_K0s*Kperp_gcd-1e-4)/K_gcds)
+                        tmp = np.floor((g_natural_K0s*Kperp_gcd-1e-4)/g_K_gcds)
                         tmp = tmp.astype(int)
                         up  = np.minimum(up, tmp.astype(int))
 
@@ -771,16 +793,16 @@ def coniZpM(
                         # prepend the K0s to the Ks
                         # -------------------------
                         new_Ks = np.repeat(
-                            Kperp_gcd*Kperps[1:,mask],
+                            Kperp_gcd*g_Kperps[1:,mask],
                             num_K0s_perM,
                             axis=1
                         )
                         new_Ks = np.vstack([K0s, new_Ks])
 
                         # get the Ms
-                        Mperps = Binter[1:]@cs[:,mask]
+                        Mperps = Binter[1:]@g_cs[:,mask]
                         new_M0s    = np.repeat(
-                            M0s[mask].reshape(1,-1),
+                            g_M0s[mask].reshape(1,-1),
                             num_K0s_perM,
                             axis=1
                         )
