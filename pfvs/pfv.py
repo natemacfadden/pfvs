@@ -189,6 +189,10 @@ class PFV():
         msg +=  "### with fluxes\n"
         msg += f"K = {self.K.tolist()}\n"
         msg += f"M = {self.M.tolist()}\n"
+        if not self.coni:
+            f = self.f
+            msg += f"f = {f.tolist() if f is not None else None}\n"
+            msg += f"h = {self.h.tolist()}\n"
         msg += f"#p = {self.pgrading.tolist()}/{self._p_denom}\n"
         Q = -np.dot(self.K,self.M)
         msg += f"#Q = {Q} = h11 + h21 + {Q-self.h11-self.h21}"
@@ -278,6 +282,33 @@ class PFV():
         The M-vector
         """
         return self._M.copy()
+
+    @property
+    def f(self) -> np.ndarray | None:
+        """
+        The F3 flux vector, f = ((b.M)/24, (a@M)/2, 0, M), of length 2*(h11+1).
+
+        Recall `self.b` is 24x and `self.a` is 2x the prepotential coefficients,
+        so the two divisions above are exact iff M satisfies the congruences.
+        Returns None if either division is non-integral. Non-coni only.
+        """
+        if self.coni:
+            raise NotImplementedError("f is only implemented for non-coni PFVs")
+        f0 = np.dot(self.b, self.M)
+        fa = self.a@self.M
+        if (f0 % 24) or (fa % 2).any():
+            return None
+        return np.concatenate([[f0//24], fa//2, [0], self.M])
+
+    @property
+    def h(self) -> np.ndarray:
+        """
+        The H3 flux vector, h = (0, K, 0, ..., 0), of length 2*(h11+1).
+        Non-coni only.
+        """
+        if self.coni:
+            raise NotImplementedError("h is only implemented for non-coni PFVs")
+        return np.concatenate([[0], self.K, np.zeros(self.h11+1, dtype=int)])
 
     # search related properties
     # -------------------------
@@ -620,7 +651,7 @@ class PFV():
         if self.coni:
             return min(self.H@self.pgrading[1:])>0.5
         else:
-            return min(self.H@self.p)>0.5
+            return min(self.H@self.pgrading)>0.5
 
     def check_NpK(self, tol: float = 1e-4) -> bool:
         """Check that N @ p = K. Requires `check_Ninvertible` to pass.

@@ -358,7 +358,7 @@ def ZpM(
     Qmin: int = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
     # algorithm selection
-    use_c_kernel: bool = False,
+    use_c_kernel: bool = True,
     n_jobs: int = -1,
     # misc
     extra_checks: bool = False,
@@ -395,9 +395,10 @@ def ZpM(
         The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
         Empirically, runtime scales linearly with this value. Defaults to 1.
     use_c_kernel : bool, optional
-        Enumeration backend. False (default) uses `util.fp_iterative_njit`
-        (Numba, no GCD pruning). True uses `pfv_kernel` (C, with GCD pruning;
-        faster for dilated ellipsoids). Both produce the same output.
+        Enumeration backend. True (default) uses `pfv_kernel` (C, with GCD
+        pruning; faster for dilated ellipsoids). False uses
+        `util.fp_iterative_njit` (Numba, no GCD pruning). Both produce the
+        same output.
     n_jobs : int, optional
         How many jobs to spawn for per-p-vector parallelism. Defaults to twice
         the CPU count.

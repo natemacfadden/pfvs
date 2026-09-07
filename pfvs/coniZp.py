@@ -232,7 +232,10 @@ def coni_M_ellipsoid(p: ArrayLike,
         if np.allclose(mat, np.round(mat)):
             mat = np.rint(mat).astype(int)
         else:
-            raise ValueError
+            raise ValueError(
+                "ellipsoid matrix -Binter.T @ Z @ Binter is not integral; "
+                f"max deviation {np.abs(mat - np.round(mat)).max():.3g}"
+            )
     else:
         mat = np.rint(mat).astype(int)
 
@@ -368,7 +371,10 @@ def _Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
             first_null_ind = j
             break
     if first_null_ind is None:
-        raise ValueError
+        raise ValueError(
+            f"no all-zero column in H ({H.nrows()}x{H.ncols()}), so the null "
+            "lattice is empty"
+        )
 
     # extract the data
     null_fl = flint.fmpz_mat(T.nrows()//2, H.ncols()-first_null_ind)
@@ -753,7 +759,9 @@ def coniZpM(
                             lo = np.ceil(( Qperps - Q)/g_M0s).astype(int)
                             up = np.floor((Qperps - Q)/g_M0s).astype(int)
                         else:
-                            raise ValueError
+                            raise ValueError(
+                                f"M0min must be positive; got {M0min}"
+                            )
 
                         # ranges for K0 to give K'>0
                         # --------------------------
