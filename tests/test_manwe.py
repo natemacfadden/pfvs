@@ -15,6 +15,8 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 # =============================================================================
 
+import warnings
+
 import pytest
 import numpy as np
 from pathlib import Path
@@ -310,3 +312,44 @@ def test_manwe_gvs_match_cytools():
         return arr[np.lexsort(arr[:, :-1].T[::-1])]
 
     np.testing.assert_array_equal(sort_coo(gvs_cytools), sort_coo(gvs_saved))
+
+
+# =============================================================================
+# Non-coni ZpM: three independent routes must agree
+# =============================================================================
+
+@pytest.mark.parametrize("dilation", [1, 3])
+def test_ZpM_routes_agree(dilation):
+    """
+    Non-coni Manwe: (Python lattice, numba enumerator), (Python lattice, C
+    kernel) and (C lattice, C kernel) find the same PFV set.
+    """
+    from pfvs import ZpM
+    data = CYData(h21=H21, kappa=KAPPA, c2=C2, H=H)          # non-coni
+    ps = pvecs(data, min_N_pts=150)
+
+    def as_set(KM):
+        return {(tuple(map(int, k)), tuple(map(int, m))) for k, m in zip(*KM)}
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ref = as_set(ZpM(data, ps, ellipsoid_dilation=dilation, n_jobs=1,
+                         use_c_kernel=False, use_c_lattice=False))
+        ck = as_set(ZpM(data, ps, ellipsoid_dilation=dilation, n_jobs=1,
+                        use_c_kernel=True, use_c_lattice=False))
+        cl = as_set(ZpM(data, ps, ellipsoid_dilation=dilation, n_jobs=1,
+                        use_c_kernel=True, use_c_lattice=True))
+    assert len(ref) > 0
+    assert ck == ref
+    assert cl == ref
+
+
+def test_coniZpM_c_lattice_matches_python_lattice(coni_data):
+    """The C lattice setup finds the same coni-PFVs as the Python one."""
+    ps = pvecs(coni_data, min_N_pts=2_000)
+    kw = dict(M0min=13, ellipsoid_dilation=30, max_N_pfvs=10_000_000, n_jobs=1)
+    a = coniZpM(data=coni_data, ps=ps, use_c_lattice=True, **kw)
+    b = coniZpM(data=coni_data, ps=ps, use_c_lattice=False, **kw)
+    sa = {(tuple(map(int, k)), tuple(map(int, m))) for k, m in zip(*a)}
+    sb = {(tuple(map(int, k)), tuple(map(int, m))) for k, m in zip(*b)}
+    assert len(sa) > 0 and sa == sb

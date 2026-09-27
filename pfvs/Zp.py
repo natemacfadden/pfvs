@@ -35,6 +35,7 @@ from numpy.typing import ArrayLike
 from . import util
 from .cydata import CYData
 from .pfv_kernel import pfv_kernel
+from .fp_kernel.fp_kernel import _lattice_build
 
 # Zp helpers
 # ==========
@@ -374,6 +375,7 @@ def ZpM(
     ellipsoid_dilation: float = 1, # typically want >=1
     # algorithm selection
     use_c_kernel: bool = False,
+    use_c_lattice: bool = True,
     n_jobs: int = -1,
     # misc
     extra_checks: bool = False,
@@ -409,6 +411,13 @@ def ZpM(
     ellipsoid_dilation : float, optional
         The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
         Empirically, runtime scales linearly with this value. Defaults to 1.
+    use_c_lattice : bool, optional
+        Whether to build each p-vector's lattice data (Binter, the ellipsoid
+        and, with use_c_kernel, the H-matrix) in C (fast, exact, with
+        automatic fallback to the Python path on overflow). The C path picks
+        a different, equally valid LLL-reduced basis, so it finds the same
+        PFVs but may list them in a different order. Set False to reproduce
+        the previous order exactly. Defaults to True.
     use_c_kernel : bool, optional
         Enumeration backend. False (default) uses `util.fp_iterative_njit`
         (Numba, no GCD pruning). True uses `pfv_kernel` (C, with GCD pruning;
@@ -497,24 +506,31 @@ def ZpM(
         maxes  = (util.absmax(kappa), util.absmax(Mbasis))
 
         for p in p_chunk:
-            try:
-                mat, Z, Binter = M_ellipsoid(
-                    p,
-                    kappa=kappa,
-                    Mbasis=Mbasis,
-                    extra_lll_reduction=extra_lll_reduction,
-                    extra_checks=extra_checks,
-                    _maxes=maxes
-                )
-            except OverflowError as e:
-                raise util.IncompleteSearchError(f"p={p.tolist()}: {e}") from e
+            # C path (status -15: all but H built; other nonzero: fall back)
+            H_pre, st = None, -1
+            if use_c_lattice:
+                st, Z, Binter, _, mat, H_pre = _lattice_build(
+                    kappa, Mbasis, np.asarray(p, dtype=np.int64), False,
+                    extra_lll_reduction)
+            if st not in (0, -15):
+                try:
+                    mat, Z, Binter = M_ellipsoid(
+                        p,
+                        kappa=kappa,
+                        Mbasis=Mbasis,
+                        extra_lll_reduction=extra_lll_reduction,
+                        extra_checks=extra_checks,
+                        _maxes=maxes
+                    )
+                except OverflowError as e:
+                    raise util.IncompleteSearchError(f"p={p.tolist()}: {e}") from e
 
             # the core enumeration
             # --------------------
             if use_c_kernel:
                 ZBinter = np.ascontiguousarray(util.exact_matmul(Z, Binter))
                 try:
-                    H = H_matrix(ZBinter)
+                    H = H_pre if H_pre is not None else H_matrix(ZBinter)
                 except Exception as e:
                     raise util.IncompleteSearchError(f"p={p.tolist()}: H_matrix failed ({e})") from e
                 # U is unused when mat= is given (the kernel factors the
