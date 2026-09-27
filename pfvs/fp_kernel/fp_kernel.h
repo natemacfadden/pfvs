@@ -555,6 +555,101 @@ static int fpk_sparse_candidates(
     return cnt;
 }
 
+
+// Fast exact factorization (int128)
+// ---------------------------------
+// The same fraction-free elimination as fpk_factor_exact, in int128. The
+// minors fit int128 for the matrices that occur, but the products in a
+// Bareiss step, p_k A_ij - A_ik A_kj, do not; the step divides them exactly
+// by p_{k-1}, though. So the numerator is formed mod 2^128 (wrapping), and
+// the exact quotient recovered as (N >> s) * odd(p_{k-1})^{-1} mod 2^(128-s),
+// where 2^s || p_{k-1} -- valid whenever |quotient| < 2^(127-s), which a
+// double estimate with a rigorous error bound checks first. Anything that
+// fails this falls back to the GMP routine. Also returns, for the M0 bound,
+// |V|-sums (sum_k |R_kj z_k|) so the bound stays rigorous under
+// cancellation, since here V is accumulated in floating point from exact
+// integer ratios.
+#define FPK_FAST_FACTOR_MAX_DIM 32
+
+static inline fpk_u128 fpk_inv2k(fpk_u128 o)      // o odd: o^{-1} mod 2^128
+{
+    fpk_u128 x = o;                              // correct to 3 bits
+    for (int i = 0; i < 6; ++i) x *= (fpk_u128)2 - o * x;
+    return x;
+}
+
+// q = (a b - c d) / e exactly (e > 0 divides a b - c d); 0 on success
+static inline int fpk_bareiss_div(fpk_i128 a, fpk_i128 b, fpk_i128 c, fpk_i128 d,
+                                  fpk_i128 e, fpk_i128 *q)
+{
+    double ab = (double)a * (double)b, cd = (double)c * (double)d, ed = (double)e;
+    double qf = (ab - cd) / ed;
+    double qerr = 1e-15 * (fabs(ab) + fabs(cd)) / ed + 2.0;
+    int s = fpk_ctz128((fpk_u128)e);
+    if (s > 100 || fabs(qf) + qerr >= ldexp(1.0, 125 - s)) return -1;
+    fpk_u128 N = (fpk_u128)a * (fpk_u128)b - (fpk_u128)c * (fpk_u128)d;
+    fpk_u128 Q = (N >> s) * fpk_inv2k((fpk_u128)e >> s);
+    if (s > 0) {                                 // keep 128-s bits, sign-extend
+        fpk_u128 mask = ((fpk_u128)1 << (128 - s)) - 1;
+        Q &= mask;
+        if ((Q >> (127 - s)) & 1) Q |= ~mask;
+    }
+    *q = (fpk_i128)Q;
+    return 0;
+}
+
+static int fpk_factor_fast(const int64_t *mat, int dim, double *U,
+                           const int64_t *linvec, double *m0N, double *m0V,
+                           double *m0Va)
+{
+    enum { MD = FPK_FAST_FACTOR_MAX_DIM };
+    if (dim > MD) return -1;
+    fpk_i128 A[MD][MD + 1];                      // last column: linvec
+    int na = dim + (linvec != NULL);
+    for (int i = 0; i < dim; ++i) {
+        for (int j = 0; j < dim; ++j) A[i][j] = mat[i * dim + j];
+        if (linvec) A[i][dim] = linvec[i];
+    }
+    fpk_i128 prev = 1;
+    double N = 0.0, V[MD], Va[MD];
+    for (int j = 0; j < dim; ++j) V[j] = Va[j] = 0.0;
+
+    for (int k = 0; k < dim; ++k) {
+        fpk_i128 pk = A[k][k];
+        if (pk <= 0) return -9;                  // exact: not positive definite
+        double pkd = (double)pk, prevd = (double)prev;
+        double ukk = sqrt(pkd / prevd);
+        U[k * dim + k] = ukk;
+        for (int j = 0; j < k; ++j) U[k * dim + j] = 0.0;
+        for (int j = k + 1; j < dim; ++j) U[k * dim + j] = ukk * ((double)A[k][j] / pkd);
+        if (linvec) {
+            // z_k = zhat_k / p_{k-1}; 1/d_k = p_{k-1} / p_k
+            double z = (double)A[k][dim] / prevd;
+            N += z * z * (prevd / pkd);
+            m0N[k] = N;
+            for (int j = k + 1; j < dim; ++j) {
+                double t = ((double)A[k][j] / pkd) * z;
+                V[j] += t;
+                Va[j] += fabs(t);
+                m0V[k * dim + j] = V[j];
+                m0Va[k * dim + j] = Va[j];
+            }
+        }
+        // eliminate rows below k (symmetric part j >= i, plus the linvec column)
+        for (int i = k + 1; i < dim; ++i) {
+            for (int j = i; j < na; ++j) {
+                if (j == dim && !linvec) break;
+                fpk_i128 q;
+                if (fpk_bareiss_div(pk, A[i][j], A[i][k], A[k][j], prev, &q)) return -1;
+                A[i][j] = q;
+                if (j < dim && j != i) A[j][i] = q;
+            }
+        }
+        prev = pk;
+    }
+    return 0;
+}
+
 int fpk_enumerate(const fpk_problem *P, fpk_output *out)
 {
     const int dim = P->dim;
@@ -573,17 +668,24 @@ int fpk_enumerate(const fpk_problem *P, fpk_output *out)
     if (P->qmax < 0) return 0;
 
     double *U = malloc((size_t)dim * dim * sizeof(double));
-    double *m0N = NULL, *m0V = NULL;
+    double *m0N = NULL, *m0V = NULL, *m0Va = NULL;
     if (linvec) {
-        m0N = malloc((size_t)dim * sizeof(double));
-        m0V = calloc((size_t)dim * dim, sizeof(double));
+        m0N  = malloc((size_t)dim * sizeof(double));
+        m0V  = calloc((size_t)dim * dim, sizeof(double));
+        m0Va = calloc((size_t)dim * dim, sizeof(double));
     }
-    if (!U || (linvec && (!m0N || !m0V))) {
-        free(U); free(m0N); free(m0V);
+    if (!U || (linvec && (!m0N || !m0V || !m0Va))) {
+        free(U); free(m0N); free(m0V); free(m0Va);
         return -7;
     }
-    status = fpk_factor_exact(P->mat, dim, U, linvec, m0N, m0V);
-    if (status) { free(U); free(m0N); free(m0V); return status; }
+    // exact factorization: int128 fast path, GMP if it cannot be used
+    status = fpk_factor_fast(P->mat, dim, U, linvec, m0N, m0V, m0Va);
+    if (status == -1) {
+        status = fpk_factor_exact(P->mat, dim, U, linvec, m0N, m0V);
+        if (!status && linvec)          // exact V, rounded: |V| bounds its error
+            for (int k = 0; k < dim * dim; ++k) m0Va[k] = fabs(m0V[k]);
+    }
+    if (status) { free(U); free(m0N); free(m0V); free(m0Va); return status; }
 
     // per-level state (indexed by the component being set)
     int32_t  c[FPK_MAX_DIM];
@@ -730,9 +832,8 @@ int fpk_enumerate(const fpk_problem *P, fpk_output *out)
         if (!empty_ && linvec && (i) >= m0_level && m0_level >= 0) {            \
             double vc_ = 0.0, va_ = 0.0;                                        \
             for (int j_ = (i) + 1; j_ < dim; ++j_) {                            \
-                double t_ = m0V[(i) * dim + j_] * c[j_];                        \
-                vc_ += t_;                                                      \
-                va_ += fabs(t_);                                                \
+                vc_ += m0V[(i) * dim + j_] * c[j_];                             \
+                va_ += m0Va[(i) * dim + j_] * fabs((double)c[j_]);              \
             }                                                                   \
             double sq_ = sqrt(fmax(m0N[(i)] * (rem[(i)] + slack + err[(i)]), 0.0)); \
             double ub_ = (double)m0p[(i)] - vc_ + sq_                           \
@@ -901,6 +1002,7 @@ end:
     free(U);
     free(m0N);
     free(m0V);
+    free(m0Va);
     mpz_clear(tmp);
     mpz_clear(tmp2);
     return status;

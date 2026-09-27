@@ -33,5 +33,7 @@ jobs:
         run: pip install -e .[test]
       - name: Build the standalone C driver (warnings are errors)
         run: make -C tests/c PREFIX=/usr CFLAGS="-O2 -Werror"
+      - name: Fast vs GMP exact factorization cross-check
+        run: tests/c/test_factor
       - name: Run the test suite
         run: pytest tests/ -n auto

@@ -44,3 +44,4 @@ demo_notebooks/vol_cap.ipynb
 # C driver builds
 tests/c/fp_kernel_cli
 tests/c/fp_kernel_cli_stats
+tests/c/test_factor
