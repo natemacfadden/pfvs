@@ -1,8 +1,9 @@
 name: CI
 
-# Build the (coni-)PFV kernels + Cython binding and run the test suite on every
-# push and PR. CYTools is not installed here, so test_manwe_gvs_match_cytools
-# skips; the kernel, lattice-primitive, and Manwe-physics tests still run.
+# Build the Fincke-Pohst kernel (fp_kernel) + Cython binding and run the test
+# suite on every push and PR. CYTools is not installed here, so
+# test_manwe_gvs_match_cytools skips; everything else (exact-oracle kernel
+# tests, dataset reproduction, lattice primitives, Manwe physics) runs.
 on:
   push:
     branches: [main]
@@ -30,5 +31,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgmp-dev
       - name: Build + install (with test extras)
         run: pip install -e .[test]
+      - name: Build the standalone C driver (warnings are errors)
+        run: make -C tests/c PREFIX=/usr CFLAGS="-O2 -Werror"
       - name: Run the test suite
-        run: pytest tests/ -v
+        run: pytest tests/ -n auto

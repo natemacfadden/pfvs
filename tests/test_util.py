@@ -18,12 +18,18 @@
 import itertools
 import math
 
+import flint
 import numpy as np
 import pytest
 
-import flint
-
-from pfvs.util import dual_lattice, extended_euclidean, fp_iterative_njit, inv_scaled, lll_reduce, orthogonal_lattice
+from pfvs.util import (
+    dual_lattice,
+    extended_euclidean,
+    fp_iterative_njit,
+    inv_scaled,
+    lll_reduce,
+    orthogonal_lattice,
+)
 
 # =============================================================================
 # Test bases
@@ -291,3 +297,64 @@ def test_fp_iterative_with_linvec(mat, Q, linvec, linmin):
     assert set(map(tuple, out)) == _brute_force_ellipsoid(mat, Q, linvec=linvec, linmin=linmin)
     for v, q in zip(out, qs):
         assert abs(float(v @ mat @ v) - float(q)) < 1e-3
+
+
+# =============================================================================
+# Overflow safety (regression: large p-vectors used to overflow int64
+# silently inside orthogonal_lattice, corrupting the M-lattice basis and
+# causing coniZpM to skip those p-vectors)
+# =============================================================================
+
+def _big_orthogonal_inputs():
+    """Integer vectors whose int64 Bezout elimination overflows."""
+    rng = np.random.default_rng(3)
+    out = []
+    while len(out) < 6:
+        p = rng.integers(-2**40, 2**40, size=int(rng.integers(4, 9)))
+        from pfvs.util import _orthogonal_lattice_int64
+        if not _orthogonal_lattice_int64(p.astype(np.int64))[1]:
+            out.append(p)
+    return out
+
+
+@pytest.mark.parametrize("p", _big_orthogonal_inputs())
+def test_orthogonal_lattice_overflow_falls_back(p):
+    """The int64 path detects overflow; the result is still exactly right."""
+    B = orthogonal_lattice(p)
+    po = np.array([int(x) for x in p], dtype=object)
+    Bo = np.array(B.tolist(), dtype=object)
+    assert all(int(x) == 0 for x in po @ Bo)                       # orthogonal
+    assert flint.fmpz_mat([[int(x) for x in r] for r in Bo]).rank() == len(p) - 1
+    # primitive: B spans the whole orthogonal lattice (its HNF matches flint's)
+    ref = flint.fmpz_mat([[int(x)] for x in p]).hnf(transform=True)[1]
+    ref_rows = flint.fmpz_mat([[ref[i, j] for j in range(len(p))] for i in range(1, len(p))])
+    assert flint.fmpz_mat([[int(x) for x in r] for r in Bo.T]).hnf() == ref_rows.hnf()
+
+
+def test_orthogonal_lattice_unchanged_when_no_overflow():
+    """Small inputs take the original int64 path (bit-identical results)."""
+    from pfvs.util import _orthogonal_lattice_int64
+    p = np.array([3, 5, 7, -11, 4], dtype=np.int64)
+    B, ok = _orthogonal_lattice_int64(p)
+    assert ok
+    assert np.array_equal(orthogonal_lattice(p), B)
+
+
+def test_exact_matmul_no_wraparound():
+    from pfvs.util import exact_matmul
+    A = np.array([[2**40, 2**40]], dtype=np.int64)
+    B = np.array([[2**30], [2**30]], dtype=np.int64)
+    C = exact_matmul(A, B)
+    assert C.dtype == object and int(C[0, 0]) == 2**71          # A @ B would wrap
+    assert np.array_equal(exact_matmul(A[:, :1] // 2**20, B[:1]), A[:, :1] // 2**20 @ B[:1])
+    with pytest.raises(ValueError):
+        exact_matmul(np.array([[0.5]]), np.array([[1]]))
+
+
+def test_is_positive_definite():
+    from pfvs.util import is_positive_definite
+    assert is_positive_definite(np.array([[2, 1], [1, 2]]))
+    assert not is_positive_definite(np.array([[1, 2], [2, 1]]))
+    assert not is_positive_definite(np.array([[1, 1], [1, 1]]))          # PSD, singular
+    big = 2**60
+    assert is_positive_definite(np.array([[big, big - 1], [big - 1, big]], dtype=object))

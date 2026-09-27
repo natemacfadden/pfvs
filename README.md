@@ -77,6 +77,12 @@ conda install -c conda-forge gmp
 pip install -e .
 ```
 
+### Machine-specific build
+For a slightly faster (~5%), machine-specific kernel, set `PFVS_NATIVE=1` (adds `-march=native`):
+```bash
+PFVS_NATIVE=1 pip install -e .
+```
+
 ## Demos
 
 Example notebooks are in `demo_notebooks/`; `manwe_demo.ipynb` is the self-contained starting point -- it finds the perturbatively-flat vacua of the "Manwe" geometry from scratch.
@@ -87,7 +93,15 @@ The core of the coniPFV search is enumerating integer vectors in a (dilated) ell
 
 Both take the same ellipsoid (Zp-style) approach and return identical results; they differ only in how they enumerate it. The new kernel keeps only its output and an $O(h^{1,1})$ recursion stack, while dSv1 also materializes the whole bounding box, whose size grows as $(Q\cdot p_{denom})^{h^{1,1}/2}$. That box is what drives dSv1's time and memory up sharply as the dilation grows.
 
-Measured on the $h^{1,1}=7$ "Manwe" example (identical inputs, identical output, same cuts), on one CPU (Intel Core Ultra 7 270K, 24 cores, 30 GB), three runs each, reported as mean $\pm$ std:
+**Kernel rewrite (`fp_kernel`).** The coni and non-coni kernels are now one exact kernel (see [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md)). Measured against the previous kernels with outputs checked to be identical:
+
+- End-to-end `coniZpM` on 20 dataset geometries (833k p-vectors, identical PFV sets, old and new pinned to the same core): **1.44×** faster at $p_{denom}=20$ and **1.59×** at $p_{denom}=150$.
+- The full [coni-PFV dataset](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) (18,253 geometries, 8.6M p-vectors at $|p|_\infty\le5$, $p_{denom}=150$) is reproduced exactly: all 33,376 PFVs, none missing or extra.
+- Kernel alone on 2,637 real instances: coni **1.9–2.8×**, non-coni **9–15×**. The non-coni kernel previously indexed its $H$ rows off by one, so it pruned far less than intended; its output was still correct.
+
+At low $h^{1,1}$ and moderate $p_{denom}$, the per-p lattice generation (LLL/HNF, currently in Python via flint) now dominates rather than the kernel.
+
+The table below compares the *previous* C kernel with dSv1 and was measured before the rewrite. It is kept for the box-vs-Fincke–Pohst comparison, which the rewrite only improves on. Measured on the $h^{1,1}=7$ "Manwe" example (identical inputs, identical output, same cuts), on one CPU (Intel Core Ultra 7 270K, 24 cores, 30 GB), three runs each, reported as mean $\pm$ std:
 
 | dilation $p_{denom}$ | C (ms) | dSv1 (ms) | speedup | dSv1 memory | box (est.) |
 |---:|---:|---:|---:|---:|---:|
@@ -124,15 +138,17 @@ python benchmarks/benchmark_dSv1_vs_coniZpM.py
 ```
 pfvs/
 ├── pfvs/
-│   ├── conipfv_kernel/    # C kernel* + Cython binding for coni-PFV enumeration
-│   ├── pfv_kernel/        # C kernel* + Cython binding for non-coni PFV enumeration
+│   ├── fp_kernel/         # C kernel* (fp_kernel.h, single header) + Cython binding
+│   ├── conipfv_kernel/    # re-exports fp_kernel.conipfv_kernel (coni-PFV enumeration)
+│   ├── pfv_kernel/        # re-exports fp_kernel.pfv_kernel (non-coni PFV enumeration)
 │   ├── coniZp.py          # coniZpM: coni-PFV generation pipeline
 │   ├── Zp.py              # ZpM / ZpK: PFV generation pipeline
 │   ├── cydata.py          # CYData: CY-data holder
 │   ├── pfv.py             # PFV class + diagnostics
 │   ├── pvectors.py        # p-vector generation
 │   └── util.py            # shared helpers (+ njit kernels)
-├── tests/                 # test_manwe.py, test_conipfv_kernel.py, test_util.py
+├── tests/                 # pytest suite, exact oracle (oracle.py), fixtures (data/)
+│   └── c/                 # standalone C driver for the kernel (profiling/debugging)
 ├── benchmarks/            # benchmark_dSv1_vs_coniZpM.py (headline), benchmark_conipfv.py
 ├── demo_notebooks/        # manwe_demo.ipynb (self-contained)
 ├── environment.yml
@@ -140,7 +156,17 @@ pfvs/
 └── setup.py
 ```
 
-*: This C code was originally the bottleneck/core of the problem, hence the name 'kernel'. In the current state, unless one is studying large $p_{denom}$, these kernels are a relatively small fraction of the total computation.
+*: This C code was originally the bottleneck/core of the problem, hence the name 'kernel'. See [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md) for its exact contract and how it prunes. It remains the dominant cost at the dilations used in practice ($p_{denom}\sim 10^2$).
+
+## Correctness
+
+The kernel's output is specified exactly (see [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md)). All accept/reject decisions are exact integer arithmetic, and floating point is only used for pruning, widened by a rigorous error bound. The test suite checks this at three levels:
+
+- **Kernel vs. an exact oracle.** [`tests/oracle.py`](tests/oracle.py) is a rational-arithmetic Fincke–Pohst with no floating point. The tests compare the kernel's output against it point for point, in order, on 219 real instances from the dataset below (some with $H$ entries beyond $2^{100}$) and on adversarial synthetic ones: non-echelon or rank-deficient $H$, boundary points, and ill-conditioned ellipsoids with huge entries.
+- **End to end vs. the published dataset.** For 71 stored geometries ($h^{1,1}=3,\dots,11$), `coniZpM` must reproduce *exactly* the PFVs in [calabi-yau-coni-pfvs](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) (every p-vector with $|p|_\infty\le B$ at dilation $D$), with no p-vector skipped. The fixtures are built by [`tests/data/build_fixtures.py`](tests/data/build_fixtures.py) from a pinned dataset revision.
+- **Regression tests for integer overflow.** Large p-vectors used to overflow int64 silently while the M-lattice was being built, and were then skipped. The tests use real large-p cases.
+
+Run `pytest tests/` (add `-n auto` with `pytest-xdist` to parallelize).
 
 ## License
 
