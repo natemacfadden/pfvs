@@ -68,6 +68,25 @@ cdef extern from "fp_kernel.h":
     void fpk_output_free(fpk_output *out)
 
 
+cdef extern from "pfv_lattice.h":
+    ctypedef struct pfl_setup:
+        int h11
+        const int64_t *kappa
+        const int64_t *Mbasis
+        int coni
+        int extra_lll
+
+    ctypedef struct pfl_result:
+        int64_t Z[64 * 64]
+        int64_t Binter[64 * 63]
+        int64_t ZB[64 * 63]
+        int64_t mat[63 * 63]
+        long long H[64 * 63 * 2]
+        int nrows
+
+    int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R) nogil
+
+
 # helpers
 # -------
 def _exact_mat(U, mat):
@@ -305,3 +324,53 @@ def pfv_kernel(U,
     res = _enumerate(U, mat, Q, _qmax(Q, dilation), H, None, 0, False,
                      max_N_out, eps, return_n_nodes)
     return (res[0], res[1].astype(np.float64)) + tuple(res[2:])
+
+
+# lattice setup (pfv_lattice.h)
+# -----------------------------
+def _lattice_build(kappa, Mbasis, p, bint coni, bint extra_lll=True):
+    """
+    The per-p lattice setup in C (see pfv_lattice.h). Returns
+    (status, Z, Binter, ZB, mat, H). status 0: all valid. status -15: all but
+    H valid (H is None; compute the HNF of ZB[r0:] instead). Any other
+    nonzero status: use the exact Python path (arrays are None).
+    """
+    cdef int64_t[::1] k_c = np.ascontiguousarray(kappa, dtype=np.int64).reshape(-1)
+    cdef int64_t[:, ::1] M_c = np.ascontiguousarray(Mbasis, dtype=np.int64)
+    cdef int64_t[::1] p_c = np.ascontiguousarray(p, dtype=np.int64)
+    cdef int h = M_c.shape[0]
+    if h > 64 or p_c.shape[0] != h or k_c.shape[0] != h * h * h:
+        raise ValueError("inconsistent shapes (or h11 > 64)")
+    cdef pfl_setup S
+    S.h11 = h
+    S.kappa = &k_c[0]
+    S.Mbasis = &M_c[0, 0]
+    S.coni = coni
+    S.extra_lll = extra_lll
+    cdef pfl_result *R = <pfl_result *> malloc(sizeof(pfl_result))
+    if R == NULL:
+        raise MemoryError()
+    cdef int st
+    try:
+        with nogil:
+            st = pfl_build(&S, &p_c[0], R)
+        if st != 0 and st != -15:
+            return st, None, None, None, None, None
+        d = h - 1
+        Z = np.array(<int64_t[:h * h]> R.Z).reshape(h, h)
+        B = np.array(<int64_t[:h * d]> R.Binter).reshape(h, d)
+        ZB = np.array(<int64_t[:h * d]> R.ZB).reshape(h, d)
+        mat = np.array(<int64_t[:d * d]> R.mat).reshape(d, d)
+        if st == -15:      # all but H valid: caller computes the HNF
+            return st, Z, B, ZB, mat, None
+        # H is int128 in C: two int64 words per entry (little-endian)
+        w = np.array(<int64_t[:2 * R.nrows * d]> <int64_t *> R.H).reshape(-1, 2)
+        lo = w[:, 0].view(np.uint64).astype(object)
+        hi = w[:, 1].astype(object)
+        Hv = (hi * (1 << 64) + lo)
+        H = Hv.reshape(R.nrows, d)
+        if all(-2**63 < int(x) < 2**63 for x in Hv):
+            H = H.astype(np.int64)
+        return 0, Z, B, ZB, mat, H
+    finally:
+        free(R)

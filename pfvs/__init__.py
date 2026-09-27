@@ -3,6 +3,7 @@ from .pfv import PFV
 from .pvectors import pvecs
 from .Zp import M_ellipsoid, K_ellipsoid, H_matrix, ZpM, ZpK
 from .coniZp import coni_M_ellipsoid, coni_H_matrix, coniZpM
+from .util import IncompleteSearchError
 
 __all__ = [
     # core objects
@@ -20,4 +21,6 @@ __all__ = [
     'coni_M_ellipsoid',
     'coni_H_matrix',
     'coniZpM',
+    # errors
+    'IncompleteSearchError',
 ]

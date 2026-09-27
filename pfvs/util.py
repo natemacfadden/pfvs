@@ -28,6 +28,17 @@ import numpy as np
 
 from numpy.typing import ArrayLike
 
+# errors
+# ======
+class IncompleteSearchError(RuntimeError):
+    """
+    A p-vector could not be searched exactly and completely (e.g. an
+    ellipsoid beyond int64, a non-positive-definite ellipsoid, coordinates
+    beyond int32, or more than max_N_pfvs outputs). Raised instead of
+    silently skipping, since a skipped p-vector means missing PFVs.
+    """
+
+
 # basic helpers
 # =============
 def lcm(a: int, b: int) -> int:

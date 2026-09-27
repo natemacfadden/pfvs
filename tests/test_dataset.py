@@ -138,3 +138,16 @@ def test_large_p_not_skipped(g, p):
         Ks, Ms = coniZpM(data, np.array([p]), ellipsoid_dilation=20, n_jobs=1)
     for K, M in zip(Ks, Ms):
         assert PFV(data, K, M).check_all(stop_at_fail=False)
+
+
+def test_incomplete_search_raises():
+    """A p-vector that cannot be searched completely raises, never skips."""
+    from pfvs import IncompleteSearchError
+    g = max(GEOMS, key=lambda g: len(g["K"]))
+    data = cydata(g)
+    ps, _, _ = box_enum(g["B"], np.ascontiguousarray(data.H_cob.astype(np.int32)), 1,
+                        10**8, primitive=True)
+    # more outputs than allowed: status -2 must raise (it used to warn and
+    # silently keep a truncated output)
+    with pytest.raises(IncompleteSearchError, match="max_N_pfvs"):
+        coniZpM(data, ps, ellipsoid_dilation=g["D"], n_jobs=1, max_N_pfvs=1)

@@ -36,6 +36,7 @@ from numpy.typing import ArrayLike
 # local imports
 from . import util
 from .conipfv_kernel import conipfv_kernel
+from .fp_kernel.fp_kernel import _lattice_build
 from .cydata import CYData
 
 # coniZp helpers
@@ -415,6 +416,7 @@ def coniZpM(
     ellipsoid_dilation: float = 1, # typically want >=1
     # algorithm selection
     use_gcd_lattice: bool = False,
+    use_c_lattice: bool = True,
     low_level_parallelism: bool = False,
     n_jobs: int = -1,
     # misc
@@ -465,6 +467,13 @@ def coniZpM(
     ellipsoid_dilation : float, optional
         The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
         Empirically, runtime scales linearly with this value. Defaults to 1.
+    use_c_lattice : bool, optional
+        Whether to build each p-vector's lattice data (the M-lattice basis
+        Binter, the ellipsoid and the H-matrix) in C (fast, exact, with
+        automatic fallback to the Python path on overflow). The C path picks
+        a different, equally valid LLL-reduced basis, so it finds the same
+        PFVs but may list them in a different order. Set False to reproduce
+        the previous order exactly. Defaults to True.
     use_gcd_lattice : bool, optional
         Whether to construct explicit lattice bases for guaranteeing sufficient
         GCD of Kperp. Not recommended - it's generally quicker to just prune FP.
@@ -558,19 +567,26 @@ def coniZpM(
             p_full = np.concatenate([[0],p])
 
             # construct the quadratic form defining the ellipsoid
-            try:
-                mat, Z, Binter = coni_M_ellipsoid(
-                    p_full,
-                    kappa=kappa,
-                    Mbasis=Mbasis,
-                    extra_lll_reduction=extra_lll_reduction,
-                    extra_checks=extra_checks,
-                    _maxes=maxes)
-            except OverflowError as e:
-                warnings.warn(f"skipping p={p.tolist()}: {e}", stacklevel=2)
-                continue
+            # (C path; status -15: all but H built; other nonzero: fall back)
+            H_pre, st = None, -1
+            if use_c_lattice and not use_gcd_lattice:
+                st, Z, Binter, ZBinter, mat, H_pre = _lattice_build(
+                    kappa, Mbasis, p_full.astype(np.int64), True,
+                    extra_lll_reduction)
+            if st not in (0, -15):
+                try:
+                    mat, Z, Binter = coni_M_ellipsoid(
+                        p_full,
+                        kappa=kappa,
+                        Mbasis=Mbasis,
+                        extra_lll_reduction=extra_lll_reduction,
+                        extra_checks=extra_checks,
+                        _maxes=maxes)
+                except OverflowError as e:
+                    raise util.IncompleteSearchError(f"p={p.tolist()}: {e}") from e
+                ZBinter = util.exact_matmul(Z, Binter)
 
-            ZBinter = np.ascontiguousarray(util.exact_matmul(Z, Binter))
+            ZBinter = np.ascontiguousarray(ZBinter)
             Binter  = np.ascontiguousarray(  Binter)
 
             # solve for lattice points under tadpole
@@ -580,10 +596,9 @@ def coniZpM(
                     # find relevant lattice points in ellipsoid c.T@mat@c <= Q
                     # just uses FP with pruning on GCDs and M0 - no GCD lattice
                     try:
-                        H = coni_H_matrix(ZBinter, proj)
+                        H = H_pre if H_pre is not None else coni_H_matrix(ZBinter, proj)
                     except Exception as e:
-                        warnings.warn(f"skipping p={p.tolist()}: coni_H_matrix failed ({e})", stacklevel=2)
-                        continue
+                        raise util.IncompleteSearchError(f"p={p.tolist()}: coni_H_matrix failed ({e})") from e
 
                     # U is unused when mat= is given (the kernel factors
                     # the exact mat itself), but is part of the signature
@@ -607,11 +622,17 @@ def coniZpM(
                         # the kernel decides positive-definiteness exactly
                         if "positive definite" not in str(e):
                             raise
-                        warnings.warn(f"skipping p={p.tolist()}: {e}", stacklevel=2)
-                        continue
+                        raise util.IncompleteSearchError(
+                            f"p={p.tolist()}: the ellipsoid matrix is not positive "
+                            f"definite, so its lattice points cannot be enumerated") from e
 
                     if status != 0:
-                        warnings.warn(f"conipfv_kernel returned status {status} for p={p.tolist()}", stacklevel=2)
+                        raise util.IncompleteSearchError(
+                            f"p={p.tolist()}: conipfv_kernel returned status {status} "
+                            + ("(more than max_N_pfvs outputs; increase max_N_pfvs)"
+                               if status == -2 else
+                               "(lattice-point coordinates exceed int32)"
+                               if status == -8 else ""))
 
                 # use GCD lattices
                 # ----------------
@@ -652,6 +673,8 @@ def coniZpM(
                         print("they were:")
                         print(lattice_points)
 
+            except util.IncompleteSearchError:
+                raise
             except Exception as e:
                 raise RuntimeError(
                     f"Kernel failed for p={np.array(p).tolist()}: {type(e).__name__}: {e}"

@@ -507,8 +507,7 @@ def ZpM(
                     _maxes=maxes
                 )
             except OverflowError as e:
-                warnings.warn(f"skipping p={p.tolist()}: {e}", stacklevel=2)
-                continue
+                raise util.IncompleteSearchError(f"p={p.tolist()}: {e}") from e
 
             # the core enumeration
             # --------------------
@@ -517,8 +516,7 @@ def ZpM(
                 try:
                     H = H_matrix(ZBinter)
                 except Exception as e:
-                    warnings.warn(f"skipping p={p.tolist()}: H_matrix failed ({e})", stacklevel=2)
-                    continue
+                    raise util.IncompleteSearchError(f"p={p.tolist()}: H_matrix failed ({e})") from e
                 # U is unused when mat= is given (the kernel factors the
                 # exact mat itself), but is part of the signature
                 try:
@@ -535,10 +533,16 @@ def ZpM(
                     # the kernel decides positive-definiteness exactly
                     if "positive definite" not in str(e):
                         raise
-                    warnings.warn(f"skipping p={p.tolist()}: {e}", stacklevel=2)
-                    continue
+                    raise util.IncompleteSearchError(
+                        f"p={p.tolist()}: the ellipsoid matrix is not positive "
+                        f"definite, so its lattice points cannot be enumerated") from e
                 if status != 0:
-                    warnings.warn(f"pfv_kernel returned status {status} for p={p.tolist()}", stacklevel=2)
+                    raise util.IncompleteSearchError(
+                        f"p={p.tolist()}: pfv_kernel returned status {status} "
+                        + ("(more than max_N_pfvs outputs; increase max_N_pfvs)"
+                           if status == -2 else
+                           "(lattice-point coordinates exceed int32)"
+                           if status == -8 else ""))
             else:
                 try:
                     L = np.linalg.cholesky(mat)
