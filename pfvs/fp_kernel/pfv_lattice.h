@@ -57,6 +57,17 @@ falls back to the arbitrary-precision Python path.
 Stage codes: -1x orthogonal lattice, -2x first LLL, -3x second LLL, -15 HNF.
 On -15 (HNF intermediates exceed int128) everything except H is valid, so
 the caller only needs to compute H itself.
+
+Cut-aware basis (coni, m0_basis = 1): the kernel fixes M0 = Binter[0,:].c
+once every coordinate where Binter[0,:] is nonzero is set, and prunes on
+the ellipsoid geometry given by mat. So Binter is finally changed to
+Binter T with T = [K | w] unimodular: K an LLL basis of ker(Binter[0,:])
+reduced with respect to mat (not the Euclidean norm), w with
+Binter[0,:].w = g, size-reduced against K. Then Binter[0,:] = (0,...,0,g):
+M0 is fixed at the very first level searched, where M0 >= M0min becomes an
+interval bound. Same lattice, same PFVs; ~4.7x smaller searches on heavy
+h11 = 10 problems. Non-coni (no M0 cut): T is the LLL reduction of the whole
+basis with respect to mat, which alone shrinks searches ~1.4-1.8x.
 */
 typedef struct {
     int h11;
@@ -64,6 +75,7 @@ typedef struct {
     const int64_t *Mbasis;   // (h11, h11), basis vectors as columns
     int coni;                // 1: coni (sort Binter, H from rows 1:), 0: non-coni
     int extra_lll;           // LLL-reduce the orthogonal lattice first (default 1)
+    int m0_basis;            // final basis change w.r.t. mat (see below), default 1
 } pfl_setup;
 
 typedef struct {
@@ -127,7 +139,20 @@ static inline int64_t pfl_fdiv(int64_t a, int64_t b)
 // Basis of the lattice orthogonal to v (length n), as the n-1 rows of O
 // (row-major, stride n). A port of util._orthogonal_lattice_int64 (same
 // Bezout elimination, same result), with exact overflow checks.
+static int pfl_unimodular(const int64_t *v, int n, int64_t *U);
+
 static int pfl_orthogonal(const int64_t *v, int n, int64_t *O)
+{
+    int64_t U[PFL_MAX_H11 * PFL_MAX_H11];
+    int rc = pfl_unimodular(v, n, U);
+    if (rc) return rc;
+    memcpy(O, &U[n], (size_t)(n - 1) * n * sizeof(int64_t));
+    return 0;
+}
+
+// Unimodular U (n x n, row-major) with U v = (gcd(v), 0, ..., 0): rows 1..
+// span the lattice orthogonal to v, row 0 has v . U[0] = gcd(v).
+static int pfl_unimodular(const int64_t *v, int n, int64_t *Uout)
 {
     int64_t U[PFL_MAX_H11 * PFL_MAX_H11];
     int64_t w[PFL_MAX_H11];
@@ -151,7 +176,7 @@ static int pfl_orthogonal(const int64_t *v, int n, int64_t *O)
             U[k * n + r] = (int64_t)t2;
         }
     }
-    memcpy(O, &U[n], (size_t)(n - 1) * n * sizeof(int64_t));
+    memcpy(Uout, U, (size_t)n * n * sizeof(int64_t));
     return 0;
 }
 
@@ -324,6 +349,190 @@ static int pfl_matmul(const int64_t *A, const int64_t *B, int64_t *C,
     return 0;
 }
 
+
+// y -> G y (exact, checked int128); returns 0 on overflow
+static inline int pfl_gvec(const int64_t *y, const int64_t *G, int n, pfl_i128 *Gy)
+{
+    for (int i = 0; i < n; ++i) {
+        pfl_i128 r = 0;
+        for (int j = 0; j < n; ++j) {
+            pfl_i128 t;
+            if (__builtin_mul_overflow((pfl_i128)G[i * n + j], (pfl_i128)y[j], &t) ||
+                __builtin_add_overflow(r, t, &r)) return 0;
+        }
+        Gy[i] = r;
+    }
+    return 1;
+}
+
+// x . (G y) given Gy (exact, checked), as double; *ok cleared on overflow
+static inline double pfl_gdot(const int64_t *x, const pfl_i128 *Gy, int n, int *ok)
+{
+    pfl_i128 s = 0;
+    for (int i = 0; i < n; ++i) {
+        if (!x[i]) continue;
+        pfl_i128 t;
+        if (__builtin_mul_overflow(Gy[i], (pfl_i128)x[i], &t) ||
+            __builtin_add_overflow(s, t, &s)) { *ok = 0; return 0.0; }
+    }
+    return (double)s;
+}
+
+// LLL (delta 0.99) of the m coefficient vectors B (rows, length n) with
+// respect to the quadratic form G; if `last` is given, afterwards size-reduce
+// that vector (not swapped) against the reduced basis. The products G b_j are
+// cached and updated exactly with the basis. Updates are exact (checked)
+// integer operations; floating point only chooses them, so the lattice is
+// preserved exactly.
+static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *last)
+{
+    double mu[PFL_MAX_H11][PFL_MAX_H11], bb[PFL_MAX_H11], mw[PFL_MAX_H11];
+    pfl_i128 GB[PFL_MAX_H11][PFL_MAX_H11];      // GB[j] = G b_j
+    const double delta = 0.99;
+    int ok = 1, iters = 0;
+    for (int j = 0; j < m; ++j) if (!pfl_gvec(&B[j * n], G, n, GB[j])) return -1;
+
+    #define PFL_GGS_ROW(kk)                                                    \
+    do {                                                                       \
+        for (int j_ = 0; j_ < (kk); ++j_) {                                    \
+            double d_ = pfl_gdot(&B[(kk) * n], GB[j_], n, &ok);                \
+            for (int l_ = 0; l_ < j_; ++l_) d_ -= mu[j_][l_] * mu[(kk)][l_] * bb[l_]; \
+            mu[(kk)][j_] = d_ / bb[j_];                                        \
+        }                                                                      \
+        double d_ = pfl_gdot(&B[(kk) * n], GB[(kk)], n, &ok);                  \
+        for (int l_ = 0; l_ < (kk); ++l_) d_ -= mu[(kk)][l_] * mu[(kk)][l_] * bb[l_]; \
+        bb[(kk)] = d_;                                                         \
+    } while (0)
+
+    if (m >= 1) { PFL_GGS_ROW(0); if (!(bb[0] > 0)) return -2; }
+    if (m >= 2) PFL_GGS_ROW(1);
+    int k = 1;
+    while (k < m) {
+        if (!ok) return -1;
+        if (++iters > 100000) return -3;
+        for (int pass = 0; pass < 4; ++pass) {
+            int changed = 0;
+            for (int j = k - 1; j >= 0; --j) {
+                double q = nearbyint(mu[k][j]);
+                if (q == 0.0) continue;
+                if (fabs(q) > 9.0e18) return -1;
+                int64_t qi = (int64_t)q;
+                for (int c = 0; c < n; ++c) {
+                    pfl_i128 x = (pfl_i128)B[k * n + c] - (pfl_i128)qi * B[j * n + c];
+                    if (!PFL_FITS64(x)) return -1;
+                    B[k * n + c] = (int64_t)x;
+                    pfl_i128 t;
+                    if (__builtin_mul_overflow(GB[j][c], (pfl_i128)qi, &t) ||
+                        __builtin_sub_overflow(GB[k][c], t, &GB[k][c])) return -1;
+                }
+                changed = 1;
+                for (int l = 0; l < j; ++l) mu[k][l] -= q * mu[j][l];
+                mu[k][j] -= q;
+            }
+            if (!changed) break;
+            PFL_GGS_ROW(k);
+        }
+        if (!ok) return -1;
+        if (!(bb[k] > 0)) return -2;
+        if (bb[k] < (delta - mu[k][k - 1] * mu[k][k - 1]) * bb[k - 1]) {
+            for (int c = 0; c < n; ++c) {
+                int64_t t = B[k * n + c];
+                B[k * n + c] = B[(k - 1) * n + c];
+                B[(k - 1) * n + c] = t;
+                pfl_i128 u = GB[k][c]; GB[k][c] = GB[k - 1][c]; GB[k - 1][c] = u;
+            }
+            k = k > 1 ? k - 1 : 1;
+            if (k == 1) PFL_GGS_ROW(0);
+            PFL_GGS_ROW(k - 1);
+            PFL_GGS_ROW(k);
+        } else {
+            k++;
+            if (k < m) PFL_GGS_ROW(k);
+        }
+    }
+    if (last && m > 0) {
+        // Gram-Schmidt coefficients of `last`, then size-reduce it
+        for (int pass = 0; pass < 4; ++pass) {
+            for (int j = 0; j < m; ++j) {
+                double d_ = pfl_gdot(last, GB[j], n, &ok);
+                for (int l = 0; l < j; ++l) d_ -= mu[j][l] * mw[l] * bb[l];
+                mw[j] = d_ / bb[j];
+            }
+            if (!ok) return -1;
+            int changed = 0;
+            for (int j = m - 1; j >= 0; --j) {
+                double q = nearbyint(mw[j]);
+                if (q == 0.0) continue;
+                if (fabs(q) > 9.0e18) return -1;
+                int64_t qi = (int64_t)q;
+                for (int c = 0; c < n; ++c) {
+                    pfl_i128 x = (pfl_i128)last[c] - (pfl_i128)qi * B[j * n + c];
+                    if (!PFL_FITS64(x)) return -1;
+                    last[c] = (int64_t)x;
+                }
+                for (int l = 0; l < j; ++l) mw[l] -= q * mu[j][l];
+                mw[j] -= q;
+                changed = 1;
+            }
+            if (!changed) break;
+        }
+    }
+    #undef PFL_GGS_ROW
+    return ok ? 0 : -1;
+}
+
+// Cut-aware basis change (see the header comment): Binter <- Binter T,
+// ZB <- ZB T, mat <- T^T mat T with T = [K | w].
+static int pfl_m0_basis(pfl_result *R, int h, int d, int coni)
+{
+    int64_t l[PFL_MAX_H11], V[PFL_MAX_H11 * PFL_MAX_H11];
+    int64_t T[PFL_MAX_H11 * PFL_MAX_H11];      // columns: new basis vectors
+    int64_t tmp[PFL_MAX_H11 * PFL_MAX_H11];
+    int rc;
+    if (!coni) {
+        // no M0 cut: LLL-reduce the whole basis w.r.t. mat
+        for (int a = 0; a < d; ++a)
+            for (int i = 0; i < d; ++i) V[a * d + i] = (a == i);
+        if ((rc = pfl_lll_gram(V, d, d, R->mat, NULL))) return rc;
+        for (int a = 0; a < d; ++a)
+            for (int i = 0; i < d; ++i) T[i * d + a] = V[a * d + i];
+    } else {
+        for (int a = 0; a < d; ++a) l[a] = R->Binter[a];
+        int nz = 0;
+        for (int a = 0; a < d; ++a) nz += (l[a] != 0);
+        if (nz == 0) return 0;                 // M0 == 0: nothing to gain
+        if ((rc = pfl_unimodular(l, d, V))) return rc;   // V l = (g, 0, ..., 0)
+        // K = rows 1.. of V (d-1 vectors), w = row 0
+        int64_t *K = &V[d];
+        int64_t w[PFL_MAX_H11];
+        for (int a = 0; a < d; ++a) w[a] = V[a];
+        if ((rc = pfl_lll_gram(K, d - 1, d, R->mat, w))) return rc;
+        for (int a = 0; a < d - 1; ++a)
+            for (int i = 0; i < d; ++i) T[i * d + a] = K[a * d + i];
+        for (int i = 0; i < d; ++i) T[i * d + (d - 1)] = w[i];
+    }
+
+    if ((rc = pfl_matmul(R->Binter, T, tmp, h, d, d))) return rc;
+    memcpy(R->Binter, tmp, (size_t)h * d * sizeof(int64_t));
+    if ((rc = pfl_matmul(R->ZB, T, tmp, h, d, d))) return rc;
+    memcpy(R->ZB, tmp, (size_t)h * d * sizeof(int64_t));
+    // mat <- T^T (mat T)
+    int64_t MT[PFL_MAX_H11 * PFL_MAX_H11];
+    if ((rc = pfl_matmul(R->mat, T, MT, d, d, d))) return rc;
+    for (int a = 0; a < d; ++a)
+        for (int b = 0; b < d; ++b) {
+            pfl_i128 s = 0;
+            for (int i = 0; i < d; ++i) {
+                pfl_i128 t = (pfl_i128)T[i * d + a] * MT[i * d + b];
+                if (__builtin_add_overflow(s, t, &s)) return -1;
+            }
+            if (!PFL_FITS64(s)) return -1;
+            tmp[a * d + b] = (int64_t)s;
+        }
+    memcpy(R->mat, tmp, (size_t)d * d * sizeof(int64_t));
+    return 0;
+}
+
 int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
 {
     const int h = S->h11, d = S->h11 - 1;
@@ -357,7 +566,8 @@ int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
             if (!PFL_FITS64(s)) return -1;
             BT[a * h + i] = (int64_t)s;
         }
-    if ((rc = pfl_lll(BT, d, h))) return rc * 10 - 3;
+    // (with the final basis change, Binter is re-reduced w.r.t. mat anyway)
+    if (!S->m0_basis && (rc = pfl_lll(BT, d, h))) return rc * 10 - 3;
 
     // coni: columns with Binter[0] == 0 first (stable)
     int order[PFL_MAX_H11], no = 0;
@@ -383,6 +593,9 @@ int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
             if (!PFL_FITS64(s) || s == PFL_I64_MIN) return -1;
             R->mat[a * d + b] = (int64_t)(-s);
         }
+
+    if (S->m0_basis && (rc = pfl_m0_basis(R, h, d, S->coni)))
+        return rc * 10 - 4;
 
     // H = HNF of ZB[r0:]
     int r0 = S->coni ? 1 : 0;

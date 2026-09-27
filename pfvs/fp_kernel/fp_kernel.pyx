@@ -77,6 +77,7 @@ cdef extern from "pfv_lattice.h":
         const int64_t *Mbasis
         int coni
         int extra_lll
+        int m0_basis
 
     ctypedef struct pfl_result:
         int64_t Z[64 * 64]
@@ -338,7 +339,7 @@ def pfv_kernel(U,
 
 # lattice setup (pfv_lattice.h)
 # -----------------------------
-def _lattice_build(kappa, Mbasis, p, bint coni, bint extra_lll=True):
+def _lattice_build(kappa, Mbasis, p, bint coni, bint extra_lll=True, bint m0_basis=True):
     """
     The per-p lattice setup in C (see pfv_lattice.h). Returns
     (status, Z, Binter, ZB, mat, H). status 0: all valid. status -15: all but
@@ -357,6 +358,7 @@ def _lattice_build(kappa, Mbasis, p, bint coni, bint extra_lll=True):
     S.Mbasis = &M_c[0, 0]
     S.coni = coni
     S.extra_lll = extra_lll
+    S.m0_basis = m0_basis
     cdef pfl_result *R = <pfl_result *> malloc(sizeof(pfl_result))
     if R == NULL:
         raise MemoryError()
@@ -389,7 +391,8 @@ def _lattice_build(kappa, Mbasis, p, bint coni, bint extra_lll=True):
 # batched coni pipeline: lattice setup + kernel, no Python per p-vector
 # --------------------------------------------------------------------
 def _coni_batch(kappa, Mbasis, ps, long long Q, double dilation, double M0min,
-                long max_N_out, bint extra_lll=True, double eps=1e-4):
+                long max_N_out, bint extra_lll=True, double eps=1e-4,
+                bint m0_basis=True):
     """
     For each coni p-vector (rows of ps, full length h11 with p[0] = 0): build
     the lattice data (pfv_lattice.h) and run the kernel, returning for every
@@ -424,6 +427,7 @@ def _coni_batch(kappa, Mbasis, ps, long long Q, double dilation, double M0min,
     S.Mbasis = &M_c[0, 0]
     S.coni = 1
     S.extra_lll = extra_lll
+    S.m0_basis = m0_basis
     cdef fpk_problem P
     memset(&P, 0, sizeof(P))
     P.dim = d
