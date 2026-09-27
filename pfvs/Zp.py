@@ -126,7 +126,8 @@ def M_ellipsoid(p: ArrayLike,
                kappa: ArrayLike = None,
                Mbasis: ArrayLike = None,
                extra_lll_reduction: bool = True,
-               extra_checks: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+               extra_checks: bool = False,
+                   _maxes: tuple[int, int] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute the matrices defining the M-ellipsoid in nonconi-ZpM.
 
@@ -159,10 +160,8 @@ def M_ellipsoid(p: ArrayLike,
         the updated M vector lattice basis, Binter. Useful since otherwise
         there are sometimes overflows. Defaults to True.
     extra_checks : bool, optional
-        Whether to check that the defining matrix of the output ellipsoid, mat,
-        is actually integer before casting it to int. This check has never
-        failed and can actually add non-negligible timing, so it defaults to
-        False.
+        Unused; kept for backwards compatibility. (mat is now always computed
+        in exact integer arithmetic, so there is nothing to check.)
 
     Returns
     -------
@@ -189,23 +188,39 @@ def M_ellipsoid(p: ArrayLike,
     p = np.array(p).ravel()
 
     # helper variable (K = Z @ M)
-    Z = kappa@p
+    p = util._as_integral(p)
+
+    # All arithmetic below is exact. It runs in int64 when a bound on every
+    # intermediate (from max|kappa|, max|p|, max|Mbasis|) shows it cannot
+    # overflow -- the common case -- else with Python ints (large p).
+    # (_maxes: precomputed (max|kappa|, max|Mbasis|), fixed across p-vectors)
+    kmax, Mmax = _maxes if _maxes is not None else (util.absmax(kappa), util.absmax(Mbasis))
+    pmax = util.absmax(p)
+    small = h11**3 * kmax * pmax**2 * Mmax < 2**62 and p.dtype != object
+
+    if small:
+        Z = kappa @ p
+    else:
+        Z = util.exact_matmul(kappa.reshape(-1, h11), p).reshape(h11, h11)
 
     # define the lattices for M
     # -------------------------
     # need dot(K,p) = 0
     # thus need dot(p, kappa @ M @ p) = 0
     # equivalently, dot((kappa @ p) @ p, M) = 0
-    T = kappa@p@p
+    T = Z @ p if small else util.exact_matmul(Z, p)
 
     # need T^T @ Mbasis @ c = 0
     # thus just need c in the orthogonal lattice to Mbasis^T @ T
     # (the output will be lattice generators of such cs... we'll want
     #  lattice generators of valid Ms so we multiply on left by Mbasis)
-    orthog = util.orthogonal_lattice(p=T.T@Mbasis)
+    orthog = util.orthogonal_lattice(p=T @ Mbasis if small else util.exact_matmul(T, Mbasis))
     if extra_lll_reduction:
         orthog = util.lll_reduce(orthog)
-    Binter = Mbasis@orthog
+    if small and orthog.dtype != object and h11 * Mmax * util.absmax(orthog) < 2**62:
+        Binter = Mbasis @ orthog
+    else:
+        Binter = util.exact_matmul(Mbasis, orthog)
 
     # lll-reduce Binter
     # (doesn't seem to have a huge effect...)
@@ -213,15 +228,15 @@ def M_ellipsoid(p: ArrayLike,
 
     # define ellipsoid
     #       M-term     K-term
-    mat = -(Binter.T)@(Z@Binter)
-
-    if extra_checks:
-        if np.allclose(mat, np.round(mat)):
-            mat = np.rint(mat).astype(int)
-        else:
-            raise ValueError
+    # (exact integer arithmetic: all inputs are integral)
+    bmax = util.absmax(Binter)
+    if small and Binter.dtype != object and h11**2 * (h11 * kmax * pmax) * bmax**2 < 2**62:
+        mat = -(Binter.T @ (Z @ Binter))
     else:
-        mat = np.rint(mat).astype(int)
+        mat = -util.exact_matmul(Binter.T, util.exact_matmul(Z, Binter))
+    if mat.dtype == object:
+        raise OverflowError(
+            f"ellipsoid matrix entries exceed int64 for p={np.array(p).tolist()}")
 
     return mat, Z, Binter
 
@@ -478,38 +493,50 @@ def ZpM(
         # define a factory function here for later parallelization
         all_Ks = np.zeros((0,h11), dtype=int)
         all_Ms = np.zeros((0,h11), dtype=int)
+        eye_U  = np.eye(h11-1)  # kernel signature needs U; mat= is what is used
+        maxes  = (util.absmax(kappa), util.absmax(Mbasis))
 
         for p in p_chunk:
-            mat, Z, Binter = M_ellipsoid(
-                p,
-                kappa=kappa,
-                Mbasis=Mbasis,
-                extra_lll_reduction=extra_lll_reduction,
-                extra_checks=extra_checks
-            )
+            try:
+                mat, Z, Binter = M_ellipsoid(
+                    p,
+                    kappa=kappa,
+                    Mbasis=Mbasis,
+                    extra_lll_reduction=extra_lll_reduction,
+                    extra_checks=extra_checks,
+                    _maxes=maxes
+                )
+            except OverflowError as e:
+                warnings.warn(f"skipping p={p.tolist()}: {e}", stacklevel=2)
+                continue
 
             # the core enumeration
             # --------------------
             if use_c_kernel:
-                ZBinter = np.ascontiguousarray(Z @ Binter)
+                ZBinter = np.ascontiguousarray(util.exact_matmul(Z, Binter))
                 try:
                     H = H_matrix(ZBinter)
                 except Exception as e:
                     warnings.warn(f"skipping p={p.tolist()}: H_matrix failed ({e})", stacklevel=2)
                     continue
+                # U is unused when mat= is given (the kernel factors the
+                # exact mat itself), but is part of the signature
                 try:
-                    L = np.linalg.cholesky(mat)
-                except Exception as e:
-                    warnings.warn(f"skipping p={p.tolist()}: cholesky of mat failed ({e})", stacklevel=2)
+                    lattice_points, _, status = pfv_kernel(
+                        U=eye_U,
+                        Q=Qmax,
+                        dilation=ellipsoid_dilation,
+                        H=H,
+                        max_N_out=max_N_pfvs,
+                        eps=1e-4,
+                        mat=mat,
+                    )
+                except ValueError as e:
+                    # the kernel decides positive-definiteness exactly
+                    if "positive definite" not in str(e):
+                        raise
+                    warnings.warn(f"skipping p={p.tolist()}: {e}", stacklevel=2)
                     continue
-                lattice_points, _, status = pfv_kernel(
-                    U=np.ascontiguousarray(L.T),
-                    Q=Qmax,
-                    dilation=ellipsoid_dilation,
-                    H=H,
-                    max_N_out=max_N_pfvs,
-                    eps=1e-4
-                )
                 if status != 0:
                     warnings.warn(f"pfv_kernel returned status {status} for p={p.tolist()}", stacklevel=2)
             else:

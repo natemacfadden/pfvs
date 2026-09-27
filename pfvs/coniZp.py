@@ -127,7 +127,8 @@ def coni_M_ellipsoid(p: ArrayLike,
                    kappa: ArrayLike = None,
                    Mbasis: ArrayLike = None,
                    extra_lll_reduction: bool = True,
-                   extra_checks: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                   extra_checks: bool = False,
+                   _maxes: tuple[int, int] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute the matrices defining the M-ellipsoid in coni-ZpM.
 
@@ -163,10 +164,8 @@ def coni_M_ellipsoid(p: ArrayLike,
         the updated M vector lattice basis, Binter. Useful since otherwise
         there are sometimes overflows. Defaults to True.
     extra_checks : bool, optional
-        Whether to check that the defining matrix of the output ellipsoid, mat,
-        is actually integer before casting it to int. This check has never
-        failed and can actually add non-negligible timing, so it defaults to
-        False.
+        Unused; kept for backwards compatibility. (mat is now always computed
+        in exact integer arithmetic, so there is nothing to check.)
 
     Returns
     -------
@@ -193,9 +192,21 @@ def coni_M_ellipsoid(p: ArrayLike,
     p = np.array(p).ravel()
     if len(p) == h11-1:
         p = np.concatenate([[0], p])
+    p = util._as_integral(p)
+
+    # All arithmetic below is exact. It runs in int64 when a bound on every
+    # intermediate (from max|kappa|, max|p|, max|Mbasis|) shows it cannot
+    # overflow -- the common case -- else with Python ints (large p).
+    # (_maxes: precomputed (max|kappa|, max|Mbasis|), fixed across p-vectors)
+    kmax, Mmax = _maxes if _maxes is not None else (util.absmax(kappa), util.absmax(Mbasis))
+    pmax = util.absmax(p)
+    small = h11**3 * kmax * pmax**2 * Mmax < 2**62 and p.dtype != object
 
     # helper variable (K[1:] = (Z@M)[1:])
-    Z = kappa@p
+    if small:
+        Z = kappa @ p
+    else:
+        Z = util.exact_matmul(kappa.reshape(-1, h11), p).reshape(h11, h11)
 
     # define the lattices for M
     # -------------------------
@@ -206,16 +217,19 @@ def coni_M_ellipsoid(p: ArrayLike,
     #
     # thus need dot(p, kappa @ M @ p) = 0
     # equivalently, dot((kappa @ p) @ p, M) = 0
-    T = kappa@p@p
+    T = Z @ p if small else util.exact_matmul(Z, p)
 
     # need T^T @ Mbasis @ c = 0
     # thus just need c in the orthogonal lattice to Mbasis^T @ T
     # (the output will be lattice generators of such cs... we'll want
     #  lattice generators of valid Ms so we multiply on left by Mbasis)
-    orthog = util.orthogonal_lattice(p=T.T@Mbasis)
+    orthog = util.orthogonal_lattice(p=T @ Mbasis if small else util.exact_matmul(T, Mbasis))
     if extra_lll_reduction:
         orthog = util.lll_reduce(orthog)
-    Binter = Mbasis@orthog
+    if small and orthog.dtype != object and h11 * Mmax * util.absmax(orthog) < 2**62:
+        Binter = Mbasis @ orthog
+    else:
+        Binter = util.exact_matmul(Mbasis, orthog)
 
     # lll-reduce Binter
     # (doesn't seem to have a huge effect...)
@@ -226,15 +240,15 @@ def coni_M_ellipsoid(p: ArrayLike,
 
     # define ellipsoid
     #       M-term     K-term
-    mat = -(Binter.T)@(Z@Binter)
-
-    if extra_checks:
-        if np.allclose(mat, np.round(mat)):
-            mat = np.rint(mat).astype(int)
-        else:
-            raise ValueError
+    # (exact integer arithmetic: all inputs are integral)
+    bmax = util.absmax(Binter)
+    if small and Binter.dtype != object and h11**2 * (h11 * kmax * pmax) * bmax**2 < 2**62:
+        mat = -(Binter.T @ (Z @ Binter))
     else:
-        mat = np.rint(mat).astype(int)
+        mat = -util.exact_matmul(Binter.T, util.exact_matmul(Z, Binter))
+    if mat.dtype == object:
+        raise OverflowError(
+            f"ellipsoid matrix entries exceed int64 for p={np.array(p).tolist()}")
 
     return mat, Z, Binter
 
@@ -537,19 +551,26 @@ def coniZpM(
         # define a factory function here for later parallelization
         all_Ks = np.zeros((0,h11), dtype=np.int32)
         all_Ms = np.zeros((0,h11), dtype=np.int32)
+        eye_U  = np.eye(h11-1)  # kernel signature needs U; mat= is what is used
+        maxes  = (util.absmax(kappa), util.absmax(Mbasis))
 
         for p in p_chunk:
             p_full = np.concatenate([[0],p])
 
             # construct the quadratic form defining the ellipsoid
-            mat, Z, Binter = coni_M_ellipsoid(
-                p_full,
-                kappa=kappa,
-                Mbasis=Mbasis,
-                extra_lll_reduction=extra_lll_reduction,
-                extra_checks=extra_checks)
+            try:
+                mat, Z, Binter = coni_M_ellipsoid(
+                    p_full,
+                    kappa=kappa,
+                    Mbasis=Mbasis,
+                    extra_lll_reduction=extra_lll_reduction,
+                    extra_checks=extra_checks,
+                    _maxes=maxes)
+            except OverflowError as e:
+                warnings.warn(f"skipping p={p.tolist()}: {e}", stacklevel=2)
+                continue
 
-            ZBinter = np.ascontiguousarray(Z@Binter)
+            ZBinter = np.ascontiguousarray(util.exact_matmul(Z, Binter))
             Binter  = np.ascontiguousarray(  Binter)
 
             # solve for lattice points under tadpole
@@ -564,26 +585,30 @@ def coniZpM(
                         warnings.warn(f"skipping p={p.tolist()}: coni_H_matrix failed ({e})", stacklevel=2)
                         continue
 
+                    # U is unused when mat= is given (the kernel factors
+                    # the exact mat itself), but is part of the signature
                     try:
-                        L = np.linalg.cholesky(mat)
-                    except Exception as e:
-                        warnings.warn(f"skipping p={p.tolist()}: cholesky of mat failed ({e})", stacklevel=2)
+                        lattice_points, rawQs, status = conipfv_kernel(
+                            # ellipsoid definition
+                            U=eye_U,
+                            Q=Q,
+                            dilation=ellipsoid_dilation,
+                            # M0 cuts
+                            linvec=np.ascontiguousarray(Binter[0,:], dtype=np.int64),
+                            linmin=M0min,
+                            # gcd cuts
+                            H=H,
+                            # misc
+                            max_N_out=max_N_pfvs,
+                            eps=1e-4,
+                            mat=mat,
+                        )
+                    except ValueError as e:
+                        # the kernel decides positive-definiteness exactly
+                        if "positive definite" not in str(e):
+                            raise
+                        warnings.warn(f"skipping p={p.tolist()}: {e}", stacklevel=2)
                         continue
-
-                    lattice_points, rawQs, status = conipfv_kernel(
-                        # ellipsoid definition
-                        U=np.ascontiguousarray(L.T),
-                        Q=Q,
-                        dilation=ellipsoid_dilation,
-                        # M0 cuts
-                        linvec=np.ascontiguousarray(Binter[0,:].astype(np.int32)),
-                        linmin=M0min,
-                        # gcd cuts
-                        H=H,
-                        # misc
-                        max_N_out=max_N_pfvs,
-                        eps=1e-4
-                    )
 
                     if status != 0:
                         warnings.warn(f"conipfv_kernel returned status {status} for p={p.tolist()}", stacklevel=2)

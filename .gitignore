@@ -9,7 +9,6 @@ PFVSTRINGS-*
 .pytest_cache/
 .benchmarks/
 .coverage
-pfvs/conipfv_kernel/testing_benchmarks/test_conipfv_kernel
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -23,8 +22,7 @@ __pycache__/
 *.dSYM/
 
 # Cython-generated C files
-pfvs/conipfv_kernel/conipfv_kernel.c
-pfvs/pfv_kernel/pfv_kernel.c
+pfvs/fp_kernel/fp_kernel.c
 
 # Distribution / packaging
 build/
@@ -42,3 +40,7 @@ demo_notebooks/fancier.ipynb
 demo_notebooks/harvesting.ipynb
 demo_notebooks/scans.ipynb
 demo_notebooks/vol_cap.ipynb
+
+# C driver builds
+tests/c/fp_kernel_cli
+tests/c/fp_kernel_cli_stats

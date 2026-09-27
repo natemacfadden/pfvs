@@ -1,92 +1,45 @@
-from setuptools import setup, Extension
-from setuptools.command.develop import develop
-from setuptools.command.build_ext import build_ext as _build_ext
-from Cython.Build import cythonize
 import os
+import platform
+
+from Cython.Build import cythonize
+from setuptools import Extension, setup
+
 
 def get_gmp_paths():
-    """Find GMP from conda environment or system."""
-    conda_prefix = os.environ.get('CONDA_PREFIX')
-
+    """Find GMP from a conda environment, else rely on system default paths."""
+    conda_prefix = os.environ.get("CONDA_PREFIX")
     if conda_prefix:
-        return {
-            'include': os.path.join(conda_prefix, 'include'),
-            'library': os.path.join(conda_prefix, 'lib'),
-        }
-
-    # Fallback to system default paths (empty = use system defaults)
-    return None
-
-kernels = [
-    {
-        "package": "pfvs/conipfv_kernel",
-        "name": "conipfv_kernel",
-        "pyx": "conipfv_kernel.pyx",
-        "impl": "CONIPFV_KERNEL_IMPLEMENTATION",
-        "include": ".",
-        "libraries": ["gmp"],
-    },
-    {
-        "package": "pfvs/pfv_kernel",
-        "name": "pfv_kernel",
-        "pyx": "pfv_kernel.pyx",
-        "impl": "PFV_KERNEL_IMPLEMENTATION",
-        "include": ".",
-        "libraries": ["gmp"],
-    },
-]
-
-extensions = []
-gmp_paths = get_gmp_paths()
-
-for k in kernels:
-    package_path = k["package"]
-    include_dirs = [os.path.join(package_path, k["include"])]
-    library_dirs = []
-
-    # Add GMP paths if needed and available
-    if "gmp" in k.get("libraries", []) and gmp_paths:
-        include_dirs.append(gmp_paths['include'])
-        library_dirs.append(gmp_paths['library'])
-
-    pkg_name = package_path.replace("/", ".")
-    extensions.append(
-        Extension(
-            f"{pkg_name}.{k['name']}",
-            sources=[os.path.join(package_path, k["pyx"])],
-            include_dirs=include_dirs,
-            library_dirs=library_dirs,
-            define_macros=[(k["impl"], None)],
-            libraries=k.get("libraries", []),
-            language="c",
-            extra_compile_args=["-O3"],
-        )
-    )
+        return [os.path.join(conda_prefix, "include")], [os.path.join(conda_prefix, "lib")]
+    return [], []
 
 
-class build_ext(_build_ext):
-    """Custom build_ext to ensure extensions are built in-place for editable installs."""
-    def run(self):
-        self.inplace = 1  # Force in-place build
-        super().run()
+compile_args = ["-O3"]
 
+# Machine-specific build is opt-in via PFVS_NATIVE=1 (the default build must
+# run on any machine of the target architecture, e.g. for wheels)
+if os.environ.get("PFVS_NATIVE") == "1":
+    if platform.machine() in ("arm64", "aarch64"):
+        compile_args += ["-mcpu=native"]
+    else:
+        compile_args += ["-march=native", "-mtune=native"]
 
-class _develop(develop):
-    """Custom develop command to build extensions in-place."""
-    def run(self):
-        # Build extensions in-place before running develop
-        self.reinitialize_command('build_ext', inplace=1)
-        self.run_command('build_ext')
-        super().run()
+gmp_include, gmp_lib = get_gmp_paths()
 
-
+# One kernel (fp_kernel.h) serves both pipelines; `pfvs.conipfv_kernel` and
+# `pfvs.pfv_kernel` re-export its two entry points.
 setup(
     ext_modules=cythonize(
-        extensions,
+        [Extension(
+            "pfvs.fp_kernel.fp_kernel",
+            sources=["pfvs/fp_kernel/fp_kernel.pyx"],
+            include_dirs=["pfvs/fp_kernel"] + gmp_include,
+            library_dirs=gmp_lib,
+            runtime_library_dirs=gmp_lib,
+            libraries=["gmp"],
+            define_macros=[("FP_KERNEL_IMPLEMENTATION", None)],
+            extra_compile_args=compile_args,
+            language="c",
+        )],
         compiler_directives={"language_level": "3"},
     ),
-    cmdclass={
-        'build_ext': build_ext,
-        'develop': _develop,
-    },
 )

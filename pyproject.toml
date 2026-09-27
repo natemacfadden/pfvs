@@ -32,14 +32,14 @@ requires-python = ">=3.9"
 test = [
   "pytest",
   "pytest-benchmark",
+  "pytest-xdist",
 ]
 
 [project.urls]
 Repository = "https://github.com/natemacfadden/pfvs"
 
 [tool.setuptools]
-packages = ["pfvs", "pfvs.conipfv_kernel", "pfvs.pfv_kernel"]
+packages = ["pfvs", "pfvs.fp_kernel", "pfvs.conipfv_kernel", "pfvs.pfv_kernel"]
 
 [tool.setuptools.package-data]
-"pfvs.conipfv_kernel" = ["*.so", "*.pyd"]
-"pfvs.pfv_kernel" = ["*.so", "*.pyd"]
+"pfvs.fp_kernel" = ["*.so", "*.pyd", "*.h"]

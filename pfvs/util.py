@@ -70,7 +70,12 @@ def lll_reduce(B: ArrayLike) -> np.ndarray:
     B = flint.fmpz_mat(B_list).lll(transform=False)
 
     # convert to numpy and transpose back to a column-basis
-    B = np.array(B.tolist(), dtype=int).T
+    # (numpy raises OverflowError rather than wrapping if an entry does not
+    # fit int64; then keep exact Python ints)
+    try:
+        B = np.array(B.tolist(), dtype=np.int64).T
+    except OverflowError:
+        B = np.array([[int(x) for x in row] for row in B.tolist()], dtype=object).T
     return B
 
 # orthogonal lattice
@@ -103,20 +108,11 @@ def extended_euclidean(a: int, b: int) -> tuple[int, int, int]:
     return old_s, old_t, old_r
 
 @njit
-def orthogonal_lattice(p: ArrayLike) -> np.ndarray:
+def _orthogonal_lattice_int64(p: ArrayLike) -> tuple[np.ndarray, bool]:
     """
-    Computes a basis of the lattice orthogonal to p via iterated Bezout
-    reduction. Columns are basis vectors.
-
-    Parameters
-    ----------
-    p : ArrayLike
-        The orthogonal vector. Assumed to be integral.
-
-    Returns
-    -------
-    ArrayLike
-        A basis of the lattice orthogonal to p, as column vectors.
+    int64 kernel of `orthogonal_lattice`. Returns (basis, ok); ok is False if
+    an intermediate would have overflowed int64, in which case the basis is
+    meaningless and the caller must fall back to exact arithmetic.
     """
     n = p.shape[0]
     U = np.eye(n, dtype=p.dtype)
@@ -126,6 +122,7 @@ def orthogonal_lattice(p: ArrayLike) -> np.ndarray:
     # U is kept unimodular throughout, satisfying U @ p_original = w.
     # At the end, w = (gcd(p), 0, ..., 0), so U[1:] @ p_original = 0,
     # meaning the rows of U[1:] span the orthogonal complement.
+    ok = True
     for k in range(1,n):
         # w[k] is already zero, cleared by a prior step
         if w[k] == 0:
@@ -146,6 +143,15 @@ def orthogonal_lattice(p: ArrayLike) -> np.ndarray:
         w[0] = g
         w[k] = 0
 
+        # overflow guard: every |M_ij * U_xr| and their sums stay < 2^62
+        mmax = max(abs(s), abs(t), abs(b//g), abs(a//g))
+        umax = 0.0
+        for r in range(n):
+            umax = max(umax, abs(float(U[0,r])), abs(float(U[k,r])))
+        if 2.0*float(mmax)*umax >= 2.0**62:
+            ok = False
+            break
+
         # Apply M to rows 0 and k of U (i.e., U <- M_extended @ U),
         # maintaining U @ p_original = w.
         for r in range(n):
@@ -156,7 +162,112 @@ def orthogonal_lattice(p: ArrayLike) -> np.ndarray:
 
     # U[0] satisfies U[0] @ p = gcd(p); U[1:] satisfies U[1:] @ p = 0.
     # Return U[1:].T so that the orthogonal basis vectors are columns.
-    return U[1:].T
+    return U[1:].T, ok
+
+def _orthogonal_lattice_exact(p: ArrayLike) -> np.ndarray:
+    """Exact (flint) basis of the lattice orthogonal to p, as columns."""
+    v = [int(x) for x in np.asarray(p).ravel()]
+    U = flint.fmpz_mat([[x] for x in v]).hnf(transform=True)[1]  # U @ p = (g,0,..)
+    B = [[int(U[i, j]) for j in range(len(v))] for i in range(1, len(v))]
+    return _to_int64_or_object(np.array(B, dtype=object).T)
+
+
+def orthogonal_lattice(p: ArrayLike) -> np.ndarray:
+    """
+    Computes a basis of the lattice orthogonal to p via iterated Bezout
+    reduction. Columns are basis vectors.
+
+    Runs in int64 (numba) and falls back to exact arithmetic if that would
+    overflow, so the basis is always correct. (Previously such overflows
+    wrapped silently, corrupting the basis for large p-vectors.) The result
+    is int64 when it fits, else an object array of Python ints.
+
+    Parameters
+    ----------
+    p : ArrayLike
+        The orthogonal vector. Assumed to be integral.
+
+    Returns
+    -------
+    ArrayLike
+        A basis of the lattice orthogonal to p, as column vectors.
+    """
+    p = np.asarray(p)
+    if p.dtype.kind not in "iu" or absmax(p) >= 2**62:
+        return _orthogonal_lattice_exact(p)
+    B, ok = _orthogonal_lattice_int64(p.astype(np.int64, copy=False))
+    if ok:
+        return B
+    return _orthogonal_lattice_exact(p)
+
+
+def _to_int64_or_object(A: np.ndarray) -> np.ndarray:
+    """int64 copy of an integer array if every entry fits, else object."""
+    A = np.asarray(A)
+    if A.dtype != object:
+        return A.astype(np.int64)
+    if A.size == 0 or all(-2**63 <= int(x) < 2**63 for x in A.ravel()):
+        return np.array(A.tolist(), dtype=np.int64).reshape(A.shape)
+    return A
+
+
+def absmax(A: np.ndarray) -> int:
+    """max |A_ij| of an integer array, as a Python int (0 if empty)."""
+    return max(-int(A.min()), int(A.max())) if A.size else 0
+
+
+def _as_integral(A: ArrayLike) -> np.ndarray:
+    """A as an integer (or object) array; raises if it has non-integral entries."""
+    A = np.asarray(A)
+    if A.dtype.kind in "iuO":
+        return A
+    if not np.all(np.isfinite(A)) or not np.all(A == np.round(A)):
+        raise ValueError("expected an integral array")
+    if np.max(np.abs(A), initial=0) >= 2.0**53:
+        raise ValueError("float input too large to be exactly integral")
+    return A.astype(np.int64)
+
+
+def is_positive_definite(mat: ArrayLike) -> bool:
+    """
+    Exact test that a symmetric integer matrix is positive definite (all
+    leading principal minors > 0, via flint), with a cheap float pre-check.
+    """
+    mat = np.asarray(mat)
+    try:
+        np.linalg.cholesky(mat.astype(float))
+        # float Cholesky succeeded: confirm exactly unless comfortably PD
+        ev = np.linalg.eigvalsh(mat.astype(float))
+        if ev[0] > 1e-6 * max(1.0, abs(ev[-1])):
+            return True
+    except np.linalg.LinAlgError:
+        pass
+    M = flint.fmpz_mat([[int(x) for x in r] for r in mat])
+    n = M.nrows()
+    for k in range(1, n + 1):
+        sub = flint.fmpz_mat([[M[i, j] for j in range(k)] for i in range(k)])
+        if sub.det() <= 0:
+            return False
+    return True
+
+
+def exact_matmul(A: ArrayLike, B: ArrayLike) -> np.ndarray:
+    """
+    Integer matrix product A @ B without silent int64 wraparound.
+
+    Uses int64 when a bound on the result shows it cannot overflow (the common
+    case, same result as A @ B); otherwise computes with Python ints and
+    returns int64 if the result fits, else an object array.
+    """
+    A, B = _as_integral(A), _as_integral(B)
+    if A.dtype != object and B.dtype != object:
+        # every partial sum of (A @ B)_ij is at most k * max|A| * max|B|
+        k = A.shape[-1] if A.ndim else 1
+        if k * absmax(A) * absmax(B) < 2**63:
+            return A.astype(np.int64, copy=False) @ B.astype(np.int64, copy=False)
+    Ao = np.array(A.tolist(), dtype=object).reshape(A.shape)
+    Bo = np.array(B.tolist(), dtype=object).reshape(B.shape)
+    return _to_int64_or_object(Ao @ Bo)
 
 # dual lattice
 def dual_lattice(B: ArrayLike) -> tuple[np.ndarray, int]:
