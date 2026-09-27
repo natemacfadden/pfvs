@@ -36,7 +36,7 @@ from numpy.typing import ArrayLike
 # local imports
 from . import util
 from .conipfv_kernel import conipfv_kernel
-from .fp_kernel.fp_kernel import _lattice_build
+from .fp_kernel.fp_kernel import _coni_batch, _lattice_build
 from .cydata import CYData
 
 # coniZp helpers
@@ -404,6 +404,106 @@ def _Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
     # ------
     return null
 
+
+def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
+                      key: np.ndarray, kappa: np.ndarray, h11: int, Q: int,
+                      M0min: int, max_Kperp_gcd: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Turn lattice points into coni-PFVs (the post-processing of coniZpM),
+    vectorized over points from any number of p-vectors.
+
+    Parameters
+    ----------
+    Ms, Kns : ndarray of shape (h11, N)
+        For each lattice point c: M = Binter c and K_nat = (Z Binter) c.
+    Qs : ndarray of shape (N,)
+        c^T mat c (exact).
+    key : ndarray of shape (N,)
+        Output order key (the p-vector's index); results are returned
+        stably sorted by it, matching p-by-p processing.
+
+    Returns
+    -------
+    Ks, Ms, keys : ndarrays of shape (n, h11), (n, h11), (n,)
+    """
+    Ms, Kns = np.asarray(Ms), np.asarray(Kns)
+    Qs, key = np.asarray(Qs), np.asarray(key)
+    empty = (np.zeros((0, h11), dtype=np.int64), np.zeros((0, h11), dtype=np.int64),
+             np.zeros(0, dtype=np.int64))
+    if Qs.shape[0] == 0:
+        return empty
+    if M0min <= 0:
+        raise ValueError("coniZpM requires M0min > 0")
+
+    # cut on feasibility of finding a K0 giving K'>0 (see coniZpM)
+    Kperps = Kns[1:]
+    K_gcds = np.gcd.reduce(Kperps, axis=0)
+    K_gcds[K_gcds < 1] = 1          # K = (x != 0, 0, ..., 0)
+    mask   = Qs < Q * K_gcds
+    Ms, Kns, Qs, K_gcds, key = Ms[:, mask], Kns[:, mask], Qs[mask], K_gcds[mask], key[mask]
+
+    natural_K0s = Kns[0]
+    Kperps      = Kns[1:] // K_gcds
+    M0s         = Ms[0]             # > 0 (the kernel enforces M0 >= M0min)
+    rawQperps   = (Qs + M0s * natural_K0s) // K_gcds
+
+    Ks_out, Ms_out, key_out = [], [], []
+    for Kperp_gcd in range(1, max_Kperp_gcd + 1):
+        # K0 ranges to hit tadpole exactly: (Qperp - Q)/M0 (exact integers)
+        Qperps = Kperp_gcd * rawQperps
+        lo = -((Q - Qperps) // M0s)                          # ceil
+        up = (Qperps - Q) // M0s                             # floor
+        # K' > 0: K0 < natural_K0 * Kperp_gcd / K_gcd, i.e. K0 <= ceil(.) - 1
+        up = np.minimum(up, -((-natural_K0s * Kperp_gcd) // K_gcds) - 1)
+
+        num = 1 + up - lo
+        sel = num > 0
+        num = num[sel]
+        if num.size == 0:
+            continue
+        total = int(np.sum(num))
+        K0s = np.repeat(lo[sel], num) + np.arange(total) \
+            - np.repeat(np.cumsum(num) - num, num)
+
+        new_Ks = np.vstack([K0s, np.repeat(Kperp_gcd * Kperps[:, sel], num, axis=1)])
+        new_Ms = np.repeat(Ms[:, sel], num, axis=1)
+        new_key = np.repeat(key[sel], num)
+
+        tad = -np.sum(new_Ks * new_Ms, axis=0)
+        if np.any(tad > Q):
+            i = int(np.argmax(tad > Q))
+            raise RuntimeError(
+                f"Tadpole violation: -dot(K,M)={tad[i]} > Q={Q}. "
+                f"K={new_Ks[:, i].tolist()}, M={new_Ms[:, i].tolist()}")
+        Ks_out.append(new_Ks); Ms_out.append(new_Ms); key_out.append(new_key)
+
+    if not Ks_out:
+        return empty
+    Ks, Ms, key = np.hstack(Ks_out), np.hstack(Ms_out), np.concatenate(key_out)
+
+    # filter by N invertibility
+    singular = []
+    for i in range(0, Ms.shape[1], 5000):
+        chunk = Ms[:, i:i+5000]
+        Ns = (kappa.reshape(h11*h11, h11) @ chunk).reshape(h11, h11, -1)
+        Ns = Ns.transpose(2, 0, 1)[:, 1:, 1:]
+        singular.append(_check_singular(Ns))
+    singular = np.concatenate(singular)
+    Ks, Ms, key = Ks[:, ~singular], Ms[:, ~singular], key[~singular]
+
+    order = np.argsort(key, kind="stable")
+    return Ks.T[order], Ms.T[order], key[order]
+
+def _raise_kernel_status(p, status: int):
+    """Raise IncompleteSearchError for a nonzero kernel status."""
+    reason = {-2: "(more than max_N_pfvs outputs; increase max_N_pfvs)",
+              -8: "(lattice-point coordinates exceed int32)",
+              -9: "(the ellipsoid matrix is not positive definite, so its "
+                  "lattice points cannot be enumerated)"}.get(status, "")
+    raise util.IncompleteSearchError(
+        f"p={np.asarray(p).tolist()}: conipfv_kernel returned status {status} {reason}")
+
+
 # coni Zp
 # =======
 def coniZpM(
@@ -537,9 +637,6 @@ def coniZpM(
     if max_Kperp_gcd > 1:
         warnings.warn("max_Kperp_gcd > 1 is not well-tested", stacklevel=2)
 
-    # misc (left for future debugging)
-    only_positive_news = False
-
     # read data
     kappa  = data.kappa_cob
     h11    = data.h11
@@ -558,12 +655,29 @@ def coniZpM(
 
     def _make_pfvs(p_chunk, job_i=0):
         # define a factory function here for later parallelization
-        all_Ks = np.zeros((0,h11), dtype=np.int32)
-        all_Ms = np.zeros((0,h11), dtype=np.int32)
         eye_U  = np.eye(h11-1)  # kernel signature needs U; mat= is what is used
         maxes  = (util.absmax(kappa), util.absmax(Mbasis))
 
-        for p in p_chunk:
+        pieces = []                     # (Ks, Ms, order key = index in p_chunk)
+        p_chunk = np.asarray(p_chunk)
+        todo = range(len(p_chunk))
+
+        # batched C path: lattice setup + kernel for all p at once; p-vectors
+        # it cannot handle exactly (status 1) go through the per-p path below
+        if use_c_lattice and not use_gcd_lattice and len(p_chunk):
+            p_full_all = np.hstack([np.zeros((len(p_chunk), 1), dtype=np.int64),
+                                    p_chunk.astype(np.int64)])
+            Mv, Kv, qv, pv, pstat = _coni_batch(
+                kappa, Mbasis, p_full_all, Q, ellipsoid_dilation, M0min,
+                max_N_pfvs, extra_lll_reduction)
+            for ip in np.flatnonzero(pstat < 0):
+                _raise_kernel_status(p_chunk[ip], int(pstat[ip]))
+            pieces.append(_pfvs_from_points(Mv.T, Kv.T, qv, pv, kappa, h11, Q,
+                                            M0min, max_Kperp_gcd))
+            todo = np.flatnonzero(pstat == 1)
+
+        for ip in todo:
+            p = p_chunk[ip]
             p_full = np.concatenate([[0],p])
 
             # construct the quadratic form defining the ellipsoid
@@ -627,12 +741,7 @@ def coniZpM(
                             f"definite, so its lattice points cannot be enumerated") from e
 
                     if status != 0:
-                        raise util.IncompleteSearchError(
-                            f"p={p.tolist()}: conipfv_kernel returned status {status} "
-                            + ("(more than max_N_pfvs outputs; increase max_N_pfvs)"
-                               if status == -2 else
-                               "(lattice-point coordinates exceed int32)"
-                               if status == -8 else ""))
+                        _raise_kernel_status(p, status)
 
                 # use GCD lattices
                 # ----------------
@@ -680,217 +789,20 @@ def coniZpM(
                     f"Kernel failed for p={np.array(p).tolist()}: {type(e).__name__}: {e}"
                 ) from e
 
-            lattice_points = lattice_points.T
-
-            # compute/cut Ms
-            # ==============
-            # (process in chunks)
-            chunk_size = 10_000_000
-            chunk_num  = 0
-            for chunk_start in range(0, lattice_points.shape[1], chunk_size):
-                if (verbosity >= 1) and (lattice_points.shape[1] > chunk_size):
-                    print(f"Chunk #{chunk_num}..."); chunk_num += 1
-
-                # read data from fp_ellipsoid
-                # ---------------------------
-                cs  = lattice_points[:,chunk_start:chunk_start+chunk_size]
-                Qs  = rawQs[chunk_start:chunk_start+chunk_size]
-
-                # cut on feasibility of finding a K0 giving K'>0
-                # ----------------------------------------------
-                # for 0 <= K_scaling <= 1
-                # for Qperp = -dot(Knat[1:],M[1:])
-                #
-                # (A)
-                # K' = -K[0] + Knat[0]*K_scaling
-                # K' > 0  <=> K[0] < Knat[0]*K_scaling
-                #
-                # (B)
-                # Q = -K[0]*M[0] + Qperp*K_scaling
-                # K[0] = (Qperp*K_scaling) - Q)/M[0]
-                #
-                # (B into LHS of A)
-                # (Qperp*K_scaling) - Q)/M[0] < Knat[0]*K_scaling
-                # ...
-                # Qperp < M[0]*Knat[0] + Q/Kscaling
-                #
-                # (more obvious format)
-                # -M[1:]^T@Knat[1:] - M[0]*Knat[0] < Q/Kscaling
-                # -M.T @ Knat < Q/Kscaling
-                # -c.T @ Binter.T @ Z @ Binter @ c < Q/Kscaling
-                # DOH!... same matrix!
-                if low_level_parallelism:
-                    K_gcds = _gcd_of_matmul(ZBinter[1:], cs)
-                else:
-                    Kperps = ZBinter[1:]@cs
-                    K_gcds = np.gcd.reduce(Kperps, axis=0)
-
-                # cure cases where K_gcd = 0
-                # think this should just occur if K = (x!=0,0,...,0)
-                K_gcds[K_gcds<1] = 1
-
-                mask   = Qs < Q * K_gcds
-                cs     = cs[:,mask]
-                Qs     = Qs[mask]
-                K_gcds = K_gcds[mask]
-
-                if low_level_parallelism:
-                    Kperps = ZBinter[1:]@cs
-                else:
-                    Kperps = Kperps[:,mask]
-
-                # compute Ks
-                # ----------
-                natural_K0s = ZBinter[0]@cs
-                Ks          = np.vstack(
-                    [np.zeros((1,Kperps.shape[1]),dtype=np.int32),
-                    Kperps
-                ])
-                Kperps      = Ks//K_gcds
-
-                # compute M0s
-                # -----------
-                M0s = Binter[0] @ cs
-
-                # Q considerations
-                # ----------------
-                # subtract the K[0]*M[0] contribution
-                rawQperps = Qs + M0s*natural_K0s
-                rawQperps = rawQperps//K_gcds
-
-                # set K0s
-                # (set to obey tadpole ranges, K'>0)
-                # ----------------------------------
-                Ks = np.zeros((h11,0), dtype=np.int32)
-                Ms = np.zeros((h11,0), dtype=np.int32)
-
-                if Kperps.shape[1]:
-                    for Kperp_gcd in range(1,max_Kperp_gcd+1):
-                        # ranges for K0 to exactly hit tadpole
-                        # ------------------------------------
-                        Qperps = Kperp_gcd*rawQperps
-                        # Q             = Qperp - M[0]*K[0]
-                        # Qmin         <= Qperp - M[0]*K[0] <= Qmax
-                        # Qmin - Qperp <=       - M[0]*K[0] <= Qmax - Qperp
-                        # Qperp - Qmin >=         M[0]*K[0] >= Qperp - Qmax
-                        # if M[0] > 0:
-                        #    (Qperp - Qmax)/M[0] <= K[0] <= (Qperp - Qmin)/M[0]
-                        if M0min > 0:
-                            lo = np.ceil(( Qperps - Q)/M0s).astype(int)
-                            up = np.floor((Qperps - Q)/M0s).astype(int)
-                        else:
-                            raise ValueError
-
-                        # ranges for K0 to give K'>0
-                        # --------------------------
-                        # Kperp  = (natural Kperp) * Kperp_gcd/K_gcds
-                        # K'     = -K[0] + (natural K)[0] * Kperp_gcd/K_gcds
-                        # K' > 0 => K[0] < (natural K)[0] * Kperp_gcd/K_gcds
-                        # (subtract 1e-4 to enforce K'>0, not K'>=0)
-                        tmp = np.floor((natural_K0s*Kperp_gcd-1e-4)/K_gcds)
-                        tmp = tmp.astype(int)
-                        up  = np.minimum(up, tmp.astype(int))
-
-                        # compute the PFVs
-                        # (any lo<=K0<=up should work...)
-                        # ===============================
-                        # get a mask for the (Kperp, M) pairs that have PFVs
-                        num_K0s_perM  = 1 + up - lo
-                        mask          = (num_K0s_perM > 0)
-
-                        # compute the number of PFVs
-                        num_K0s_perM  = num_K0s_perM[mask]  # trim the 0s...
-                        total_pfvs    = np.sum(num_K0s_perM)
-
-                        # fill K0 ranges
-                        # --------------
-                        # (think: K0s = lo + range(up))
-
-                        # set K0s = lo
-                        K0s  = np.repeat(lo[mask], num_K0s_perM)
-
-                        # add range(up)
-                        K0s += np.arange(total_pfvs)
-                        K0s -= np.repeat(
-                            np.cumsum(num_K0s_perM) - num_K0s_perM,
-                            num_K0s_perM
-                        )
-
-                        # prepend the K0s to the Ks
-                        # -------------------------
-                        new_Ks = np.repeat(
-                            Kperp_gcd*Kperps[1:,mask],
-                            num_K0s_perM,
-                            axis=1
-                        )
-                        new_Ks = np.vstack([K0s, new_Ks])
-
-                        # get the Ms
-                        Mperps = Binter[1:]@cs[:,mask]
-                        new_M0s    = np.repeat(
-                            M0s[mask].reshape(1,-1),
-                            num_K0s_perM,
-                            axis=1
-                        )
-                        new_Mperps = np.repeat(Mperps, num_K0s_perM, axis=1)
-                        new_Ms = np.vstack([new_M0s, new_Mperps])
-
-                        if not all(-np.sum(new_Ks*new_Ms, axis=0) <= Q):
-                            inds = np.where(-np.sum(new_Ks*new_Ms,axis=0) > Q)
-                            i = inds[0]
-
-                            tadpole = -np.sum(new_Ks*new_Ms, axis=0)[i]
-                            raise RuntimeError(
-                                f"Tadpole violation: -dot(K,M)={tadpole} "
-                                f"> Q={Q}. K={new_Ks[:,i].T.tolist()}, "
-                                f"M={new_Ms[:,i].T.tolist()}"
-                            )
-
-                        # save
-                        # ====
-                        Ks = np.hstack([Ks, new_Ks])
-                        Ms = np.hstack([Ms, new_Ms])
-
-                if verbosity >= 2:
-                    print(f'# PFVs after setting K0s = {Ms.shape[1]}')
-
-                # filter by N invertibility
-                # -------------------------
-                batch_size = 5000
-                singular = []
-                for i in range(0, Ms.shape[1], batch_size):
-                    chunk = Ms[:,i:i+batch_size]
-
-                    Ns = (kappa.reshape(h11*h11,h11)@chunk).reshape(h11,h11,-1)
-                    Ns = Ns.transpose(2,0,1) # (N,h11,h11)
-                    Ns = Ns[:,1:,1:]
-
-                    singular.append(_check_singular(Ns))
-
-                if not singular:
-                    continue
-                singular = np.concatenate(singular)
-
-                if verbosity >= 2:
-                    if len(singular) and not only_positive_news:
-                        print(f"{sum(singular)}/{len(singular)} 'PFVs' had det(N)=0 :(")
-
-                Ms = Ms[:,~singular]
-                Ks = Ks[:,~singular]
-
-                if verbosity >= 2:
-                    print(f'# invertible = {Ms.shape[1]}')
-
-                # transpose to row-wise
-                Ks, Ms = Ks.T, Ms.T
-
-                # save to data structures
-                all_Ks        = np.vstack([all_Ks, Ks])
-                all_Ms        = np.vstack([all_Ms, Ms])
+            # post-processing (shared with the batched path)
+            Mv = util.exact_matmul(Binter, np.asarray(lattice_points).T)
+            Kv = util.exact_matmul(ZBinter, np.asarray(lattice_points).T)
+            pieces.append(_pfvs_from_points(
+                Mv, Kv, rawQs, np.full(len(rawQs), ip), kappa, h11, Q, M0min,
+                max_Kperp_gcd))
 
         print(f"Finished job #{job_i}...",flush=True)
 
-        return all_Ks, all_Ms
+        Ks   = np.vstack([pc[0] for pc in pieces] or [np.zeros((0, h11), dtype=np.int64)])
+        Ms   = np.vstack([pc[1] for pc in pieces] or [np.zeros((0, h11), dtype=np.int64)])
+        keys = np.concatenate([pc[2] for pc in pieces] or [np.zeros(0, dtype=np.int64)])
+        order = np.argsort(keys, kind="stable")      # p-by-p order
+        return Ks[order], Ms[order]
 
     # actually run the jobs
     if n_jobs > 1:

@@ -24,7 +24,7 @@ import numpy as np
 
 from libc.stdint cimport int32_t, int64_t
 from libc.string cimport memcpy, memset
-from libc.stdlib cimport malloc, free
+from libc.stdlib cimport malloc, free, realloc
 
 # GMP
 # ---
@@ -49,6 +49,7 @@ cdef extern from "fp_kernel.h":
         int64_t Q
         int nrows
         mpz_t *H
+        const int64_t *H64
         int strict
         const int64_t *linvec
         int64_t linmin
@@ -65,10 +66,11 @@ cdef extern from "fp_kernel.h":
         long n_leaf
 
     int  fpk_enumerate(const fpk_problem *P, fpk_output *out) nogil
-    void fpk_output_free(fpk_output *out)
+    void fpk_output_free(fpk_output *out) nogil
 
 
 cdef extern from "pfv_lattice.h":
+    ctypedef long long pfl_i128_t "pfl_i128"
     ctypedef struct pfl_setup:
         int h11
         const int64_t *kappa
@@ -81,10 +83,17 @@ cdef extern from "pfv_lattice.h":
         int64_t Binter[64 * 63]
         int64_t ZB[64 * 63]
         int64_t mat[63 * 63]
-        long long H[64 * 63 * 2]
+        pfl_i128_t H[64 * 63]
         int nrows
 
     int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R) nogil
+
+
+cdef extern from *:
+    """
+    #define INT64_MAX_128 ((pfl_i128)INT64_MAX)
+    """
+    pfl_i128_t INT64_MAX_128
 
 
 # helpers
@@ -182,6 +191,7 @@ def _enumerate(U, mat, long long Q, long long qmax, H, linvec, long long linmin,
     P.Q = Q
     P.nrows = nrows
     P.H = H_gmp
+    P.H64 = NULL
     P.strict = strict
     P.linvec = lin_ptr
     P.linmin = linmin
@@ -364,7 +374,7 @@ def _lattice_build(kappa, Mbasis, p, bint coni, bint extra_lll=True):
         if st == -15:      # all but H valid: caller computes the HNF
             return st, Z, B, ZB, mat, None
         # H is int128 in C: two int64 words per entry (little-endian)
-        w = np.array(<int64_t[:2 * R.nrows * d]> <int64_t *> R.H).reshape(-1, 2)
+        w = np.array(<int64_t[:2 * R.nrows * d]> <int64_t *> &R.H[0]).reshape(-1, 2)
         lo = w[:, 0].view(np.uint64).astype(object)
         hi = w[:, 1].astype(object)
         Hv = (hi * (1 << 64) + lo)
@@ -374,3 +384,152 @@ def _lattice_build(kappa, Mbasis, p, bint coni, bint extra_lll=True):
         return 0, Z, B, ZB, mat, H
     finally:
         free(R)
+
+
+# batched coni pipeline: lattice setup + kernel, no Python per p-vector
+# --------------------------------------------------------------------
+def _coni_batch(kappa, Mbasis, ps, long long Q, double dilation, double M0min,
+                long max_N_out, bint extra_lll=True, double eps=1e-4):
+    """
+    For each coni p-vector (rows of ps, full length h11 with p[0] = 0): build
+    the lattice data (pfv_lattice.h) and run the kernel, returning for every
+    lattice point c found
+
+        M = Binter c,   Kn = (Z Binter) c,   q = c^T mat c,   pidx
+
+    (everything coniZpM's post-processing needs), plus a per-p status:
+        0: done (its points are included)
+        1: not handled here (lattice setup overflowed, H or M/Kn beyond
+           int64): process this p with the exact per-p path
+       <0: the kernel's status (e.g. -2 too many outputs, -8 coordinates
+           beyond int32, -9 not positive definite)
+    """
+    cdef int64_t[::1] k_c = np.ascontiguousarray(kappa, dtype=np.int64).reshape(-1)
+    cdef int64_t[:, ::1] M_c = np.ascontiguousarray(Mbasis, dtype=np.int64)
+    cdef int64_t[:, ::1] p_c = np.ascontiguousarray(ps, dtype=np.int64).reshape(-1, M_c.shape[0])
+    cdef int h = M_c.shape[0]
+    cdef int d = h - 1
+    cdef Py_ssize_t n = p_c.shape[0]
+    if h > 64 or h < 2 or k_c.shape[0] != h * h * h:
+        raise ValueError("inconsistent shapes (or h11 > 64)")
+    status_np = np.zeros(n, dtype=np.int32)
+    cdef int[::1] status = status_np
+    if n == 0:
+        z = np.empty((0, h), dtype=np.int64)
+        return z, z.copy(), np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64), status_np
+
+    cdef pfl_setup S
+    S.h11 = h
+    S.kappa = &k_c[0]
+    S.Mbasis = &M_c[0, 0]
+    S.coni = 1
+    S.extra_lll = extra_lll
+    cdef fpk_problem P
+    memset(&P, 0, sizeof(P))
+    P.dim = d
+    P.qmax = _qmax(Q, dilation)
+    P.Q = Q
+    P.strict = 1
+    P.linmin = math.ceil(M0min - 1e-9)
+    P.max_N_out = max_N_out
+    P.eps = eps
+
+    cdef pfl_result *R = <pfl_result *> malloc(sizeof(pfl_result))
+    cdef int64_t *H64 = <int64_t *> malloc(h * d * sizeof(int64_t))
+    cdef int64_t *Mb = NULL
+    cdef int64_t *Kb = NULL
+    cdef int64_t *qb = NULL
+    cdef int64_t *pb = NULL
+    cdef Py_ssize_t cnt = 0, cap = 0, start, t, newcap
+    cdef Py_ssize_t ip
+    cdef int st, a, i, bad, k
+    cdef fpk_output out
+    cdef pfl_i128_t acc_m, acc_k, hv
+    cdef void *tmp
+    if R == NULL or H64 == NULL:
+        free(R); free(H64)
+        raise MemoryError()
+    try:
+        with nogil:
+            for ip in range(n):
+                st = pfl_build(&S, &p_c[ip, 0], R)
+                if st != 0:
+                    status[ip] = 1
+                    continue
+                bad = 0
+                for k in range(R.nrows * d):
+                    hv = R.H[k]
+                    if hv > INT64_MAX_128 or hv < -INT64_MAX_128:
+                        bad = 1
+                        break
+                    H64[k] = <int64_t> hv
+                if bad:
+                    status[ip] = 1
+                    continue
+                P.mat = &R.mat[0]
+                P.nrows = R.nrows
+                P.H64 = H64
+                P.linvec = &R.Binter[0]          # row 0 of Binter: M0 = linvec . c
+                memset(&out, 0, sizeof(out))
+                st = fpk_enumerate(&P, &out)
+                if st != 0:
+                    status[ip] = st
+                    fpk_output_free(&out)
+                    continue
+                if cnt + out.n > cap:
+                    newcap = 2 * cap if 2 * cap > cnt + out.n else cnt + out.n + 64
+                    tmp = realloc(Mb, newcap * h * sizeof(int64_t))
+                    if tmp == NULL:
+                        status[ip] = -7; fpk_output_free(&out); continue
+                    Mb = <int64_t *> tmp
+                    tmp = realloc(Kb, newcap * h * sizeof(int64_t))
+                    if tmp == NULL:
+                        status[ip] = -7; fpk_output_free(&out); continue
+                    Kb = <int64_t *> tmp
+                    tmp = realloc(qb, newcap * sizeof(int64_t))
+                    if tmp == NULL:
+                        status[ip] = -7; fpk_output_free(&out); continue
+                    qb = <int64_t *> tmp
+                    tmp = realloc(pb, newcap * sizeof(int64_t))
+                    if tmp == NULL:
+                        status[ip] = -7; fpk_output_free(&out); continue
+                    pb = <int64_t *> tmp
+                    cap = newcap
+                start = cnt
+                bad = 0
+                for t in range(out.n):
+                    for i in range(h):
+                        acc_m = 0
+                        acc_k = 0
+                        for a in range(d):
+                            acc_m = acc_m + <pfl_i128_t> R.Binter[i * d + a] * out.pts[t * d + a]
+                            acc_k = acc_k + <pfl_i128_t> R.ZB[i * d + a] * out.pts[t * d + a]
+                        if (acc_m > INT64_MAX_128 or acc_m < -INT64_MAX_128 or
+                                acc_k > INT64_MAX_128 or acc_k < -INT64_MAX_128):
+                            bad = 1
+                        Mb[cnt * h + i] = <int64_t> acc_m
+                        Kb[cnt * h + i] = <int64_t> acc_k
+                    qb[cnt] = out.qs[t]
+                    pb[cnt] = ip
+                    cnt += 1
+                fpk_output_free(&out)
+                if bad:                          # hand this p to the exact path
+                    cnt = start
+                    status[ip] = 1
+
+        Mv = np.empty((cnt, h), dtype=np.int64)
+        Kv = np.empty((cnt, h), dtype=np.int64)
+        qv = np.empty(cnt, dtype=np.int64)
+        pv = np.empty(cnt, dtype=np.int64)
+        if cnt:
+            _copy_i64(Mv.reshape(-1), Mb, cnt * h)
+            _copy_i64(Kv.reshape(-1), Kb, cnt * h)
+            _copy_i64(qv, qb, cnt)
+            _copy_i64(pv, pb, cnt)
+        return Mv, Kv, qv, pv, status_np
+    finally:
+        free(R); free(H64); free(Mb); free(Kb); free(qb); free(pb)
+
+
+cdef void _copy_i64(int64_t[::1] dst, const int64_t *src, Py_ssize_t n):
+    memcpy(&dst[0], src, n * sizeof(int64_t))

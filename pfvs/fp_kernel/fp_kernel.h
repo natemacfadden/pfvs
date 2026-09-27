@@ -82,7 +82,8 @@ typedef struct {
     // GCD cut (disabled if nrows == 0)
     int64_t        Q;        // > 0
     int            nrows;
-    mpz_t         *H;        // (nrows, dim) row-major
+    mpz_t         *H;        // (nrows, dim) row-major (ignored if H64)
+    const int64_t *H64;      // optional: H as int64 (skips GMP), or NULL
     int            strict;
     // M0 cut (disabled if linvec == NULL)
     const int64_t *linvec;   // (dim,)
@@ -744,6 +745,12 @@ int fpk_enumerate(const fpk_problem *P, fpk_output *out)
             int lvl = -1;
             is_small[r] = 1;
             for (int j = 0; j < dim; ++j) {
+                if (P->H64) {
+                    int64_t x = P->H64[r * dim + j];
+                    if (lvl < 0 && x != 0) lvl = j;
+                    Hs[r * dim + j] = x;
+                    continue;
+                }
                 mpz_t *h = &P->H[r * dim + j];
                 if (lvl < 0 && mpz_sgn(*h) != 0) lvl = j;
                 if (mpz_fits_slong_p(*h) && sizeof(long) >= 8) {
