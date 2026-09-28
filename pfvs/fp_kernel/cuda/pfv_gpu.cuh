@@ -50,16 +50,18 @@ enum {
     ST_CPU   = 2,      // needs the host (overflow, GMP, LLL failure)
 };
 
-template <int MH, typename GGT>
+template <int MH, typename GGT, typename R>
 struct Work {
-    int64_t Binter[MH * MH], ZB[MH * MH];     // (h, d)
-    int64_t mat[MH * MH];                     // (d, d)
-    int64_t tmp[MH * MH];
+    // matrices used only by the products around the LLLs: global scratch
+    // (per p, MH x MH each, set by the caller), keeping shared memory -- which
+    // bounds how many tiles an SM holds -- for the LLL's working set
+    int64_t *Binter, *ZB;                     // (h, d)
+    int64_t *mat;                             // (d, d)
+    int64_t *tmp, *T;                         // scratch; (d, d) basis change
     struct {
         int64_t B[MH * MH];                   // rows: basis (+ `last` at row m)
         GGT     GG[MH * MH];                  // exact Gram, stride MH
-        double  mu[MH][MH], bb[MH], ibb[MH];
-        int64_t T[MH * MH];                   // (d, d) basis change
+        R       mu[MH][MH], bb[MH], ibb[MH];   // Gram-Schmidt (float or double)
     } l;
     int order[MH];
     int flag;                                 // status (any lane may set)
@@ -88,29 +90,32 @@ __device__ inline bool gg_store<pfl_i128>(pfl_i128 *dst, pfl_i128 x)
 // swapped), as pfl_lll_core does with `last`. Returns 0, -1 (overflow; an
 // int64 Gram overflow sets flag ST_OVF64), -2 (not positive), -3 (no
 // convergence).
-template <int MH, typename GGT>
-__device__ int tile_lll(Tile t, Work<MH, GGT> *W, int m, int n, int has_last)
+template <int MH, typename GGT, typename R>
+__device__ int tile_lll(Tile t, Work<MH, GGT, R> *W, int m, int n, int has_last)
 {
     const int lane = t.thread_rank();
     const int M = m + has_last;
     int64_t *B = W->l.B;
     GGT *GG = W->l.GG;
-    double (*mu)[MH] = W->l.mu;
-    double *bb = W->l.bb, *ibb = W->l.ibb;
-    const double delta = 0.99;
+    R (*mu)[MH] = W->l.mu;
+    R *bb = W->l.bb, *ibb = W->l.ibb;
+    const R delta = (R)0.99;
+    // float may fail to converge where double would: give up early (the
+    // caller then redoes the p in double)
+    const int max_iters = sizeof(R) == 4 ? 64 * m * m + 256 : 100000;
 
     // Gram-Schmidt of row kk from the exact Gram (forward substitution; lane
     // j holds r_j = G_kj - sum_{l<j} mu_jl r_l)
     auto GS = [&](int kk) {
-        double r = lane <= kk ? (double)GG[kk * MH + lane] : 0.0;
-        double acc = 0.0;
+        R r = lane <= kk ? (R)GG[kk * MH + lane] : (R)0;
+        R acc = (R)0;
         for (int l = 0; l < kk; ++l) {
-            double rl = t.shfl(r, l);
+            R rl = t.shfl(r, l);
             if (lane > l && lane < kk) r -= mu[lane][l] * rl;
             if (lane == kk) acc += rl * ibb[l] * rl;
             if (lane == 0) mu[kk][l] = rl * ibb[l];
         }
-        if (lane == kk) { bb[kk] = r - acc; ibb[kk] = 1.0 / (r - acc); }
+        if (lane == kk) { bb[kk] = r - acc; ibb[kk] = (R)1 / (r - acc); }
         t.sync();
     };
     // b_kk -= q b_jj on the vectors and the exact Gram
@@ -149,9 +154,9 @@ __device__ int tile_lll(Tile t, Work<MH, GGT> *W, int m, int n, int has_last)
         for (int pass = 0; pass < 4; ++pass) {
             int changed = 0;
             for (int j = k - 1; j >= 0; --j) {
-                double q = nearbyint(mu[k][j]);
-                if (q == 0.0) continue;
-                if (!(fabs(q) <= 9.0e18)) return -1;
+                R q = rint(mu[k][j]);
+                if (q == (R)0) continue;
+                if (!(fabs(q) <= (R)9.0e18)) return -1;
                 int64_t qi = (int64_t)q;
                 if (SUB(k, j, qi)) return -1;
                 if (lane < j) mu[k][lane] -= q * mu[j][lane];
@@ -169,7 +174,7 @@ __device__ int tile_lll(Tile t, Work<MH, GGT> *W, int m, int n, int has_last)
     if (m >= 2) GS(1);
     int k = 1, iters = 0;
     while (k < m) {
-        if (++iters > 100000) return -3;
+        if (++iters > max_iters) return -3;
         if (SR(k)) return -1;
         if (!(bb[k] > 0)) return -2;
         if (bb[k] < (delta - mu[k][k - 1] * mu[k][k - 1]) * bb[k - 1]) {
@@ -237,8 +242,8 @@ __device__ inline int pre_build(int h, const int64_t *kappa, const int64_t *Mb,
 // The LLL part of pfl_build (coni, extra_lll, m0_basis) for one p, from
 // Z and O (global, contiguous). On success W holds Binter, ZB, mat (strides
 // MH); returns 0, else a status (ST_OVF64 / ST_CPU).
-template <int MH, typename GGT>
-__device__ int tile_build(Tile t, Work<MH, GGT> *W, int h, const int64_t *Z,
+template <int MH, typename GGT, typename R>
+__device__ int tile_build(Tile t, Work<MH, GGT, R> *W, int h, const int64_t *Z,
                           const int64_t *O, const int64_t *Mb)
 {
     const int lane = t.thread_rank(), d = h - 1;
@@ -260,7 +265,7 @@ __device__ int tile_build(Tile t, Work<MH, GGT> *W, int h, const int64_t *Z,
     t.sync();
     if (t.any(bad)) return ST_CPU;
     if (W->flag) return W->flag;
-    if (tile_lll<MH, GGT>(t, W, d, h, 0)) return W->flag ? W->flag : ST_CPU;
+    if (tile_lll<MH, GGT, R>(t, W, d, h, 0)) return W->flag ? W->flag : ST_CPU;
 
     // BT[a][i] = sum_l O[a][l] Mb[i][l]  (into tmp, (d, h))
     for (int e = lane; e < d * h; e += TL) {
@@ -338,26 +343,26 @@ __device__ int tile_build(Tile t, Work<MH, GGT> *W, int h, const int64_t *Z,
         t.sync();
         if (t.any(bad)) return ST_CPU;
         if (W->flag) return W->flag;
-        if (tile_lll<MH, GGT>(t, W, d - 1, d, 1)) return W->flag ? W->flag : ST_CPU;
+        if (tile_lll<MH, GGT, R>(t, W, d - 1, d, 1)) return W->flag ? W->flag : ST_CPU;
         // T columns = basis rows (K..., w)
         for (int e = lane; e < d * d; e += TL) {
             int i = e / d, a = e % d;
-            W->l.T[i * MH + a] = W->l.B[a * MH + i];
+            W->T[i * MH + a] = W->l.B[a * MH + i];
         }
         t.sync();
-        if (tile_matmul<MH>(t, W->Binter, W->l.T, W->tmp, h, d, d)) return ST_CPU;
+        if (tile_matmul<MH>(t, W->Binter, W->T, W->tmp, h, d, d)) return ST_CPU;
         for (int e = lane; e < h * d; e += TL) W->Binter[(e / d) * MH + e % d] = W->tmp[(e / d) * MH + e % d];
         t.sync();
-        if (tile_matmul<MH>(t, W->ZB, W->l.T, W->tmp, h, d, d)) return ST_CPU;
+        if (tile_matmul<MH>(t, W->ZB, W->T, W->tmp, h, d, d)) return ST_CPU;
         for (int e = lane; e < h * d; e += TL) W->ZB[(e / d) * MH + e % d] = W->tmp[(e / d) * MH + e % d];
         t.sync();
         // mat <- T^T (mat T)
-        if (tile_matmul<MH>(t, W->mat, W->l.T, W->tmp, d, d, d)) return ST_CPU;
+        if (tile_matmul<MH>(t, W->mat, W->T, W->tmp, d, d, d)) return ST_CPU;
         for (int e = lane; e < d * d; e += TL) {
             int a = e / d, b = e % d;
             pfl_i128 s = 0;
             for (int i = 0; i < d; ++i)
-                if (fpk_add_ovf(s, (pfl_i128)W->l.T[i * MH + a] * W->tmp[i * MH + b], &s)) bad = 1;
+                if (fpk_add_ovf(s, (pfl_i128)W->T[i * MH + a] * W->tmp[i * MH + b], &s)) bad = 1;
             if (!PFL_FITS64(s)) bad = 1; else W->l.B[a * MH + b] = (int64_t)s;   // (B free now)
         }
         t.sync();

@@ -220,23 +220,38 @@ __global__ void k_pre(Glob G, int n, int64_t *Og)
     D->status = st ? ST_CPU : ST_PRE;
 }
 
-template <typename GGT>
-__global__ void __launch_bounds__(pfg::TL) k_build(Glob G, int n, const int *idx, const int64_t *Og, int *retry, int *nretry)
+// Lattice setup, stage by stage over retry lists: <int64 Gram, float GS>
+// for every p; failures are redone with a double Gram-Schmidt (retryA), and
+// int64 Gram overflows with an int128 Gram (retryB). A float LLL only ever
+// fails to converge or loses a pivot's sign -- it cannot produce a wrong
+// basis (all basis operations are exact) -- so the retries cost time only.
+#ifndef PFG_TPB
+#define PFG_TPB 2
+#endif
+enum { TPB = PFG_TPB };            // tiles per block (two 16-lane tiles fill a warp)
+template <typename GGT, typename R>
+__global__ void __launch_bounds__(TPB * pfg::TL) k_build(Glob G, int n, const int *idx, const int64_t *Og,
+                                                         int64_t *Xg, int *retryA, int *nA, int *retryB, int *nB)
 {
-    __shared__ pfg::Work<MH, GGT> W;
+    __shared__ pfg::Work<MH, GGT, R> Ws[TPB];
     auto t = pfg::cg::tiled_partition<pfg::TL>(pfg::cg::this_thread_block());
-    const int lane = t.thread_rank();
-    const int k = blockIdx.x;
-    if (k >= n) return;
+    const int lane = t.thread_rank(), ti = threadIdx.x / pfg::TL;
+    const int k = blockIdx.x * TPB + ti;
+    if (k >= n) return;                                   // uniform per tile
     const int ip = idx ? idx[k] : k;
     PData *D = &G.pd[ip];
     if (D->status != ST_PRE) return;
     const Geo &g = G.geo[D->geo];
     const int h = g.h, d = h - 1;
-    int st = pfg::tile_build<MH, GGT>(t, &W, h, D->R.Z, &Og[(size_t)ip * MH * MH], &G.Mb[g.moff]);
+    pfg::Work<MH, GGT, R> &W = Ws[ti];
+    int64_t *X = &Xg[(size_t)ip * 5 * MH * MH];
+    W.Binter = X; W.ZB = X + MH * MH; W.mat = X + 2 * MH * MH; W.tmp = X + 3 * MH * MH; W.T = X + 4 * MH * MH;
+    t.sync();
+    int st = pfg::tile_build<MH, GGT, R>(t, &W, h, D->R.Z, &Og[(size_t)ip * MH * MH], &G.Mb[g.moff]);
     if (st) {
         if (lane == 0) {
-            if (st == pfg::ST_OVF64 && retry) retry[atomicAdd(nretry, 1)] = ip;
+            if (st == pfg::ST_OVF64 && retryB) retryB[atomicAdd(nB, 1)] = ip;
+            else if (st != pfg::ST_OVF64 && retryA) retryA[atomicAdd(nA, 1)] = ip;
             else D->status = ST_CPU;
         }
         return;
@@ -289,6 +304,11 @@ __global__ void k_fin(Glob G, int n)
     D->status = (D->m0l < 0 && 0 < g.linmin) ? ST_EMPTY : ST_OK;   // M0 == 0 < linmin
 }
 
+// The search is split into subtrees in stages: k_top (thread per p) emits
+// the depth-1 prefixes; k_expand (thread per depth-s prefix) extends them to
+// depth s + 1, or searches the rest of the subtree when s is that p's split
+// depth; k_search (thread per final prefix) searches the subtrees. Each stage
+// has one short work item per thread, so the work stays balanced.
 __global__ void k_top(Glob G, int n)
 {
     int ip = blockIdx.x * blockDim.x + threadIdx.x;
@@ -296,21 +316,21 @@ __global__ void k_top(Glob G, int n)
     PData *D = &G.pd[ip];
     if (D->status != ST_OK) return;
     Ctx X = {&G, ip};
-    int sd = split_depth(G, D);
-    int st = sd > 0 ? run_search(&G, D, nullptr, 0, sd, emit_pre, &X)
-                    : run_search(&G, D, nullptr, 0, 0, emit_pt, &X);
+    int st = split_depth(G, D) > 0 ? run_search(&G, D, nullptr, 0, 1, emit_pre, &X)
+                                    : run_search(&G, D, nullptr, 0, 0, emit_pt, &X);
     if (st == -8) D->status = ST_CPU;
 }
 
-__global__ void k_search(Glob G, unsigned long long n)
+__global__ void k_expand(Glob G, const int32_t *src, const int *src_p, unsigned long long n, int s)
 {
     unsigned long long k = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (k >= n) return;
-    int ip = G.pre_p[k];
+    int ip = src_p[k];
     PData *D = &G.pd[ip];
     if (D->status != ST_OK) return;
     Ctx X = {&G, ip};
-    int st = run_search(&G, D, &G.pre[k * G.sd], split_depth(G, D), 0, emit_pt, &X);
+    int st = split_depth(G, D) > s ? run_search(&G, D, &src[k * G.sd], s, s + 1, emit_pre, &X)
+                                   : run_search(&G, D, &src[k * G.sd], s, 0, emit_pt, &X);
     if (st == -8) D->status = ST_CPU;
 }
 
@@ -344,11 +364,15 @@ extern "C" int pfg_coni_batch(const pfg_input *in, pfg_output *out)
     std::vector<Geo> geos(in->n_geo);
     std::vector<int64_t> Mo, Ko, qo, po;         // outputs, grouped by batch
     Glob G = {};
-    Geo *dgeo = NULL; int64_t *dk = NULL, *dm = NULL, *dps = NULL, *Og = NULL; int *dpgeo = NULL, *retry = NULL, *nretry = NULL;
+    Geo *dgeo = NULL; int64_t *dk = NULL, *dm = NULL, *dps = NULL, *Og = NULL, *Xg = NULL;
+    int *dpgeo = NULL, *rA = NULL, *rB = NULL, *cnt = NULL;   // retry lists, their counts
+    struct Buf { int32_t *pre; int *pre_p; unsigned long long cap; } buf[2] = {};
     long koff = 0, moff = 0;
-    unsigned long long pre_cap = (unsigned long long)std::min(batch, NP) * 64, pts_cap = 1ULL << 16;
+    unsigned long long pre_cap = (unsigned long long)std::min(batch, NP) * 16, pts_cap = 1ULL << 16;
     std::vector<int> stat;
-    cudaEvent_t e0 = NULL, e1 = NULL;
+    enum { NEV = 8 };
+    cudaEvent_t ev[NEV] = {};
+    double tstage[NEV] = {0};
     int rc = 1;
 
     out->pstat = (int8_t *)calloc(NP > 0 ? NP : 1, 1);
@@ -375,38 +399,73 @@ extern "C" int pfg_coni_batch(const pfg_input *in, pfg_output *out)
     {
         const long nb = std::min(batch, NP);
         CK(dalloc(&dps, nb * MH)); CK(dalloc(&dpgeo, nb));
-        CK(dalloc(&G.pd, nb)); CK(dalloc(&Og, nb * MH * MH));
-        CK(dalloc(&retry, nb)); CK(dalloc(&nretry, 1));
+        CK(dalloc(&G.pd, nb)); CK(dalloc(&Og, nb * MH * MH)); CK(dalloc(&Xg, nb * 5 * MH * MH));
+        CK(dalloc(&rA, nb)); CK(dalloc(&rB, nb)); CK(dalloc(&cnt, 2));
         CK(dalloc(&G.npre, 1)); CK(dalloc(&G.npts, 1));
         stat.resize(nb);
     }
     G.sd = sd; G.geo = dgeo; G.kappa = dk; G.Mb = dm; G.ps = dps; G.pgeo = dpgeo;
-    CK(cudaEventCreate(&e0)); CK(cudaEventCreate(&e1));
+    for (int q = 0; q < NEV; ++q) CK(cudaEventCreate(&ev[q]));
 
     for (long off = 0; off < NP; ) {
         const int n = (int)std::min(batch, NP - off);
-        if (!G.pre) { CK(dalloc(&G.pre, pre_cap * sd)); CK(dalloc(&G.pre_p, pre_cap)); G.pre_cap = pre_cap; }
+        for (int b = 0; b < 2; ++b)
+            if (!buf[b].pre) { CK(dalloc(&buf[b].pre, pre_cap * sd)); CK(dalloc(&buf[b].pre_p, pre_cap)); buf[b].cap = pre_cap; }
         if (!G.pts) { CK(dalloc(&G.pts, pts_cap * 2 * MH)); CK(dalloc(&G.qs, pts_cap)); CK(dalloc(&G.pts_p, pts_cap)); G.pts_cap = pts_cap; }
         CK(cudaMemcpy(dps, &in->ps[off * MH], (size_t)n * MH * 8, cudaMemcpyHostToDevice));
         CK(cudaMemcpy(dpgeo, &in->pgeo[off], (size_t)n * 4, cudaMemcpyHostToDevice));
-        CK(cudaMemset(G.npre, 0, 8)); CK(cudaMemset(G.npts, 0, 8)); CK(cudaMemset(nretry, 0, 4));
-        CK(cudaEventRecord(e0));
+        CK(cudaMemset(G.npts, 0, 8)); CK(cudaMemset(cnt, 0, 8));
+
+        // lattice setup
+        CK(cudaEventRecord(ev[0]));
         k_pre<<<(n + 127) / 128, 128>>>(G, n, Og);
-        k_build<int64_t><<<n, pfg::TL>>>(G, n, nullptr, Og, retry, nretry);
-        int nre;
-        CK(cudaMemcpy(&nre, nretry, 4, cudaMemcpyDeviceToHost));
-        if (nre) k_build<pfl_i128><<<nre, pfg::TL>>>(G, nre, retry, Og, nullptr, nullptr);
+        CK(cudaEventRecord(ev[1]));
+        k_build<int64_t, float><<<(n + TPB - 1) / TPB, TPB * pfg::TL>>>(G, n, nullptr, Og, Xg, rA, &cnt[0], rB, &cnt[1]);
+        int nre[2];
+        CK(cudaMemcpy(nre, cnt, 8, cudaMemcpyDeviceToHost));
+        // int64 Gram overflows (retry list B) first get an int128 Gram with float
+        // Gram-Schmidt; anything float cannot finish is then done in double
+        if (nre[1]) k_build<pfl_i128, float><<<(nre[1] + TPB - 1) / TPB, TPB * pfg::TL>>>(G, nre[1], rB, Og, Xg, rA, &cnt[0], nullptr, nullptr);
+        CK(cudaMemcpy(&nre[0], &cnt[0], 4, cudaMemcpyDeviceToHost));
+        CK(cudaMemset(&cnt[1], 0, 4));
+        if (nre[0]) k_build<int64_t, double><<<(nre[0] + TPB - 1) / TPB, TPB * pfg::TL>>>(G, nre[0], rA, Og, Xg, nullptr, nullptr, rB, &cnt[1]);
+        int nre2;
+        CK(cudaMemcpy(&nre2, &cnt[1], 4, cudaMemcpyDeviceToHost));
+        if (nre2) k_build<pfl_i128, double><<<(nre2 + TPB - 1) / TPB, TPB * pfg::TL>>>(G, nre2, rB, Og, Xg, nullptr, nullptr, nullptr, nullptr);
+        CK(cudaEventRecord(ev[2]));
         k_fin<<<(n + 127) / 128, 128>>>(G, n);
+        CK(cudaEventRecord(ev[3]));
+
+        // search, split into subtrees in stages (ping-pong prefix buffers)
+        bool grow = false;
+        unsigned long long nsrc = 0, nstage[sd + 1] = {0};
+        int cur = 0;
+        G.pre = buf[cur].pre; G.pre_p = buf[cur].pre_p; G.pre_cap = buf[cur].cap;
+        CK(cudaMemset(G.npre, 0, 8));
         k_top<<<(n + 127) / 128, 128>>>(G, n);
-        unsigned long long npre;
-        CK(cudaMemcpy(&npre, G.npre, 8, cudaMemcpyDeviceToHost));
-        if (npre > G.pre_cap) {                        // grow, rerun the batch
-            cudaFree(G.pre); cudaFree(G.pre_p); G.pre = NULL; G.pre_p = NULL;
-            pre_cap = npre + npre / 4;
+        CK(cudaMemcpy(&nsrc, G.npre, 8, cudaMemcpyDeviceToHost));
+        nstage[1] = nsrc;
+        if (nsrc > buf[cur].cap) grow = true;
+        CK(cudaEventRecord(ev[4]));
+        for (int s = 1; s <= sd && !grow && nsrc; ++s) {
+            const int dst = cur ^ 1;
+            G.pre = buf[dst].pre; G.pre_p = buf[dst].pre_p; G.pre_cap = buf[dst].cap;
+            CK(cudaMemset(G.npre, 0, 8));
+            k_expand<<<(unsigned)((nsrc + 127) / 128), 128>>>(G, buf[cur].pre, buf[cur].pre_p, nsrc, s);
+            if (s == sd) break;                    // the last stage emits points only
+            CK(cudaMemcpy(&nsrc, G.npre, 8, cudaMemcpyDeviceToHost));
+            nstage[s + 1] = nsrc;
+            if (nsrc > buf[dst].cap) grow = true;
+            cur = dst;
+        }
+        if (grow) {                                // a prefix buffer filled: grow, rerun the batch
+            unsigned long long need = 0;
+            for (int s = 1; s <= sd; ++s) need = std::max(need, nstage[s]);
+            for (int b = 0; b < 2; ++b) { cudaFree(buf[b].pre); cudaFree(buf[b].pre_p); buf[b] = Buf(); }
+            pre_cap = need + need / 4;
             continue;
         }
-        if (npre) k_search<<<(unsigned)((npre + 127) / 128), 128>>>(G, npre);
-        CK(cudaEventRecord(e1));
+        CK(cudaEventRecord(ev[5]));
         CK(cudaDeviceSynchronize());
         CK(cudaGetLastError());
         unsigned long long npts;
@@ -416,8 +475,9 @@ extern "C" int pfg_coni_batch(const pfg_input *in, pfg_output *out)
             pts_cap = npts + npts / 4;
             continue;
         }
-        float ms; CK(cudaEventElapsedTime(&ms, e0, e1));
-        out->seconds_gpu += ms / 1e3;
+        float ms[5];
+        for (int q = 0; q < 5; ++q) { CK(cudaEventElapsedTime(&ms[q], ev[q], ev[q + 1])); tstage[q] += ms[q] / 1e3; }
+        out->seconds_gpu += (ms[0] + ms[1] + ms[2] + ms[3] + ms[4]) / 1e3;
         CK(cudaMemcpy2D(stat.data(), 4, (char *)G.pd + offsetof(PData, status), sizeof(PData), 4, n, cudaMemcpyDeviceToHost));
         {
             std::vector<int64_t> pts(npts * 2 * MH), qs(npts);
@@ -445,9 +505,17 @@ extern "C" int pfg_coni_batch(const pfg_input *in, pfg_output *out)
         for (int ip = 0; ip < n; ++ip)
             out->pstat[off + ip] = (stat[ip] == ST_OK || stat[ip] == ST_EMPTY) ? 0 : 1;
         if (in->verbose)
-            fprintf(stderr, "pfg: batch @%ld: %d p, %.1f ms, %llu subtrees, %llu points, %d int128-Gram redo\n",
-                    off, n, ms, npre, npts, nre);
+            fprintf(stderr, "pfg: batch @%ld: %d p | pre %.1f, LLL %.1f (redo: %d double, %d int128), fin %.1f, "
+                    "top %.1f, subtrees %.1f ms | prefixes %llu/%llu/%llu, %llu points\n",
+                    off, n, ms[0], ms[1], nre[0], nre[1], ms[2], ms[3], ms[4],
+                    nstage[1], nstage[2], nstage[3], npts);
         off += n;
+    }
+    if (in->verbose) {
+        double tt = 0;
+        for (int q = 0; q < 5; ++q) tt += tstage[q];
+        const char *nm[5] = {"pre", "LLL tiles", "fin (HNF, factor)", "top search", "subtrees"};
+        for (int q = 0; q < 5; ++q) fprintf(stderr, "pfg: %-18s %8.1f ms %5.1f%%\n", nm[q], tstage[q] * 1e3, 100 * tstage[q] / tt);
     }
     {
         const size_t n = qo.size();
@@ -463,10 +531,10 @@ extern "C" int pfg_coni_batch(const pfg_input *in, pfg_output *out)
     rc = 0;
 fail:
     if (rc) pfg_output_free(out);
-    if (e0) cudaEventDestroy(e0);
-    if (e1) cudaEventDestroy(e1);
-    cudaFree(dgeo); cudaFree(dk); cudaFree(dm); cudaFree(dps); cudaFree(dpgeo); cudaFree(Og);
-    cudaFree(retry); cudaFree(nretry); cudaFree(G.pd); cudaFree(G.npre); cudaFree(G.npts);
-    cudaFree(G.pre); cudaFree(G.pre_p); cudaFree(G.pts); cudaFree(G.qs); cudaFree(G.pts_p);
+    for (int q = 0; q < NEV; ++q) if (ev[q]) cudaEventDestroy(ev[q]);
+    cudaFree(dgeo); cudaFree(dk); cudaFree(dm); cudaFree(dps); cudaFree(dpgeo); cudaFree(Og); cudaFree(Xg);
+    cudaFree(rA); cudaFree(rB); cudaFree(cnt); cudaFree(G.pd); cudaFree(G.npre); cudaFree(G.npts);
+    for (int b = 0; b < 2; ++b) { cudaFree(buf[b].pre); cudaFree(buf[b].pre_p); }
+    cudaFree(G.pts); cudaFree(G.qs); cudaFree(G.pts_p);
     return rc;
 }
