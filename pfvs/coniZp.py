@@ -371,7 +371,10 @@ def _Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
             first_null_ind = j
             break
     if first_null_ind is None:
-        raise ValueError
+        raise ValueError(
+            f"no all-zero column in H ({H.nrows()}x{H.ncols()}), so the null "
+            "lattice is empty"
+        )
 
     # extract the data
     null_fl = flint.fmpz_mat(T.nrows()//2, H.ncols()-first_null_ind)
@@ -395,8 +398,7 @@ def _Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
 
 def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
                       key: np.ndarray, kappa: np.ndarray, h11: int, Q: int,
-                      M0min: int, max_Kperp_gcd: int,
-                      verbosity: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                      M0min: int, verbosity: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Turn lattice points into coni-PFVs (the post-processing of coniZpM),
     vectorized over points from any number of p-vectors.
@@ -429,11 +431,9 @@ def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
     # All arithmetic below is exact: int64 when a bound on every intermediate
     # shows it cannot overflow (the normal case), else Python ints.
     Mb, Kb, Qb = util.absmax(Ms), util.absmax(Kns), util.absmax(Qs)
-    Qperp_b = max_Kperp_gcd * (Qb + Mb * Kb)                 # |Qperp|
-    K0_b    = Qperp_b + Q + max_Kperp_gcd * Kb               # |K0| (lo/up ranges)
-    K_b     = max(K0_b, max_Kperp_gcd * Kb)                  # |entries of K|
-    if (Ms.dtype == object or Kns.dtype == object or Qs.dtype == object
-            or max(Q * Kb, Qperp_b, K0_b + len(Qs), h11 * K_b * Mb) >= 2**62):
+    exact = Ms.dtype == object or Kns.dtype == object or Qs.dtype == object \
+        or Q * Kb >= 2**62
+    if exact:
         Ms, Kns, Qs = util.as_exact(Ms, Kns, Qs)
 
     # cut on feasibility of finding a K0 giving K'>0 (see coniZpM)
@@ -442,35 +442,62 @@ def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
     K_gcds[K_gcds < 1] = 1          # K = (x != 0, 0, ..., 0)
     mask   = Qs < Q * K_gcds
     Ms, Kns, Qs, K_gcds, key = Ms[:, mask], Kns[:, mask], Qs[mask], K_gcds[mask], key[mask]
+    if Qs.shape[0] == 0:
+        return empty
+
+    # Kperp need not be primitive. Its gcd g is bounded per point:
+    #   tadpole:  K0 = (g*rawQperp - Q)/M0
+    #   K'>0:     K0 <  g*natural_K0/K_gcd
+    # eliminating K0 with rawQperp*K_gcd - M0*natural_K0 = q gives
+    #   g*q < Q*K_gcd,  i.e.  g <= (Q*K_gcd - 1) // q.
+    # Each point is expanded into its own g = 1..gmax_i.
+    gcap = (Q * K_gcds - 1) // np.maximum(Qs, 1)            # >= 1 by the mask
+    gmax = int(np.max(gcap))
+    Qperp_b = gmax * (Qb + Mb * Kb)                          # |Qperp|
+    K0_b    = Qperp_b + Q + gmax * Kb                        # |K0| (lo/up ranges)
+    K_b     = max(K0_b, gmax * Kb)                           # |entries of K|
+    if not exact and max(Qperp_b, K0_b + len(Qs), h11 * K_b * Mb) >= 2**62:
+        exact = True
+        Ms, Kns, Qs, K_gcds = util.as_exact(Ms, Kns, Qs, K_gcds)
+        gcap = (Q * K_gcds - 1) // np.maximum(Qs, 1)
 
     natural_K0s = Kns[0]
     Kperps      = Kns[1:] // K_gcds
     M0s         = Ms[0]             # > 0 (the kernel enforces M0 >= M0min)
     rawQperps   = (Qs + M0s * natural_K0s) // K_gcds
 
-    Ks_out, Ms_out, key_out = [], [], []
-    for Kperp_gcd in range(1, max_Kperp_gcd + 1):
-        # K0 ranges to hit tadpole exactly: (Qperp - Q)/M0 (exact integers)
-        Qperps = Kperp_gcd * rawQperps
-        lo = -((Q - Qperps) // M0s)                          # ceil
-        up = (Qperps - Q) // M0s                             # floor
-        # K' > 0: K0 < natural_K0 * Kperp_gcd / K_gcd, i.e. K0 <= ceil(.) - 1
-        up = np.minimum(up, -((-natural_K0s * Kperp_gcd) // K_gcds) - 1)
+    # expand points by their admissible gcds, in (p, g, point) order
+    counts = np.array([int(x) for x in gcap], dtype=np.int64) if exact \
+        else gcap.astype(np.int64)
+    idx = np.repeat(np.arange(len(Qs)), counts)
+    g   = np.arange(int(counts.sum())) - np.repeat(np.cumsum(counts) - counts, counts) + 1
+    order = np.lexsort((idx, g, np.asarray(key[idx], dtype=np.int64)))
+    idx, g = idx[order], g[order]
+    if exact:
+        g = g.astype(object)
 
-        num = 1 + up - lo
-        sel = num > 0
-        num = num[sel]
-        if num.size == 0:
-            continue
+    # K0 ranges to hit tadpole exactly: (Qperp - Q)/M0 (exact integers)
+    Qperps = g * rawQperps[idx]
+    M0i    = M0s[idx]
+    lo = -((Q - Qperps) // M0i)                              # ceil
+    up = (Qperps - Q) // M0i                                 # floor
+    # K' > 0: K0 < natural_K0 * g / K_gcd, i.e. K0 <= ceil(.) - 1
+    up = np.minimum(up, -((-natural_K0s[idx] * g) // K_gcds[idx]) - 1)
+
+    Ks_out, Ms_out, key_out = [], [], []
+    num = 1 + up - lo
+    sel = num > 0
+    num = num[sel]
+    if num.size:
         if num.dtype == object:          # counts of K0 values: small
             num = np.array([int(x) for x in num], dtype=np.int64)
         total = int(np.sum(num))
         K0s = np.repeat(lo[sel], num) + np.arange(total) \
             - np.repeat(np.cumsum(num) - num, num)
-
-        new_Ks = np.vstack([K0s, np.repeat(Kperp_gcd * Kperps[:, sel], num, axis=1)])
-        new_Ms = np.repeat(Ms[:, sel], num, axis=1)
-        new_key = np.repeat(key[sel], num)
+        pts = idx[sel]
+        new_Ks = np.vstack([K0s, np.repeat(g[sel] * Kperps[:, pts], num, axis=1)])
+        new_Ms = np.repeat(Ms[:, pts], num, axis=1)
+        new_key = np.repeat(key[pts], num)
 
         tad = -util.colsum_prod(new_Ks, new_Ms)
         if np.any(tad > Q):
@@ -523,7 +550,6 @@ def coniZpM(
     ps: ArrayLike,
     Q: int | None = None,
     M0min: int = 13,
-    max_Kperp_gcd: int = 1,
     ellipsoid_dilation: float = 1, # typically want >=1
     # algorithm selection
     use_gcd_lattice: bool = False,
@@ -571,10 +597,6 @@ def coniZpM(
         provided, set to h11+h21+4.
     M0min : integer, optional
         Only return PFVs with M[0] >= M0min. Defaults to 13 to match physics.
-    max_Kperp_gcd : integer, optional
-        When solving for PFVs, one hardcodes the GCD of Kperp (since we
-        previously cleared the GCD, making Kperp primitive). Allow GCDs up to
-        this value. **Not well tested - defaults to 1.** Leave at default.
     ellipsoid_dilation : float, optional
         The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
         Empirically, runtime scales linearly with this value. Defaults to 1.
@@ -651,8 +673,6 @@ def coniZpM(
     if n_jobs == -1:
         n_jobs = 2*os.cpu_count()
 
-    if max_Kperp_gcd > 1:
-        warnings.warn("max_Kperp_gcd > 1 is not well-tested", stacklevel=2)
 
     # read data
     kappa  = data.kappa_cob
@@ -699,7 +719,7 @@ def coniZpM(
                     print("they were (M = Binter c, one per row):")
                     print(Mv)
             pieces.append(_pfvs_from_points(Mv.T, Kv.T, qv, pv, kappa, h11, Q,
-                                            M0min, max_Kperp_gcd, verbosity))
+                                            M0min, verbosity))
             todo = np.flatnonzero(pstat == 1)
 
         for ip in todo:
@@ -820,7 +840,7 @@ def coniZpM(
             Kv = util.exact_matmul(ZBinter, np.asarray(lattice_points).T)
             pieces.append(_pfvs_from_points(
                 Mv, Kv, rawQs, np.full(len(rawQs), ip), kappa, h11, Q, M0min,
-                max_Kperp_gcd, verbosity))
+                verbosity))
 
         print(f"Finished job #{job_i}...",flush=True)
 

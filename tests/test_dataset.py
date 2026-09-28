@@ -21,6 +21,9 @@
 #               For each stored geometry, coniZpM over every primitive p-vector
 #               with |p|_inf <= B at dilation D must reproduce exactly the
 #               dataset's PFVs with p-infnorm <= B and required dilation <= D.
+#               (The dataset predates automatic Kperp handling, so it holds the
+#               PFVs with primitive K[1:]; additional PFVs with gcd(K[1:]) >= 2
+#               must be valid.)
 #               Fixtures: tests/data/build_fixtures.py.
 # -----------------------------------------------------------------------------
 
@@ -72,7 +75,19 @@ def test_reproduces_dataset(g):
     with warnings.catch_warnings():
         warnings.simplefilter("error")      # no p-vector may be skipped
         Ks, Ms = coniZpM(data, ps, ellipsoid_dilation=g["D"], n_jobs=1)
-    assert as_set(Ks, Ms) == expected
+    got = as_set(Ks, Ms)
+
+    # The dataset predates automatic Kperp handling: it holds exactly the PFVs
+    # with primitive K[1:]. Those must be reproduced exactly; every other PFV
+    # found must have gcd(K[1:]) >= 2 and be a valid PFV.
+    def primitive(KM):
+        return np.gcd.reduce(np.array(KM[0][1:])) == 1
+
+    assert expected <= got                                   # none missing
+    assert {KM for KM in got if primitive(KM)} == expected   # exact, old convention
+    for K, M in got - expected:
+        assert not primitive((K, M))
+        assert PFV(data, np.array(K), np.array(M)).check_all(stop_at_fail=False)
 
 
 def test_dataset_fixture_nontrivial():

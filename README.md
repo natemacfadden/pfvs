@@ -20,7 +20,7 @@ We will also define two auxiliary variables from these fixed data
 - the tadpole $Q = h^{1,1} + h^{2,1} + 2 \in\mathbb{Z}$ and
 - the 'a-matrix' $\tilde{a}\in\frac{1}{2}\mathbb{Z}^{h^{1,1},h^{1,1}}$ given by
 
-$$\tilde{a}\_{ij} = \frac{1}{2}\begin{cases} \kappa_{ijj} & i\geq j\\\\ \kappa_{iij} & \text{o.w.} \end{cases}$$
+$$\tilde{a}\_{ij} = \frac{1}{2}\begin{cases} \kappa_{iij} & i\geq j\\\\ \kappa_{ijj} & \text{o.w.} \end{cases}$$
 
 All of the above is fixed and (relatively cheaply) computable using software like [CYTools](https://github.com/LiamMcAllisterGroup/cytools). We now define, in terms of these variables, what a PFV and what a coniPFV is.
 
@@ -114,7 +114,7 @@ End-to-end `coniZpM` speedup over the previous version. Each cell covers 2–3 d
 
 - **Low $h^{1,1}$.** The old code's time was mostly per-p overhead in Python/flint, which is now gone.
 - **High $h^{1,1}$.** The gain comes from the smaller searches. For example, $h^{1,1}=11$ at $p_{denom}=400$ went from 7.0 to 0.9 ms per p-vector.
-- **Whole dataset.** The full [coni-PFV dataset](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) is reproduced exactly: 18,253 geometries, 8.6M p-vectors at $|p|_\infty\le5$ and $p_{denom}=150$, all 33,376 PFVs, none missing or extra. The run takes 3,374 CPU-seconds, about 3.4 minutes on 23 cores.
+- **Whole dataset.** The full [coni-PFV dataset](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) covers 18,253 geometries and 8.6M p-vectors at $|p|_\infty\le5$ and $p_{denom}=150$. All 33,376 of its PFVs are found, none missing. Because $K_{1:}$ is no longer assumed primitive (automatic Kperp handling), 820 further PFVs are found as well; each has $\gcd(K_{1:})\ge2$ and passes `PFV.check_all`. The dataset predates that change. The run takes 3,564 CPU-seconds, about 3.5 minutes on 23 cores.
 
 **Behaviour changes to be aware of:**
 
@@ -186,7 +186,7 @@ pfvs/
 The kernel's output is specified exactly (see [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md)). All accept/reject decisions are exact integer arithmetic, and floating point is only used for pruning, widened by a rigorous error bound. The test suite checks this at three levels:
 
 - **Kernel vs. an exact oracle.** [`tests/oracle.py`](tests/oracle.py) is a rational-arithmetic Fincke–Pohst with no floating point. The tests compare the kernel's output against it point for point, in order, on 219 real instances from the dataset below (some with $H$ entries beyond $2^{100}$) and on adversarial synthetic ones: non-echelon or rank-deficient $H$, boundary points, and ill-conditioned ellipsoids with huge entries.
-- **End to end vs. the published dataset.** For 71 stored geometries ($h^{1,1}=3,\dots,11$), `coniZpM` must reproduce *exactly* the PFVs in [calabi-yau-coni-pfvs](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) (every p-vector with $|p|_\infty\le B$ at dilation $D$), with no p-vector skipped. The fixtures are built by [`tests/data/build_fixtures.py`](tests/data/build_fixtures.py) from a pinned dataset revision.
+- **End to end vs. the published dataset.** For 71 stored geometries ($h^{1,1}=3,\dots,11$), `coniZpM` runs over every p-vector with $|p|_\infty\le B$ at dilation $D$, with no p-vector skipped. Among its output, the PFVs with primitive $K_{1:}$ must equal *exactly* those in [calabi-yau-coni-pfvs](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs); the dataset predates automatic Kperp handling. Every other PFV found must have $\gcd(K_{1:})\ge2$ and pass `PFV.check_all`. The fixtures are built by [`tests/data/build_fixtures.py`](tests/data/build_fixtures.py) from a pinned dataset revision.
 - **Regression tests for integer overflow.** Large p-vectors used to overflow int64 silently while the M-lattice was being built, and were then skipped. The tests use real large-p cases.
 - **Independent routes agree.** Non-coni `ZpM` via the numba enumerator, the C kernel, and the C kernel with the C lattice setup find identical PFVs. `coniZpM` finds identical PFVs with and without the C lattice setup, and its exact post-processing fallback matches the int64 path.
 - **Exact helpers.** The singularity test keeps ill-conditioned nonsingular $N$. The int128 factorization matches GMP on 200k random matrices (a C test run in CI).
