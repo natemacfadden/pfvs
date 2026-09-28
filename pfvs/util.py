@@ -529,8 +529,11 @@ def fp_iterative_njit(
 
     # output object
     # -------------
-    out = np.empty((max_N_out, dim), dtype=np.int64)
-    Qs  = np.empty((max_N_out,), dtype=np.float32)
+    # output buffers grow as needed (doubling, capped at max_N_out); they used
+    # to be preallocated at max_N_out rows, i.e. ~56 GB for max_N_out = 1e9
+    cap = min(max_N_out, 1024)
+    out = np.empty((cap, dim), dtype=np.int64)
+    Qs  = np.empty((cap,), dtype=np.float32)
 
     # output pointer
     op  = 0
@@ -588,6 +591,13 @@ def fp_iterative_njit(
                     # never truncate silently: a partial list means missing PFVs
                     raise RuntimeError("fp_iterative_njit: more than max_N_out "
                                        "lattice points; increase max_N_out")
+                if op == cap:
+                    cap = min(2 * cap, max_N_out)
+                    out_new = np.empty((cap, dim), dtype=np.int64)
+                    Qs_new  = np.empty((cap,), dtype=np.float32)
+                    out_new[:op, :] = out[:op, :]
+                    Qs_new[:op]     = Qs[:op]
+                    out, Qs = out_new, Qs_new
                 out[op, :] = vec
                 Qs[op]      = Q - remQ
                 op += 1

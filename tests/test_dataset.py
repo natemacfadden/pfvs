@@ -66,7 +66,7 @@ def as_set(Ks, Ms):
 def test_reproduces_dataset(g):
     data = cydata(g)
     ps, st, _ = box_enum(g["B"], np.ascontiguousarray(data.H_cob.astype(np.int32)), 1,
-                         10**8, primitive=True)
+                         10**6, primitive=True)
     assert st == 0
     expected = as_set(g["K"], g["M"])
     if len(ps) == 0:
@@ -161,7 +161,7 @@ def test_incomplete_search_raises():
     g = max(GEOMS, key=lambda g: len(g["K"]))
     data = cydata(g)
     ps, _, _ = box_enum(g["B"], np.ascontiguousarray(data.H_cob.astype(np.int32)), 1,
-                        10**8, primitive=True)
+                        10**6, primitive=True)
     # more outputs than allowed: status -2 must raise (it used to warn and
     # silently keep a truncated output)
     with pytest.raises(IncompleteSearchError, match="max_N_pfvs"):
