@@ -16,9 +16,10 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  Optional CUDA backend for the batched coni pipeline (lattice
+# Description:  Optional GPU backend for the batched coni pipeline (lattice
 #               setup + search per p-vector), see fp_kernel/cuda/pfvs_gpu.cu.
-#               Built only with PFVS_CUDA=1 (needs nvcc); loaded via ctypes.
+#               Built with PFVS_CUDA=1 (NVIDIA, nvcc) or PFVS_HIP=1 (AMD,
+#               hipcc); loaded via ctypes.
 #               Results are exact and identical to the CPU path's.
 # -----------------------------------------------------------------------------
 
@@ -63,7 +64,7 @@ def _load():
         found = sorted(glob.glob(os.path.join(here, "libpfvs_gpu*.so")))
         path = found[0] if found else None
     if not path:
-        _lib_error = "the CUDA backend was not built (install with PFVS_CUDA=1)"
+        _lib_error = "the GPU backend was not built (build with PFVS_GPU=cuda or PFVS_GPU=hip; see setup.py)"
         return None
     try:
         lib = ctypes.CDLL(path)
@@ -71,10 +72,12 @@ def _load():
         _lib_error = f"could not load {path}: {e}"
         return None
     lib.pfg_max_h11.restype = ctypes.c_int
+    lib.pfg_backend.restype = ctypes.c_char_p
     lib.pfg_device_count.restype = ctypes.c_int
     lib.pfg_coni_batch.argtypes = [ctypes.POINTER(_Input), ctypes.POINTER(_Output)]
     lib.pfg_coni_batch.restype = ctypes.c_int
     lib.pfg_output_free.argtypes = [ctypes.POINTER(_Output)]
+    lib.pfg_release.argtypes = [ctypes.c_int]
     _lib = lib
     return lib
 
@@ -99,6 +102,22 @@ def unavailable_reason() -> str:
     if lib.pfg_device_count() == 0:
         return "no CUDA device found"
     return ""
+
+
+def backend() -> str:
+    """'cuda' (NVIDIA) or 'hip' (AMD): what the GPU backend was built for."""
+    lib = _load()
+    if lib is None:
+        raise RuntimeError(_lib_error)
+    return lib.pfg_backend().decode()
+
+
+def release(device: int = 0) -> None:
+    """Free the device buffers the backend keeps between calls on `device`
+    (they are reused by later calls; this returns the memory)."""
+    lib = _load()
+    if lib is not None:
+        lib.pfg_release(int(device))
 
 
 def max_h11() -> int:

@@ -48,6 +48,8 @@
 #include <vector>
 #include <algorithm>
 #include <numeric>
+#include <map>
+#include <mutex>
 
 #ifndef PFL_MAX_H11
 #define PFL_MAX_H11 12
@@ -56,9 +58,12 @@
 // the largest kernel stack for every resident thread)
 #define FPK_SEARCH_MAXD (PFL_MAX_H11 - 1)
 #define FPK_FAST_FACTOR_MAX_DIM (PFL_MAX_H11 - 1)
+#define FPK_SEARCH_SPARSE 0
+#define FPK_RES_MIN_W 0x7fffffff     /* residue mode: no gain on GPUs (latency-bound) */
 #define PFL_NO_GMP
 #define PFV_LATTICE_IMPLEMENTATION
 #include "../pfv_lattice.h"
+#include "pfg_compat.h"
 #include "pfv_gpu.cuh"
 
 enum { MH = PFL_MAX_H11, MD = PFL_MAX_H11 - 1 };
@@ -91,7 +96,9 @@ typedef struct {
 } pfg_output;
 
 int  pfg_max_h11(void) { return MH; }
+const char *pfg_backend(void) { return PFG_HIP ? "hip" : "cuda"; }
 int  pfg_device_count(void);
+void pfg_release(int device);        // free the device buffers kept between calls
 int  pfg_coni_batch(const pfg_input *in, pfg_output *out);
 void pfg_output_free(pfg_output *out);
 
@@ -122,17 +129,7 @@ struct Glob {
 
 struct Ctx { const Glob *G; int ip; };
 
-// warp-aggregated slot reservation on a global counter (divergence-safe)
-__device__ inline unsigned long long agg_inc(unsigned long long *ctr)
-{
-    unsigned mask = __activemask();
-    int lane = threadIdx.x & 31, leader = __ffs(mask) - 1;
-    unsigned rank = __popc(mask & ((1u << lane) - 1));
-    unsigned long long base = 0;
-    if (lane == leader) base = atomicAdd(ctr, (unsigned long long)__popc(mask));
-    base = __shfl_sync(mask, base, leader);
-    return base + rank;
-}
+using pfg::agg_inc;
 
 // (a full buffer is not an error: the count keeps growing, the host sees it
 // and reruns the batch with a larger buffer)
@@ -165,7 +162,10 @@ __device__ int emit_pt(void *vc, int kind, const int32_t *c, int n, int64_t q)
     }
     unsigned long long k = agg_inc(G->npts);
     if (k >= G->pts_cap) return 0;
-    for (int i = 0; i < h; ++i) { G->pts[k * 2 * MH + i] = M[i]; G->pts[k * 2 * MH + MH + i] = K[i]; }
+    for (int i = 0; i < MH; ++i) {                     // (zero padding: the rows are compared whole)
+        G->pts[k * 2 * MH + i] = i < h ? M[i] : 0;
+        G->pts[k * 2 * MH + MH + i] = i < h ? K[i] : 0;
+    }
     G->qs[k] = q;
     G->pts_p[k] = X->ip;
     return 0;
@@ -176,8 +176,8 @@ template <> struct PrepT<fpk_prep> { typedef double R; };
 template <> struct PrepT<fpk_prep_f> { typedef float R; };
 __device__ void set_arrays(PData *D, fpk_prep *S) { S->U = D->U; S->Uinv = D->Uinv; S->m0N = D->N; S->m0V = D->V; S->m0Va = D->Va; }
 __device__ void set_arrays(PData *D, fpk_prep_f *S) { S->U = D->Uf; S->Uinv = D->Uinvf; S->m0N = D->Nf; S->m0V = D->Vf; S->m0Va = D->Vaf; }
-__device__ void consts(int d, int64_t qmax, fpk_prep *S) { fpk_search_consts(d, qmax, 1e-4, &S->slack, &S->Kerr); }
-__device__ void consts(int d, int64_t qmax, fpk_prep_f *S) { fpk_search_consts_f(d, qmax, 1e-4, &S->slack, &S->Kerr); }
+__device__ void consts(int d, int64_t qmax, fpk_prep *S) { fpk_search_consts(d, qmax, 1e-4, &S->slack, &S->Kerr, &S->max_err); }
+__device__ void consts(int d, int64_t qmax, fpk_prep_f *S) { fpk_search_consts_f(d, qmax, 1e-4, &S->slack, &S->Kerr, &S->max_err); }
 
 template <typename PR>
 __device__ void make_prep(const Geo &g, PData *D, PR *S)
@@ -207,6 +207,14 @@ __device__ inline int split_depth(const Glob &G, const PData *D)
     return G.sd < D->h - 1 ? G.sd : D->h - 2;
 }
 
+// statuses into a contiguous array (a strided copy of 4 bytes per 12 KB
+// PData is slow)
+__global__ void k_status(const PData *pd, int n, int *out)
+{
+    int ip = blockIdx.x * blockDim.x + threadIdx.x;
+    if (ip < n) out[ip] = pd[ip].status;
+}
+
 __global__ void k_pre(Glob G, int n, int64_t *Og)
 {
     int ip = blockIdx.x * blockDim.x + threadIdx.x;
@@ -234,7 +242,7 @@ __global__ void __launch_bounds__(TPB * pfg::TL) k_build(Glob G, int n, const in
                                                          int64_t *Xg, int *retryA, int *nA, int *retryB, int *nB)
 {
     __shared__ pfg::Work<MH, GGT, R> Ws[TPB];
-    auto t = pfg::cg::tiled_partition<pfg::TL>(pfg::cg::this_thread_block());
+    pfg::Tile t;
     const int lane = t.thread_rank(), ti = threadIdx.x / pfg::TL;
     const int k = blockIdx.x * TPB + ti;
     if (k >= n) return;                                   // uniform per tile
@@ -318,10 +326,16 @@ __global__ void k_top(Glob G, int n)
     Ctx X = {&G, ip};
     int st = split_depth(G, D) > 0 ? run_search(&G, D, nullptr, 0, 1, emit_pre, &X)
                                     : run_search(&G, D, nullptr, 0, 0, emit_pt, &X);
-    if (st == -8) D->status = ST_CPU;
+    if (st == -8 || st == -11) D->status = ST_CPU;   // int32 range; float precision
 }
 
-__global__ void k_expand(Glob G, const int32_t *src, const int *src_p, unsigned long long n, int s)
+#ifndef PFG_EXP_BLOCK
+#define PFG_EXP_BLOCK 128
+#endif
+#ifndef PFG_EXP_BOUNDS
+#define PFG_EXP_BOUNDS 128
+#endif
+__global__ void __launch_bounds__(PFG_EXP_BOUNDS) k_expand(Glob G, const int32_t *src, const int *src_p, unsigned long long n, int s)
 {
     unsigned long long k = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (k >= n) return;
@@ -331,14 +345,60 @@ __global__ void k_expand(Glob G, const int32_t *src, const int *src_p, unsigned 
     Ctx X = {&G, ip};
     int st = split_depth(G, D) > s ? run_search(&G, D, &src[k * G.sd], s, s + 1, emit_pre, &X)
                                    : run_search(&G, D, &src[k * G.sd], s, 0, emit_pt, &X);
-    if (st == -8) D->status = ST_CPU;
+    if (st == -8 || st == -11) D->status = ST_CPU;   // int32 range; float precision
 }
 
-#define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { \
+#define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { last_err = e_; \
     snprintf(out->err, sizeof out->err, "%s (%s:%d)", cudaGetErrorString(e_), __FILE__, __LINE__); \
     goto fail; } } while (0)
 
-template <typename T> static cudaError_t dalloc(T **p, size_t n) { return cudaMalloc((void **)p, n * sizeof(T) + 16); }
+// Per-device workspace: device buffers are kept between calls (allocating
+// and freeing gigabytes per call costs more than the work) and regrown only
+// when a call needs more; pfg_release frees them.
+enum { WS_GEO, WS_K, WS_M, WS_PS, WS_PGEO, WS_PD, WS_OG, WS_XG, WS_RA, WS_RB, WS_CNT, WS_NPRE,
+       WS_NPTS, WS_PRE0, WS_PREP0, WS_PRE1, WS_PREP1, WS_PTS, WS_QS, WS_PTSP, WS_STAT, WS_N };
+struct Workspace { void *p[WS_N] = {}; size_t cap[WS_N] = {}; std::mutex mu; };
+std::mutex ws_map_mu;
+std::map<int, Workspace *> ws_map;
+
+Workspace &workspace(int device)
+{
+    std::lock_guard<std::mutex> g(ws_map_mu);
+    Workspace *&w = ws_map[device];
+    if (!w) w = new Workspace();
+    return *w;
+}
+
+cudaError_t ws_get(Workspace &w, int slot, void **ptr, size_t bytes)
+{
+    if (w.cap[slot] < bytes) {
+        if (w.p[slot]) (void)cudaFree(w.p[slot]);
+        w.p[slot] = NULL; w.cap[slot] = 0;
+        size_t b = bytes + bytes / 8 + 256;            // headroom for the next call
+        cudaError_t e = cudaMalloc(&w.p[slot], b);
+        if (e != cudaSuccess) { w.p[slot] = NULL; return e; }
+        w.cap[slot] = b;
+    }
+    *ptr = w.p[slot];
+    return cudaSuccess;
+}
+
+size_t ws_bytes(const Workspace &w)
+{
+    size_t t = 0;
+    for (int k = 0; k < WS_N; ++k) t += w.cap[k];
+    return t;
+}
+
+void ws_release(Workspace &w)
+{
+    for (int k = 0; k < WS_N; ++k) {
+        if (w.p[k]) (void)cudaFree(w.p[k]);
+        w.p[k] = NULL; w.cap[k] = 0;
+    }
+}
+
+#define WS(ptr, slot, n) ws_get(W, slot, (void **)&(ptr), (size_t)(n) * sizeof(*(ptr)) + 16)
 
 }  // namespace
 
@@ -359,8 +419,11 @@ extern "C" int pfg_coni_batch(const pfg_input *in, pfg_output *out)
 {
     memset(out, 0, sizeof *out);
     const long NP = (long)in->n_p;
-    const long batch = in->batch > 0 ? (long)in->batch : (1L << 19);
-    const int sd = 3;
+    long batch = in->batch > 0 ? (long)in->batch : (1L << 19);
+#ifndef PFG_SD
+#define PFG_SD 4
+#endif
+    const int sd = PFG_SD;
     std::vector<Geo> geos(in->n_geo);
     std::vector<int64_t> Mo, Ko, qo, po;         // outputs, grouped by batch
     Glob G = {};
@@ -374,6 +437,8 @@ extern "C" int pfg_coni_batch(const pfg_input *in, pfg_output *out)
     cudaEvent_t ev[NEV] = {};
     double tstage[NEV] = {0};
     int rc = 1;
+    long off = 0;                                // p-vectors done
+    cudaError_t last_err = cudaSuccess;
 
     out->pstat = (int8_t *)calloc(NP > 0 ? NP : 1, 1);
     if (!out->pstat) { snprintf(out->err, sizeof out->err, "out of host memory"); return 1; }
@@ -392,26 +457,57 @@ extern "C" int pfg_coni_batch(const pfg_input *in, pfg_output *out)
         if (in->pgeo[ip] < 0 || in->pgeo[ip] >= in->n_geo) { snprintf(out->err, sizeof out->err, "p %ld: bad geometry index", ip); return 1; }
     if (NP == 0) return 0;
 
+    Workspace &W = workspace(in->device);
+    std::unique_lock<std::mutex> ws_lock(W.mu);        // one call per device at a time
     CK(cudaSetDevice(in->device));
-    CK(dalloc(&dgeo, geos.size())); CK(cudaMemcpy(dgeo, geos.data(), geos.size() * sizeof(Geo), cudaMemcpyHostToDevice));
-    CK(dalloc(&dk, koff)); CK(cudaMemcpy(dk, in->kappa, koff * 8, cudaMemcpyHostToDevice));
-    CK(dalloc(&dm, moff)); CK(cudaMemcpy(dm, in->Mbasis, moff * 8, cudaMemcpyHostToDevice));
+    if (in->batch <= 0) {
+        // default batch: what fits in about half the free device memory
+        // (per p: the problem, the setup scratch and ~16 subtree prefixes)
+        size_t free_b = 0, total_b = 0;
+        CK(cudaMemGetInfo(&free_b, &total_b));
+        const size_t per_p = sizeof(PData) + 6 * MH * MH * 8 + MH * 8 + 16
+                           + 2 * 16 * (sd * 4 + 4);
+        free_b += ws_bytes(W);                         // (ours, reusable)
+        batch = std::max(1L << 12, std::min(batch, (long)(free_b / 2 / per_p)));
+    }
+    CK(WS(dgeo, WS_GEO, geos.size())); CK(cudaMemcpy(dgeo, geos.data(), geos.size() * sizeof(Geo), cudaMemcpyHostToDevice));
+    CK(WS(dk, WS_K, koff)); CK(cudaMemcpy(dk, in->kappa, koff * 8, cudaMemcpyHostToDevice));
+    CK(WS(dm, WS_M, moff)); CK(cudaMemcpy(dm, in->Mbasis, moff * 8, cudaMemcpyHostToDevice));
+    for (int q = 0; q < NEV; ++q) CK(cudaEventCreate(&ev[q]));
+restart:                                         // (after an out-of-memory: smaller batches)
     {
         const long nb = std::min(batch, NP);
-        CK(dalloc(&dps, nb * MH)); CK(dalloc(&dpgeo, nb));
-        CK(dalloc(&G.pd, nb)); CK(dalloc(&Og, nb * MH * MH)); CK(dalloc(&Xg, nb * 5 * MH * MH));
-        CK(dalloc(&rA, nb)); CK(dalloc(&rB, nb)); CK(dalloc(&cnt, 2));
-        CK(dalloc(&G.npre, 1)); CK(dalloc(&G.npts, 1));
+        CK(WS(dps, WS_PS, nb * MH)); CK(WS(dpgeo, WS_PGEO, nb));
+        CK(WS(G.pd, WS_PD, nb)); CK(WS(Og, WS_OG, nb * MH * MH)); CK(WS(Xg, WS_XG, nb * 5 * MH * MH));
+        CK(WS(rA, WS_RA, nb)); CK(WS(rB, WS_RB, nb)); CK(WS(cnt, WS_CNT, 2));
+        CK(WS(G.npre, WS_NPRE, 1)); CK(WS(G.npts, WS_NPTS, 1));
         stat.resize(nb);
     }
     G.sd = sd; G.geo = dgeo; G.kappa = dk; G.Mb = dm; G.ps = dps; G.pgeo = dpgeo;
-    for (int q = 0; q < NEV; ++q) CK(cudaEventCreate(&ev[q]));
+    {
+    auto grow_buf = [&](int b, unsigned long long need) -> cudaError_t {
+        pre_cap = std::max(pre_cap, need + need / 2);
+        cudaError_t e = WS(buf[b].pre, b ? WS_PRE1 : WS_PRE0, pre_cap * sd);
+        if (e == cudaSuccess) e = WS(buf[b].pre_p, b ? WS_PREP1 : WS_PREP0, pre_cap);
+        if (e == cudaSuccess) buf[b].cap = pre_cap;
+        return e;
+    };
 
-    for (long off = 0; off < NP; ) {
+    while (off < NP) {
         const int n = (int)std::min(batch, NP - off);
         for (int b = 0; b < 2; ++b)
-            if (!buf[b].pre) { CK(dalloc(&buf[b].pre, pre_cap * sd)); CK(dalloc(&buf[b].pre_p, pre_cap)); buf[b].cap = pre_cap; }
-        if (!G.pts) { CK(dalloc(&G.pts, pts_cap * 2 * MH)); CK(dalloc(&G.qs, pts_cap)); CK(dalloc(&G.pts_p, pts_cap)); G.pts_cap = pts_cap; }
+            if (!buf[b].pre) {
+                CK(WS(buf[b].pre, b ? WS_PRE1 : WS_PRE0, pre_cap * sd));
+                CK(WS(buf[b].pre_p, b ? WS_PREP1 : WS_PREP0, pre_cap));
+                // (a buffer kept from earlier calls may be larger: use all of it)
+                buf[b].cap = std::min(W.cap[b ? WS_PRE1 : WS_PRE0] / (sd * 4),
+                                      W.cap[b ? WS_PREP1 : WS_PREP0] / 4) - 4;
+            }
+        if (!G.pts) {
+            CK(WS(G.pts, WS_PTS, pts_cap * 2 * MH)); CK(WS(G.qs, WS_QS, pts_cap)); CK(WS(G.pts_p, WS_PTSP, pts_cap));
+            // (buffers kept from earlier calls may be larger: use all of them)
+            G.pts_cap = std::min({W.cap[WS_PTS] / (2 * MH * 8), W.cap[WS_QS] / 8, W.cap[WS_PTSP] / 4}) - 4;
+        }
         CK(cudaMemcpy(dps, &in->ps[off * MH], (size_t)n * MH * 8, cudaMemcpyHostToDevice));
         CK(cudaMemcpy(dpgeo, &in->pgeo[off], (size_t)n * 4, cudaMemcpyHostToDevice));
         CK(cudaMemset(G.npts, 0, 8)); CK(cudaMemset(cnt, 0, 8));
@@ -436,70 +532,98 @@ extern "C" int pfg_coni_batch(const pfg_input *in, pfg_output *out)
         k_fin<<<(n + 127) / 128, 128>>>(G, n);
         CK(cudaEventRecord(ev[3]));
 
-        // search, split into subtrees in stages (ping-pong prefix buffers)
-        bool grow = false;
-        unsigned long long nsrc = 0, nstage[sd + 1] = {0};
-        int cur = 0;
-        G.pre = buf[cur].pre; G.pre_p = buf[cur].pre_p; G.pre_cap = buf[cur].cap;
-        CK(cudaMemset(G.npre, 0, 8));
-        k_top<<<(n + 127) / 128, 128>>>(G, n);
-        CK(cudaMemcpy(&nsrc, G.npre, 8, cudaMemcpyDeviceToHost));
-        nstage[1] = nsrc;
-        if (nsrc > buf[cur].cap) grow = true;
-        CK(cudaEventRecord(ev[4]));
-        for (int s = 1; s <= sd && !grow && nsrc; ++s) {
-            const int dst = cur ^ 1;
-            G.pre = buf[dst].pre; G.pre_p = buf[dst].pre_p; G.pre_cap = buf[dst].cap;
-            CK(cudaMemset(G.npre, 0, 8));
-            k_expand<<<(unsigned)((nsrc + 127) / 128), 128>>>(G, buf[cur].pre, buf[cur].pre_p, nsrc, s);
-            if (s == sd) break;                    // the last stage emits points only
-            CK(cudaMemcpy(&nsrc, G.npre, 8, cudaMemcpyDeviceToHost));
-            nstage[s + 1] = nsrc;
-            if (nsrc > buf[dst].cap) grow = true;
-            cur = dst;
-        }
-        if (grow) {                                // a prefix buffer filled: grow, rerun the batch
-            unsigned long long need = 0;
-            for (int s = 1; s <= sd; ++s) need = std::max(need, nstage[s]);
-            for (int b = 0; b < 2; ++b) { cudaFree(buf[b].pre); cudaFree(buf[b].pre_p); buf[b] = Buf(); }
-            pre_cap = need + need / 4;
-            continue;
-        }
-        CK(cudaEventRecord(ev[5]));
-        CK(cudaDeviceSynchronize());
-        CK(cudaGetLastError());
-        unsigned long long npts;
-        CK(cudaMemcpy(&npts, G.npts, 8, cudaMemcpyDeviceToHost));
-        if (npts > G.pts_cap) {
-            cudaFree(G.pts); cudaFree(G.qs); cudaFree(G.pts_p); G.pts = NULL; G.qs = NULL; G.pts_p = NULL;
-            pts_cap = npts + npts / 4;
-            continue;
+        // the search; if the points overflow their buffer (they are dropped,
+        // no status changes), grow it and search again -- not the setup
+        unsigned long long npts = 0, nstage[sd + 1] = {0};
+        for (;;) {
+            CK(cudaMemset(G.npts, 0, 8));
+            // search, split into subtrees in stages (ping-pong prefix buffers). A
+            // stage whose prefixes overflow its output buffer is rerun alone with
+            // a larger one: its input is intact, and the points it emitted are
+            // dropped by resetting the point count (status changes are idempotent).
+            unsigned long long nsrc = 0, npts0 = 0;
+            for (int q = 0; q <= sd; ++q) nstage[q] = 0;
+            int cur = 0;
+            for (;;) {
+                G.pre = buf[cur].pre; G.pre_p = buf[cur].pre_p; G.pre_cap = buf[cur].cap;
+                CK(cudaMemset(G.npre, 0, 8));
+                k_top<<<(n + 127) / 128, 128>>>(G, n);
+                CK(cudaMemcpy(&nsrc, G.npre, 8, cudaMemcpyDeviceToHost));
+                if (nsrc <= buf[cur].cap) break;
+                CK(grow_buf(cur, nsrc));
+            }
+            nstage[1] = nsrc;
+            CK(cudaEventRecord(ev[4]));
+            for (int s = 1; s <= sd && nsrc; ++s) {
+                const int dst = cur ^ 1;
+                CK(cudaMemcpy(&npts0, G.npts, 8, cudaMemcpyDeviceToHost));
+                unsigned long long ndst;
+                for (;;) {
+                    G.pre = buf[dst].pre; G.pre_p = buf[dst].pre_p; G.pre_cap = buf[dst].cap;
+                    CK(cudaMemset(G.npre, 0, 8));
+                    k_expand<<<(unsigned)((nsrc + PFG_EXP_BLOCK - 1) / PFG_EXP_BLOCK), PFG_EXP_BLOCK>>>(G, buf[cur].pre, buf[cur].pre_p, nsrc, s);
+                    if (s == sd) { ndst = 0; break; }  // the last stage emits points only
+                    CK(cudaMemcpy(&ndst, G.npre, 8, cudaMemcpyDeviceToHost));
+                    if (ndst <= buf[dst].cap) break;
+                    CK(grow_buf(dst, ndst));
+                    CK(cudaMemcpy(G.npts, &npts0, 8, cudaMemcpyHostToDevice));
+                }
+                if (s == sd) break;
+                nstage[s + 1] = nsrc = ndst;
+                cur = dst;
+            }
+            CK(cudaEventRecord(ev[5]));
+            CK(cudaDeviceSynchronize());
+            CK(cudaGetLastError());
+            CK(cudaMemcpy(&npts, G.npts, 8, cudaMemcpyDeviceToHost));
+            if (npts <= G.pts_cap) break;
+            pts_cap = npts + npts / 2;
+            CK(WS(G.pts, WS_PTS, pts_cap * 2 * MH)); CK(WS(G.qs, WS_QS, pts_cap)); CK(WS(G.pts_p, WS_PTSP, pts_cap));
+            G.pts_cap = pts_cap;
         }
         float ms[5];
         for (int q = 0; q < 5; ++q) { CK(cudaEventElapsedTime(&ms[q], ev[q], ev[q + 1])); tstage[q] += ms[q] / 1e3; }
         out->seconds_gpu += (ms[0] + ms[1] + ms[2] + ms[3] + ms[4]) / 1e3;
-        CK(cudaMemcpy2D(stat.data(), 4, (char *)G.pd + offsetof(PData, status), sizeof(PData), 4, n, cudaMemcpyDeviceToHost));
+        {
+            int *dstat = NULL;
+            CK(WS(dstat, WS_STAT, n));
+            k_status<<<(n + 255) / 256, 256>>>(G.pd, n, dstat);
+            CK(cudaMemcpy(stat.data(), dstat, (size_t)n * 4, cudaMemcpyDeviceToHost));
+        }
         {
             std::vector<int64_t> pts(npts * 2 * MH), qs(npts);
             std::vector<int> pp(npts);
             CK(cudaMemcpy(pts.data(), G.pts, npts * 2 * MH * 8, cudaMemcpyDeviceToHost));
             CK(cudaMemcpy(qs.data(), G.qs, npts * 8, cudaMemcpyDeviceToHost));
             CK(cudaMemcpy(pp.data(), G.pts_p, npts * 4, cudaMemcpyDeviceToHost));
-            // keep the points of p's finished here; canonical order
-            std::vector<unsigned long long> idx;
-            idx.reserve(npts);
+            // keep the points of p's finished here; canonical order: grouped by
+            // p (counting sort), then by (M, Kn) within a p (small groups)
+            std::vector<unsigned long long> start(n + 1, 0);
             for (unsigned long long k = 0; k < npts; ++k)
-                if (stat[pp[k]] == ST_OK) idx.push_back(k);
-            std::sort(idx.begin(), idx.end(), [&](unsigned long long a, unsigned long long b) {
-                if (pp[a] != pp[b]) return pp[a] < pp[b];
+                if (stat[pp[k]] == ST_OK) start[pp[k] + 1]++;
+            for (int ip = 0; ip < n; ++ip) start[ip + 1] += start[ip];
+            std::vector<unsigned long long> idx(start[n]);
+            {
+                std::vector<unsigned long long> fill(start.begin(), start.end() - 1);
+                for (unsigned long long k = 0; k < npts; ++k)
+                    if (stat[pp[k]] == ST_OK) idx[fill[pp[k]]++] = k;
+            }
+            auto less = [&](unsigned long long a, unsigned long long b) {
                 return std::lexicographical_compare(&pts[a * 2 * MH], &pts[a * 2 * MH + 2 * MH],
                                                     &pts[b * 2 * MH], &pts[b * 2 * MH + 2 * MH]);
-            });
-            for (unsigned long long k : idx) {
-                Mo.insert(Mo.end(), &pts[k * 2 * MH], &pts[k * 2 * MH + MH]);
-                Ko.insert(Ko.end(), &pts[k * 2 * MH + MH], &pts[k * 2 * MH + 2 * MH]);
-                qo.push_back(qs[k]);
-                po.push_back(off + pp[k]);
+            };
+            for (int ip = 0; ip < n; ++ip)
+                if (start[ip + 1] - start[ip] > 1)
+                    std::sort(idx.begin() + start[ip], idx.begin() + start[ip + 1], less);
+            const size_t base = qo.size();
+            Mo.resize((base + idx.size()) * MH); Ko.resize((base + idx.size()) * MH);
+            qo.resize(base + idx.size()); po.resize(base + idx.size());
+            for (size_t t = 0; t < idx.size(); ++t) {
+                const unsigned long long k = idx[t];
+                memcpy(&Mo[(base + t) * MH], &pts[k * 2 * MH], MH * 8);
+                memcpy(&Ko[(base + t) * MH], &pts[k * 2 * MH + MH], MH * 8);
+                qo[base + t] = qs[k];
+                po[base + t] = off + pp[k];
             }
         }
         for (int ip = 0; ip < n; ++ip)
@@ -510,6 +634,7 @@ extern "C" int pfg_coni_batch(const pfg_input *in, pfg_output *out)
                     off, n, ms[0], ms[1], nre[0], nre[1], ms[2], ms[3], ms[4],
                     nstage[1], nstage[2], nstage[3], npts);
         off += n;
+    }
     }
     if (in->verbose) {
         double tt = 0;
@@ -530,11 +655,33 @@ extern "C" int pfg_coni_batch(const pfg_input *in, pfg_output *out)
     }
     rc = 0;
 fail:
+    if (rc && last_err == cudaErrorMemoryAllocation && batch > 4096) {
+        // out of device memory (other processes, small or shared memory):
+        // free the per-batch buffers, halve the batch, carry on from `off`
+        (void)cudaGetLastError();
+        ws_release(W);
+        dps = Og = Xg = NULL; dpgeo = rA = rB = cnt = NULL; G.pd = NULL;
+        G.npre = G.npts = NULL; buf[0] = buf[1] = Buf(); G.pts = G.qs = NULL; G.pts_p = NULL;
+        dgeo = NULL; dk = dm = NULL;
+        CK(WS(dgeo, WS_GEO, geos.size())); CK(cudaMemcpy(dgeo, geos.data(), geos.size() * sizeof(Geo), cudaMemcpyHostToDevice));
+        CK(WS(dk, WS_K, koff)); CK(cudaMemcpy(dk, in->kappa, koff * 8, cudaMemcpyHostToDevice));
+        CK(WS(dm, WS_M, moff)); CK(cudaMemcpy(dm, in->Mbasis, moff * 8, cudaMemcpyHostToDevice));
+        batch /= 2;
+        pre_cap = (unsigned long long)std::min(batch, NP) * 16;
+        pts_cap = 1ULL << 16;
+        if (in->verbose) fprintf(stderr, "pfg: out of device memory; batch -> %ld\n", batch);
+        out->err[0] = 0;
+        last_err = cudaSuccess;
+        goto restart;
+    }
     if (rc) pfg_output_free(out);
-    for (int q = 0; q < NEV; ++q) if (ev[q]) cudaEventDestroy(ev[q]);
-    cudaFree(dgeo); cudaFree(dk); cudaFree(dm); cudaFree(dps); cudaFree(dpgeo); cudaFree(Og); cudaFree(Xg);
-    cudaFree(rA); cudaFree(rB); cudaFree(cnt); cudaFree(G.pd); cudaFree(G.npre); cudaFree(G.npts);
-    for (int b = 0; b < 2; ++b) { cudaFree(buf[b].pre); cudaFree(buf[b].pre_p); }
-    cudaFree(G.pts); cudaFree(G.qs); cudaFree(G.pts_p);
+    for (int q = 0; q < NEV; ++q) if (ev[q]) (void)cudaEventDestroy(ev[q]);
     return rc;
+}
+
+extern "C" void pfg_release(int device)
+{
+    Workspace &W = workspace(device);
+    std::lock_guard<std::mutex> g(W.mu);
+    if (cudaSetDevice(device) == cudaSuccess) ws_release(W);
 }
