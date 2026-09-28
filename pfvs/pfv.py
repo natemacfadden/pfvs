@@ -84,40 +84,66 @@ class PFV():
         self._all_charges = []
         self._all_coeffs  = []
 
-        # coni-specific variables
-        # -----------------------
-        # These properties only exist on coni PFVs. We attach them to the
-        # class dynamically (type(self).x = property(...)) rather than
-        # defining them unconditionally with @property + a coni guard, so
-        # that attribute lookup raises AttributeError for non-coni instances
-        # instead of silently returning a wrong value.
+        # coni-specific variables (the coni-only properties are defined on
+        # the class below and raise AttributeError for non-coni PFVs)
         if self.coni:
-            # coni curve/basis
-            type(self).coni_curve = property(lambda self:
-                self._cydata.coni_curve)
-            type(self).cob        = property(lambda self:
-                self._cydata.cob)
-
-            # Kprime computation/check (must be positive)
-            type(self).Kprime = property(lambda self:
-                -self.K[0] + (self.M@self.kappa@self.p)[0] )
-            type(self).check_Kprime = lambda self: self.Kprime > 0
-
-            # other physics-y variables
             self.ncf = 2
 
-            type(self).gsM = property(lambda self: self.gs*self.M[0])
-            type(self).Vtilde = property(lambda self:
-                (((self.kappa@self.p)@self.p)@self.p/6)*np.imag(self.tau0)**(3))
-            type(self).zcf = property(lambda self:
-                np.exp(-2*np.pi*self.Kprime/(self.ncf*self.gsM))/(2.*np.pi) )
+    # coni-only attributes
+    # --------------------
+    # Plain class properties that raise AttributeError for non-coni PFVs.
+    # (They used to be attached to the class from __init__, so after the first
+    # coni PFV every PFV had them -- and check_all ran check_Kprime on
+    # non-coni PFVs, where it does not apply.)
+    def _coni_only(f):
+        def get(self):
+            if not self.coni:
+                raise AttributeError(f"{f.__name__} is only defined for coni PFVs")
+            return f(self)
+        return property(get, doc=f.__doc__)
 
-            type(self).align = property(lambda self:
-                2*89.5643
+    @_coni_only
+    def coni_curve(self):
+        """The conifold curve."""
+        return self._cydata.coni_curve
+
+    @_coni_only
+    def cob(self):
+        """Change of basis to the coni basis."""
+        return self._cydata.cob
+
+    @_coni_only
+    def Kprime(self):
+        """K' = -K_0 + (M kappa p)_0 (must be positive)."""
+        return -self.K[0] + (self.M@self.kappa@self.p)[0]
+
+    @_coni_only
+    def gsM(self):
+        return self.gs*self.M[0]
+
+    @_coni_only
+    def Vtilde(self):
+        return (((self.kappa@self.p)@self.p)@self.p/6)*np.imag(self.tau0)**(3)
+
+    @_coni_only
+    def zcf(self):
+        return np.exp(-2*np.pi*self.Kprime/(self.ncf*self.gsM))/(2.*np.pi)
+
+    @_coni_only
+    def align(self):
+        return (2*89.5643
                 * (self.Vtilde**(1/3))
                 * (2*(2+self.h11+self.h21))
                 * (self.zcf**(4/3))
-                / (self.gsM*self.gsM*self.W0()*self.W0()) )
+                / (self.gsM*self.gsM*self.W0()*self.W0()))
+
+    del _coni_only
+
+    def check_Kprime(self) -> bool:
+        """(coni PFVs only) K' > 0."""
+        if not self.coni:
+            raise AttributeError("check_Kprime is only defined for coni PFVs")
+        return self.Kprime > 0
 
     # alternative constructor
     # -----------------------
@@ -575,8 +601,10 @@ class PFV():
         If stop_at_fail is True, short-circuits on first failure.
         """
         # get check methods
-        checks = [func for func in dir(self) if func[:6] == 'check_']
+        checks = [func for func in dir(type(self)) if func[:6] == 'check_']
         checks = [check for check in checks if check != 'check_all']
+        if not self.coni:
+            checks = [check for check in checks if check not in ('check_Kprime',)]
 
         # always check N-rank first
         if 'check_Ninvertible' in checks:
