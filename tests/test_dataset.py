@@ -166,3 +166,26 @@ def test_incomplete_search_raises():
     # silently keep a truncated output)
     with pytest.raises(IncompleteSearchError, match="max_N_pfvs"):
         coniZpM(data, ps, ellipsoid_dilation=g["D"], n_jobs=1, max_N_pfvs=1)
+
+
+def test_c_lattice_hnf_matches_flint():
+    """
+    The C lattice setup's H (int128 HNF, with a GMP fallback when int128
+    intermediates overflow -- the majority of cases at h11 = 11) equals
+    flint's HNF exactly.
+    """
+    import flint
+    from pfvs.fp_kernel.fp_kernel import _lattice_build
+    n = 0
+    for g in [g for g in GEOMS if g["h11"] >= 10][:8]:
+        data = cydata(g)
+        ps, _, _ = box_enum(max(g["B"], 8), np.ascontiguousarray(data.H_cob.astype(np.int32)),
+                            1, 10**6, primitive=True)
+        for p in ps[np.random.default_rng(0).choice(len(ps), size=min(40, len(ps)), replace=False)]:
+            st, _, _, ZB, _, H = _lattice_build(data.kappa_cob, data.M_lattice(),
+                                                np.concatenate([[0], p]).astype(np.int64), True)
+            assert st == 0
+            ref = flint.fmpz_mat([[int(x) for x in r] for r in ZB[1:].tolist()]).hnf()
+            assert flint.fmpz_mat([[int(x) for x in r] for r in np.asarray(H).tolist()]) == ref
+            n += 1
+    assert n >= 150

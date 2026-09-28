@@ -96,7 +96,9 @@ int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R);
 // ==============
 #ifdef PFV_LATTICE_IMPLEMENTATION
 
+#include <gmp.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define PFL_I64_MAX ((pfl_i128)INT64_MAX)
@@ -177,79 +179,6 @@ static int pfl_unimodular(const int64_t *v, int n, int64_t *Uout)
         }
     }
     memcpy(Uout, U, (size_t)n * n * sizeof(int64_t));
-    return 0;
-}
-
-// LLL-reduce the m basis vectors (rows of B, length n, stride n), delta =
-// 0.99. Floating-point Gram-Schmidt chooses the operations; the updates
-// b_k -= q b_j and swaps are exact (checked) integer operations.
-static int pfl_lll(int64_t *B, int m, int n)
-{
-    double mu[PFL_MAX_H11][PFL_MAX_H11], bb[PFL_MAX_H11];
-    const double delta = 0.99;
-    int k = 1, iters = 0;
-
-    // Gram-Schmidt row k from scratch (rows < k are already done)
-    #define PFL_GS_ROW(kk)                                                     \
-    do {                                                                       \
-        for (int j_ = 0; j_ < (kk); ++j_) {                                    \
-            double d_ = 0.0;                                                   \
-            for (int c_ = 0; c_ < n; ++c_)                                     \
-                d_ += (double)B[(kk) * n + c_] * (double)B[j_ * n + c_];       \
-            for (int l_ = 0; l_ < j_; ++l_) d_ -= mu[j_][l_] * mu[(kk)][l_] * bb[l_]; \
-            mu[(kk)][j_] = d_ / bb[j_];                                        \
-        }                                                                      \
-        double d_ = 0.0;                                                       \
-        for (int c_ = 0; c_ < n; ++c_)                                         \
-            d_ += (double)B[(kk) * n + c_] * (double)B[(kk) * n + c_];         \
-        for (int l_ = 0; l_ < (kk); ++l_) d_ -= mu[(kk)][l_] * mu[(kk)][l_] * bb[l_]; \
-        bb[(kk)] = d_;                                                         \
-    } while (0)
-
-    if (m < 2) return 0;
-    PFL_GS_ROW(0);
-    if (!(bb[0] > 0)) return -2;
-    PFL_GS_ROW(1);
-
-    while (k < m) {
-        if (++iters > 100000) return -3;
-        // size reduction (repeat while floating point leaves |mu| > 1/2)
-        for (int pass = 0; pass < 4; ++pass) {
-            int changed = 0;
-            for (int j = k - 1; j >= 0; --j) {
-                double q = nearbyint(mu[k][j]);
-                if (q == 0.0) continue;
-                if (!(fabs(q) <= 9.0e18)) return -1;   /* also NaN */
-                int64_t qi = (int64_t)q;
-                for (int c = 0; c < n; ++c) {
-                    pfl_i128 x = (pfl_i128)B[k * n + c] - (pfl_i128)qi * B[j * n + c];
-                    if (!PFL_FITS64(x)) return -1;
-                    B[k * n + c] = (int64_t)x;
-                }
-                changed = 1;
-                for (int l = 0; l < j; ++l) mu[k][l] -= q * mu[j][l];
-                mu[k][j] -= q;
-            }
-            if (!changed) break;
-            PFL_GS_ROW(k);   // refresh after the integer updates
-        }
-        if (!(bb[k] > 0)) return -2;
-        if (bb[k] < (delta - mu[k][k - 1] * mu[k][k - 1]) * bb[k - 1]) {
-            for (int c = 0; c < n; ++c) {
-                int64_t t = B[k * n + c];
-                B[k * n + c] = B[(k - 1) * n + c];
-                B[(k - 1) * n + c] = t;
-            }
-            k = k > 1 ? k - 1 : 1;
-            if (k == 1) PFL_GS_ROW(0);
-            PFL_GS_ROW(k - 1);
-            PFL_GS_ROW(k);
-        } else {
-            k++;
-            if (k < m) PFL_GS_ROW(k);
-        }
-    }
-    #undef PFL_GS_ROW
     return 0;
 }
 
@@ -346,6 +275,60 @@ static int pfl_hnf(const int64_t *A64, int r, int n, pfl_i128 *Aout)
     return 0;
 }
 
+// The same HNF in GMP, for when the int128 version's intermediates exceed
+// 2^125 (common at h11 >= 10: the final H fits, the elimination does not).
+// Exact; the result (canonical, as flint's) is returned in int128, or -1 if
+// an entry of the final H does not fit.
+static int pfl_hnf_mpz(const int64_t *A64, int r, int n, pfl_i128 *Aout)
+{
+    mpz_t *A = malloc((size_t)r * n * sizeof(mpz_t));
+    if (!A) return -1;
+    mpz_t q;
+    mpz_init(q);
+    for (int i = 0; i < r * n; ++i) mpz_init_set_si(A[i], A64[i]);
+    int row = 0, rc = 0;
+    for (int col = 0; col < n && row < r; ++col) {
+        for (;;) {
+            int piv = -1;
+            for (int i = row; i < r; ++i)
+                if (mpz_sgn(A[i * n + col]) != 0 &&
+                    (piv < 0 || mpz_cmpabs(A[i * n + col], A[piv * n + col]) < 0))
+                    piv = i;
+            if (piv < 0) break;
+            if (piv != row)
+                for (int c = 0; c < n; ++c) mpz_swap(A[row * n + c], A[piv * n + c]);
+            int done = 1;
+            for (int i = row + 1; i < r; ++i) {
+                if (mpz_sgn(A[i * n + col]) == 0) continue;
+                mpz_fdiv_q(q, A[i * n + col], A[row * n + col]);
+                for (int c = col; c < n; ++c) mpz_submul(A[i * n + c], q, A[row * n + c]);
+                if (mpz_sgn(A[i * n + col]) != 0) done = 0;
+            }
+            if (done) break;
+        }
+        if (mpz_sgn(A[row * n + col]) == 0) continue;
+        if (mpz_sgn(A[row * n + col]) < 0)
+            for (int c = col; c < n; ++c) mpz_neg(A[row * n + c], A[row * n + c]);
+        for (int i = 0; i < row; ++i) {
+            mpz_fdiv_q(q, A[i * n + col], A[row * n + col]);
+            if (mpz_sgn(q) == 0) continue;
+            for (int c = col; c < n; ++c) mpz_submul(A[i * n + c], q, A[row * n + c]);
+        }
+        row++;
+    }
+    for (int i = 0; i < r * n && !rc; ++i) {
+        if (mpz_sizeinbase(A[i], 2) > 125) { rc = -1; break; }
+        uint64_t w[2] = {0, 0};
+        mpz_export(w, NULL, -1, sizeof(uint64_t), 0, 0, A[i]);
+        pfl_i128 v = (pfl_i128)(((pfl_u128)w[1] << 64) | w[0]);
+        Aout[i] = mpz_sgn(A[i]) < 0 ? -v : v;
+    }
+    for (int i = 0; i < r * n; ++i) mpz_clear(A[i]);
+    mpz_clear(q);
+    free(A);
+    return rc;
+}
+
 // C = A B for int64 matrices with exact overflow checks
 static int pfl_matmul(const int64_t *A, const int64_t *B, int64_t *C,
                       int m, int k, int n)
@@ -364,126 +347,113 @@ static int pfl_matmul(const int64_t *A, const int64_t *B, int64_t *C,
 }
 
 
-// y -> G y (exact, checked int128); returns 0 on overflow
-static inline int pfl_gvec(const int64_t *y, const int64_t *G, int n, pfl_i128 *Gy)
+// LLL core (delta 0.99) on the m basis vectors B (rows, length n), given
+// their exact Gram matrix GG ((m + 1) x (m + 1), row-major, stride m + 1;
+// under whatever inner product the caller chose). If `last` is given it is
+// row m of GG: after the reduction it is size-reduced (not swapped) against
+// the basis. The Gram matrix is kept exact (checked int128) under every
+// basis operation, so Gram-Schmidt needs no inner products: floating point
+// only chooses the unimodular operations, which are exact.
+static int pfl_lll_core(int64_t *B, int m, int n, pfl_i128 *GG, int64_t *last)
 {
-    for (int i = 0; i < n; ++i) {
-        pfl_i128 r = 0;
-        for (int j = 0; j < n; ++j) {
-            pfl_i128 t;
-            t = (pfl_i128)G[i * n + j] * y[j];      /* int64 * int64: fits */
-            if (__builtin_add_overflow(r, t, &r)) return 0;
-        }
-        Gy[i] = r;
-    }
-    return 1;
-}
-
-// x . (G y) given Gy (exact, checked), as double; *ok cleared on overflow
-static inline double pfl_gdot(const int64_t *x, const pfl_i128 *Gy, int n, int *ok)
-{
-    pfl_i128 s = 0;
-    for (int i = 0; i < n; ++i) {
-        if (!x[i]) continue;
-        pfl_i128 t;
-        if (pfl_mul_ovf(Gy[i], (pfl_i128)x[i], &t) ||
-            __builtin_add_overflow(s, t, &s)) { *ok = 0; return 0.0; }
-    }
-    return (double)s;
-}
-
-// LLL (delta 0.99) of the m coefficient vectors B (rows, length n) with
-// respect to the quadratic form G; if `last` is given, afterwards size-reduce
-// that vector (not swapped) against the reduced basis. The products G b_j are
-// cached and updated exactly with the basis. Updates are exact (checked)
-// integer operations; floating point only chooses them, so the lattice is
-// preserved exactly.
-static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *last)
-{
+    const int L = m + 1;                        // GG stride
+    const int M = m + (last != NULL);           // rows tracked in GG
     double mu[PFL_MAX_H11][PFL_MAX_H11], bb[PFL_MAX_H11], mw[PFL_MAX_H11];
-    pfl_i128 GB[PFL_MAX_H11][PFL_MAX_H11];      // GB[j] = G b_j
     const double delta = 0.99;
-    int ok = 1, iters = 0;
-    for (int j = 0; j < m; ++j) if (!pfl_gvec(&B[j * n], G, n, GB[j])) return -1;
+    int iters = 0;
 
-    #define PFL_GGS_ROW(kk)                                                    \
+    #define PFL_ROW(kk) ((kk) == m ? last : &B[(kk) * n])
+    // b_k -= q b_j, on the vectors and on GG (exact)
+    #define PFL_SUB(kk, jj, qi)                                                \
+    do {                                                                       \
+        int64_t *bk_ = PFL_ROW(kk); const int64_t *bj_ = PFL_ROW(jj);          \
+        for (int c_ = 0; c_ < n; ++c_) {                                       \
+            pfl_i128 x_ = (pfl_i128)bk_[c_] - (pfl_i128)(qi) * bj_[c_];        \
+            if (!PFL_FITS64(x_)) return -1;                                    \
+            bk_[c_] = (int64_t)x_;                                             \
+        }                                                                      \
+        pfl_i128 kj_ = GG[(kk) * L + (jj)], jj_ = GG[(jj) * L + (jj)], t_, u_; \
+        /* new G_kk = G_kk - 2 q G_kj + q^2 G_jj */                            \
+        if (pfl_mul_ovf(jj_, (pfl_i128)(qi), &t_) ||                           \
+            __builtin_sub_overflow(t_, 2 * kj_, &t_) ||                        \
+            pfl_mul_ovf(t_, (pfl_i128)(qi), &u_) ||                            \
+            __builtin_add_overflow(GG[(kk) * L + (kk)], u_, &u_)) return -1;   \
+        for (int l_ = 0; l_ < M; ++l_) {                                       \
+            if (l_ == (kk)) continue;                                          \
+            if (pfl_mul_ovf(GG[(jj) * L + l_], (pfl_i128)(qi), &t_) ||         \
+                __builtin_sub_overflow(GG[(kk) * L + l_], t_, &t_)) return -1; \
+            GG[(kk) * L + l_] = t_;                                            \
+            GG[l_ * L + (kk)] = t_;                                            \
+        }                                                                      \
+        GG[(kk) * L + (kk)] = u_;                                              \
+    } while (0)
+
+    #define PFL_GS(kk)                                                         \
     do {                                                                       \
         for (int j_ = 0; j_ < (kk); ++j_) {                                    \
-            double d_ = pfl_gdot(&B[(kk) * n], GB[j_], n, &ok);                \
+            double d_ = (double)GG[(kk) * L + j_];                             \
             for (int l_ = 0; l_ < j_; ++l_) d_ -= mu[j_][l_] * mu[(kk)][l_] * bb[l_]; \
             mu[(kk)][j_] = d_ / bb[j_];                                        \
         }                                                                      \
-        double d_ = pfl_gdot(&B[(kk) * n], GB[(kk)], n, &ok);                  \
+        double d_ = (double)GG[(kk) * L + (kk)];                               \
         for (int l_ = 0; l_ < (kk); ++l_) d_ -= mu[(kk)][l_] * mu[(kk)][l_] * bb[l_]; \
         bb[(kk)] = d_;                                                         \
     } while (0)
 
-    if (m >= 1) { PFL_GGS_ROW(0); if (!(bb[0] > 0)) return -2; }
-    if (m >= 2) PFL_GGS_ROW(1);
+    if (m >= 1) { PFL_GS(0); if (!(bb[0] > 0)) return -2; }
+    if (m >= 2) PFL_GS(1);
     int k = 1;
     while (k < m) {
-        if (!ok) return -1;
         if (++iters > 100000) return -3;
-        for (int pass = 0; pass < 4; ++pass) {
+        for (int pass = 0; pass < 4; ++pass) {  // size reduction
             int changed = 0;
             for (int j = k - 1; j >= 0; --j) {
                 double q = nearbyint(mu[k][j]);
                 if (q == 0.0) continue;
                 if (!(fabs(q) <= 9.0e18)) return -1;   /* also NaN */
                 int64_t qi = (int64_t)q;
-                for (int c = 0; c < n; ++c) {
-                    pfl_i128 x = (pfl_i128)B[k * n + c] - (pfl_i128)qi * B[j * n + c];
-                    if (!PFL_FITS64(x)) return -1;
-                    B[k * n + c] = (int64_t)x;
-                    pfl_i128 t;
-                    if (pfl_mul_ovf(GB[j][c], (pfl_i128)qi, &t) ||
-                        __builtin_sub_overflow(GB[k][c], t, &GB[k][c])) return -1;
-                }
-                changed = 1;
+                PFL_SUB(k, j, qi);
                 for (int l = 0; l < j; ++l) mu[k][l] -= q * mu[j][l];
                 mu[k][j] -= q;
+                changed = 1;
             }
             if (!changed) break;
-            PFL_GGS_ROW(k);
+            PFL_GS(k);                          // refresh from the exact Gram
         }
-        if (!ok) return -1;
         if (!(bb[k] > 0)) return -2;
         if (bb[k] < (delta - mu[k][k - 1] * mu[k][k - 1]) * bb[k - 1]) {
-            for (int c = 0; c < n; ++c) {
-                int64_t t = B[k * n + c];
-                B[k * n + c] = B[(k - 1) * n + c];
-                B[(k - 1) * n + c] = t;
-                pfl_i128 u = GB[k][c]; GB[k][c] = GB[k - 1][c]; GB[k - 1][c] = u;
+            for (int c = 0; c < n; ++c) {       // swap b_k, b_{k-1}
+                int64_t t = B[k * n + c]; B[k * n + c] = B[(k - 1) * n + c]; B[(k - 1) * n + c] = t;
+            }
+            for (int l = 0; l < M; ++l) {       // ... and rows/columns of GG
+                pfl_i128 t = GG[k * L + l]; GG[k * L + l] = GG[(k - 1) * L + l]; GG[(k - 1) * L + l] = t;
+            }
+            for (int l = 0; l < M; ++l) {
+                pfl_i128 t = GG[l * L + k]; GG[l * L + k] = GG[l * L + (k - 1)]; GG[l * L + (k - 1)] = t;
             }
             k = k > 1 ? k - 1 : 1;
-            if (k == 1) PFL_GGS_ROW(0);
-            PFL_GGS_ROW(k - 1);
-            PFL_GGS_ROW(k);
+            if (k == 1) PFL_GS(0);
+            PFL_GS(k - 1);
+            PFL_GS(k);
         } else {
             k++;
-            if (k < m) PFL_GGS_ROW(k);
+            if (k < m) PFL_GS(k);
         }
     }
-    if (last && m > 0) {
-        // Gram-Schmidt coefficients of `last`, then size-reduce it
+    if (last && m > 0) {                        // size-reduce `last` (row m)
         for (int pass = 0; pass < 4; ++pass) {
             for (int j = 0; j < m; ++j) {
-                double d_ = pfl_gdot(last, GB[j], n, &ok);
+                double d_ = (double)GG[m * L + j];
                 for (int l = 0; l < j; ++l) d_ -= mu[j][l] * mw[l] * bb[l];
                 mw[j] = d_ / bb[j];
             }
-            if (!ok) return -1;
             int changed = 0;
             for (int j = m - 1; j >= 0; --j) {
                 double q = nearbyint(mw[j]);
                 if (q == 0.0) continue;
-                if (!(fabs(q) <= 9.0e18)) return -1;   /* also NaN */
+                if (!(fabs(q) <= 9.0e18)) return -1;
                 int64_t qi = (int64_t)q;
-                for (int c = 0; c < n; ++c) {
-                    pfl_i128 x = (pfl_i128)last[c] - (pfl_i128)qi * B[j * n + c];
-                    if (!PFL_FITS64(x)) return -1;
-                    last[c] = (int64_t)x;
-                }
+                PFL_SUB(m, j, qi);
                 for (int l = 0; l < j; ++l) mw[l] -= q * mu[j][l];
                 mw[j] -= q;
                 changed = 1;
@@ -491,8 +461,55 @@ static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *las
             if (!changed) break;
         }
     }
-    #undef PFL_GGS_ROW
-    return ok ? 0 : -1;
+    #undef PFL_ROW
+    #undef PFL_SUB
+    #undef PFL_GS
+    return 0;
+}
+
+// Euclidean LLL of the m rows of B (length n).
+static int pfl_lll(int64_t *B, int m, int n)
+{
+    if (m < 2) return 0;
+    pfl_i128 GG[(PFL_MAX_H11 + 1) * (PFL_MAX_H11 + 1)];
+    const int L = m + 1;
+    for (int i = 0; i < m; ++i)
+        for (int j = 0; j <= i; ++j) {
+            pfl_i128 sum = 0;
+            for (int c = 0; c < n; ++c)
+                if (__builtin_add_overflow(sum, (pfl_i128)B[i * n + c] * B[j * n + c], &sum)) return -1;
+            GG[i * L + j] = GG[j * L + i] = sum;
+        }
+    return pfl_lll_core(B, m, n, GG, NULL);
+}
+
+// LLL of the m coefficient vectors B (rows, length n) with respect to the
+// quadratic form G (n x n); then size-reduce `last` (if given) against them.
+static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *last)
+{
+    pfl_i128 GG[(PFL_MAX_H11 + 1) * (PFL_MAX_H11 + 1)];
+    pfl_i128 Gy[PFL_MAX_H11];
+    const int L = m + 1, M = m + (last != NULL);
+    for (int j = 0; j < M; ++j) {
+        const int64_t *y = j == m ? last : &B[j * n];
+        for (int i = 0; i < n; ++i) {           // Gy = G y (int64 * int64 terms)
+            pfl_i128 r = 0;
+            for (int c = 0; c < n; ++c)
+                if (__builtin_add_overflow(r, (pfl_i128)G[i * n + c] * y[c], &r)) return -1;
+            Gy[i] = r;
+        }
+        for (int i = 0; i <= j; ++i) {          // GG[i][j] = x_i . G y_j
+            const int64_t *x = i == m ? last : &B[i * n];
+            pfl_i128 sum = 0, t;
+            for (int c = 0; c < n; ++c) {
+                if (!x[c]) continue;
+                if (pfl_mul_ovf(Gy[c], (pfl_i128)x[c], &t) || __builtin_add_overflow(sum, t, &sum))
+                    return -1;
+            }
+            GG[i * L + j] = GG[j * L + i] = sum;
+        }
+    }
+    return pfl_lll_core(B, m, n, GG, last);
 }
 
 // Cut-aware basis change (see the header comment): Binter <- Binter T,
@@ -618,6 +635,8 @@ int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
     int r0 = S->coni ? 1 : 0;
     R->nrows = h - r0;
     rc = pfl_hnf(&R->ZB[r0 * d], R->nrows, d, R->H);
+    if (rc == -1)                 /* int128 intermediates overflowed: redo in GMP */
+        rc = pfl_hnf_mpz(&R->ZB[r0 * d], R->nrows, d, R->H);
     return rc ? rc * 10 - 5 : 0;
 }
 
