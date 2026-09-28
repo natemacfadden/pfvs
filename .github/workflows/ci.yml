@@ -71,10 +71,15 @@ jobs:
           activate-environment: nvcc
       - name: Install nvcc (conda-forge)
         run: conda install -y -c conda-forge cuda-nvcc cuda-cudart-dev "gxx_linux-64=13"
-      - name: Compile for sm_70 ... sm_120 (warnings are errors)
+      - name: Compile for every architecture this nvcc supports (warnings are errors)
         run: |
-          for a in sm_70 sm_80 sm_90 sm_120; do
-            nvcc -ccbin x86_64-conda-linux-gnu-g++ -arch=$a -Wno-deprecated-gpu-targets -O3 -std=c++17 -shared \
+          supported=$(nvcc --list-gpu-arch)
+          built=0
+          for a in sm_70 sm_75 sm_80 sm_86 sm_89 sm_90 sm_100 sm_120; do
+            echo "$supported" | grep -qx "compute_${a#sm_}" || { echo "skip $a (not in this nvcc)"; continue; }
+            nvcc -arch=$a -Wno-deprecated-gpu-targets -O3 -std=c++17 -shared \
                  -Xcompiler -fPIC -Xcompiler -Wall,-Wextra,-Werror \
                  pfvs/fp_kernel/cuda/pfvs_gpu.cu -o /tmp/libpfvs_gpu_$a.so
+            built=$((built + 1))
           done
+          test "$built" -ge 3
