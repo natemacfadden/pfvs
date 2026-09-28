@@ -1,0 +1,15 @@
+# sources the extension and the optional GPU backend are built from
+recursive-include pfvs *.pyx *.h *.c
+recursive-include pfvs/fp_kernel/cuda *.cu *.cuh *.h
+include pfvs/fp_kernel/README.md
+# the test suite, its data and the C drivers (so an sdist can be tested)
+recursive-include tests *.py *.json *.json.gz *.csv *.c Makefile
+# examples and benchmarks
+recursive-include examples *.py
+recursive-include benchmarks *.py
+# the API reference and how it is generated
+recursive-include documentation *.md *.py
+include pydoc-markdown.yml
+include README.md CHANGELOG.md CITATION.cff LICENSE environment.yml
+# never ship build products
+global-exclude *.so *.o *.pyd __pycache__ *.pyc

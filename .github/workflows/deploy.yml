@@ -53,7 +53,7 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21
         env:
-          CIBW_BUILD: cp39-* cp310-* cp311-* cp312-* cp313-*
+          CIBW_BUILD: cp310-* cp311-* cp312-* cp313-*
           # gmp must exist in each build env; setup.py finds it on system paths
           # (linux) or via CONDA_PREFIX (macos, pointed at brew's gmp)
           CIBW_SKIP: "*-musllinux*"

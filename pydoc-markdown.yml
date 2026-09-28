@@ -1,0 +1,7 @@
+loaders:
+- type: python
+  search_path: ["."]
+  modules: ["pfvs.cydata", "pfvs.pfv", "pfvs.coniZp", "pfvs.Zp", "pfvs.pvectors", "pfvs.gpu", "pfvs.distributed"]
+renderer:
+  type: markdown
+  filename: "documentation/api.md"

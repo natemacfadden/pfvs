@@ -1,6 +1,6 @@
 [build-system]
 requires = [
-    "setuptools>=64",
+    "setuptools>=77",
     "wheel",
     "cython",
 ]
@@ -8,14 +8,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pfvs"
-version = "0.0.1"
-description = "A software package for constructing/verifying PFVs"
+version = "0.1.0"
+description = "Exact search for perturbatively flat flux vacua (PFVs), including conifold PFVs, on CPUs and GPUs"
 authors = [{ name = "Nate MacFadden for the Liam McAllister Group" }]
 readme = "README.md"
-license = {text = "GPL-3.0-or-later"}
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+keywords = ["string theory", "flux vacua", "Calabi-Yau", "lattice enumeration", "Fincke-Pohst", "GPU"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Cython",
+    "Programming Language :: C",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Scientific/Engineering :: Mathematics",
 ]
 dependencies = [
     "python-flint",
@@ -26,7 +37,7 @@ dependencies = [
     "numpy",
     "scipy",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [project.optional-dependencies]
 test = [
@@ -37,9 +48,33 @@ test = [
 
 [project.urls]
 Repository = "https://github.com/natemacfadden/pfvs"
+Changelog = "https://github.com/natemacfadden/pfvs/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 packages = ["pfvs", "pfvs.fp_kernel", "pfvs.conipfv_kernel", "pfvs.pfv_kernel"]
 
+# only the compiled libraries are needed at run time (the Cython extension and,
+# if built, the GPU backend libpfvs_gpu.so); sources ship in the sdist only
 [tool.setuptools.package-data]
-"pfvs.fp_kernel" = ["*.so", "*.pyd", "*.h"]
+"pfvs.fp_kernel" = ["*.so", "*.pyd"]
+
+[tool.setuptools.exclude-package-data]
+"pfvs.fp_kernel" = ["*.c", "*.pyx", "*.h", "cuda/*", "README.md"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = ["build"]
+
+[tool.ruff.lint]
+# pinned rule set (so a ruff upgrade cannot change what CI enforces): ruff's
+# defaults -- pyflakes (F) and pycodestyle's import/statement/runtime errors --
+# plus flake8-bugbear (B), which catches real bugs (late-binding closures,
+# mutable defaults, ...)
+select = ["E4", "E7", "E9", "F", "B"]
+# house style: aligned one-line `if x: y` / `a = 1; b = 2`; zip() over
+# sequences whose lengths differ on purpose
+ignore = ["E701", "E702", "B905"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

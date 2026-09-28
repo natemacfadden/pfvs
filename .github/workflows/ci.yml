@@ -22,8 +22,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - {os: ubuntu-latest, cc: gcc,   python-version: "3.10"}
           - {os: ubuntu-latest, cc: gcc,   python-version: "3.11"}
           - {os: ubuntu-latest, cc: gcc,   python-version: "3.12"}
+          - {os: ubuntu-latest, cc: gcc,   python-version: "3.13"}
           - {os: ubuntu-latest, cc: clang, python-version: "3.12"}   # Linux clang (int128 portability)
           - {os: macos-latest,  cc: clang, python-version: "3.12"}   # Apple Silicon, Apple clang
     env:
@@ -54,6 +56,66 @@ jobs:
         run: tests/c/test_factor
       - name: Run the test suite
         run: pytest tests/ -n auto
+
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # pinned: a ruff upgrade must not change what CI enforces
+      - name: Install ruff
+        run: pip install ruff==0.16.6
+      - name: ruff check
+        run: ruff check .
+
+  docs-drift:
+    name: documentation/api.md up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # pydoc-markdown parses the source statically (no project deps needed);
+      # pinned so its output is deterministic
+      - name: Install pydoc-markdown
+        run: pip install "pydoc-markdown==4.8.2"
+      - name: Regenerate api.md
+        run: |
+          pydoc-markdown
+          python documentation/clean_api.py
+      - name: Fail if api.md is out of date
+        run: |
+          if ! git diff --quiet -- documentation/api.md; then
+            echo "::error::documentation/api.md is stale -- run 'pydoc-markdown && python documentation/clean_api.py' and commit the result"
+            git diff -- documentation/api.md
+            exit 1
+          fi
+
+  sdist:
+    # The published sdist must build and pass its own tests, installed into a
+    # clean environment (not run in place from the checkout).
+    name: sdist builds, installs and passes its tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install libgmp
+        run: sudo apt-get update && sudo apt-get install -y libgmp-dev
+      - name: Build the sdist
+        run: pipx run build --sdist --outdir dist
+      - name: Install it into a fresh venv and run its tests
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install "$(ls dist/*.tar.gz)[test]"
+          mkdir /tmp/sdist && tar xzf dist/*.tar.gz -C /tmp/sdist --strip-components=1
+          cd /tmp/sdist && rm -rf pfvs          # import the installed package, not the sources
+          /tmp/venv/bin/python -m pytest tests -n auto
 
   gpu-build:
     # No GPUs on hosted runners: check that the CUDA backend compiles cleanly

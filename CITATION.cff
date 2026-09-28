@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below, together with the papers that introduced the method."
+title: pfvs
+abstract: "Exact search for perturbatively flat flux vacua (PFVs), including conifold PFVs, of Calabi-Yau orientifold compactifications of type IIB string theory: a Fincke-Pohst lattice search in C with exact integer decisions, with CUDA/HIP GPU and multi-machine backends."
+authors:
+  - family-names: MacFadden
+    given-names: Nate
+    orcid: https://orcid.org/0000-0002-8481-3724
+repository-code: https://github.com/natemacfadden/pfvs
+license: GPL-3.0-or-later
+version: 0.1.0
+type: software
+references:
+  - type: article
+    title: "Candidate de Sitter Vacua"
+    authors:
+      - family-names: McAllister
+        given-names: Liam
+      - family-names: Moritz
+        given-names: Jakob
+      - family-names: Nally
+        given-names: Richard
+      - family-names: Schachner
+        given-names: Andreas
+    doi: 10.48550/arXiv.2406.13751
+    url: https://arxiv.org/abs/2406.13751
+  - type: article
+    title: "Small Cosmological Constants in String Theory"
+    authors:
+      - family-names: Demirtas
+        given-names: Mehmet
+      - family-names: Kim
+        given-names: Manki
+      - family-names: McAllister
+        given-names: Liam
+      - family-names: Moritz
+        given-names: Jakob
+      - family-names: Rios-Tascon
+        given-names: Andres
+    doi: 10.48550/arXiv.2107.09064
+    url: https://arxiv.org/abs/2107.09064
