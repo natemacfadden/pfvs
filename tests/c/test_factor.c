@@ -63,11 +63,11 @@ int main(void)
         int overflow = 0;
         for (int i = 0; i < dim; ++i)
             for (int j = 0; j < dim; ++j) {
-                __int128 s = 0;
+                fpk_i128 s = 0;
                 if (kind == 2) {
                     s = i <= j ? rnd(-(1LL << bits), 1LL << bits) : mat[j * dim + i];
                 } else {
-                    for (int k = 0; k < dim; ++k) s += (__int128)B[k * dim + i] * B[k * dim + j];
+                    for (int k = 0; k < dim; ++k) s += (fpk_i128)B[k * dim + i] * B[k * dim + j];
                     if (kind == 0 && i == j) s += 1;
                 }
                 if (s > INT64_MAX / 4 || s < -(INT64_MAX / 4)) overflow = 1;

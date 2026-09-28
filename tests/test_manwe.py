@@ -353,3 +353,21 @@ def test_coniZpM_c_lattice_matches_python_lattice(coni_data):
     sa = {(tuple(map(int, k)), tuple(map(int, m))) for k, m in zip(*a)}
     sb = {(tuple(map(int, k)), tuple(map(int, m))) for k, m in zip(*b)}
     assert len(sa) > 0 and sa == sb
+
+
+def test_deprecated_parameters_warn(coni_data):
+    """No-op parameters warn when set, and stay silent at their defaults."""
+    from pfvs import coni_M_ellipsoid
+    p = np.array([0] + P_MANWE)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                      # defaults: silent
+        coni_M_ellipsoid(p, data=coni_data)
+        coniZpM(coni_data, np.array([P_MANWE]), ellipsoid_dilation=5, n_jobs=1)
+    with pytest.warns(FutureWarning, match="extra_checks"):
+        coni_M_ellipsoid(p, data=coni_data, extra_checks=True)
+    with pytest.warns(FutureWarning, match="extra_checks"):
+        coniZpM(coni_data, np.array([P_MANWE]), ellipsoid_dilation=5, n_jobs=1,
+                extra_checks=True)
+    with pytest.warns(FutureWarning, match="low_level_parallelism"):
+        coniZpM(coni_data, np.array([P_MANWE]), ellipsoid_dilation=5, n_jobs=1,
+                low_level_parallelism=True)

@@ -72,7 +72,7 @@ A status code according to following list:
     -6: problem dimension too high (currently >256) or < 1
     -7: out of memory
     -8: a coordinate bound overflows int32 (ellipsoid too large)
-    -9: mat is not (numerically) positive definite
+    -9: mat is not positive definite (decided exactly)
 */
 typedef struct {
     int dim;
@@ -135,6 +135,20 @@ __extension__ typedef unsigned __int128 fpk_u128;
 static inline fpk_u128 fpk_abs128(fpk_i128 x)
 {
     return x < 0 ? (fpk_u128)0 - (fpk_u128)x : (fpk_u128)x;
+}
+
+// r = a * b with overflow detection (returns 1 on overflow). Written out
+// rather than __builtin_mul_overflow on __int128, which older clang lowers
+// to a __muloti4 call that libgcc does not provide (link failure on Linux).
+static inline int fpk_mul_ovf(fpk_i128 a, fpk_i128 b, fpk_i128 *r)
+{
+    fpk_u128 ua = fpk_abs128(a), ub = fpk_abs128(b);
+    const fpk_u128 lim = (fpk_u128)1 << 63;
+    if (ua < lim && ub < lim) { *r = a * b; return 0; }   /* |a b| < 2^126 */
+    if (ua && ub > (((fpk_u128)1 << 127) - 1) / ua) return 1;  /* |a b| >= 2^127 */
+    fpk_u128 m = ua * ub;
+    *r = ((a < 0) != (b < 0)) ? -(fpk_i128)m : (fpk_i128)m;
+    return 0;
 }
 
 static inline int fpk_ctz128(fpk_u128 x)
@@ -262,11 +276,12 @@ static int fpk_exact_q(const int64_t *mat, const int32_t *c, int dim,
         fpk_i128 row = 0;
         for (int j = i + 1; j < dim; ++j)
             row += (fpk_i128)mat[i * dim + j] * c[j];   // |.| < 2^102
-        fpk_i128 t;
-        ovf |= __builtin_mul_overflow(row, (fpk_i128)2, &t);
-        ovf |= __builtin_add_overflow(t, (fpk_i128)mat[i * dim + i] * c[i], &t);
-        ovf |= __builtin_mul_overflow(t, (fpk_i128)c[i], &t);
-        ovf |= __builtin_add_overflow(q, t, &q);
+        fpk_i128 t = 0;
+        // (short-circuit: stop at the first overflow)
+        ovf = fpk_mul_ovf(row, (fpk_i128)2, &t)
+           || __builtin_add_overflow(t, (fpk_i128)mat[i * dim + i] * c[i], &t)
+           || fpk_mul_ovf(t, (fpk_i128)c[i], &t)
+           || __builtin_add_overflow(q, t, &q);
     }
     if (!ovf) { *q_out = q; return 0; }
 

@@ -165,8 +165,8 @@ def coni_M_ellipsoid(p: ArrayLike,
         the updated M vector lattice basis, Binter. Useful since otherwise
         there are sometimes overflows. Defaults to True.
     extra_checks : bool, optional
-        Unused; kept for backwards compatibility. (mat is now always computed
-        in exact integer arithmetic, so there is nothing to check.)
+        Deprecated, no effect (warns if set): mat is always computed in
+        exact integer arithmetic, so there is nothing to check.
 
     Returns
     -------
@@ -179,6 +179,8 @@ def coni_M_ellipsoid(p: ArrayLike,
     Binter : ndarray of shape (h11, h11-1)
         Updated M-vector lattice basis, integrating the dot(K,p)=0 constraint.
     """
+    if extra_checks:
+        util.warn_unused("extra_checks", "the ellipsoid matrix is always computed in exact integer arithmetic")
     if data is None:
         if kappa is None or Mbasis is None:
             raise ValueError("If data is None, both kappa and Mbasis must be provided.")
@@ -579,9 +581,9 @@ def coniZpM(
         GCD of Kperp. Not recommended - it's generally quicker to just prune FP.
         Defaults to False.
     low_level_parallelism : bool, optional
-        Allow certain low-level methods to be parallelized. Not generally
-        recommended since, typically, one introduces parallelism at the p-by-p
-        level (since this is embarrassingly parallel). Defaults to False.
+        Deprecated, no effect beyond forcing n_jobs = 1 (warns if set): the
+        gcd step it parallelized is now vectorized. Parallelize over
+        p-vectors with n_jobs instead.
     n_jobs : int, optional
         How many jobs to spawn if not doing low-level parallelism. Defaults to
         twice the CPU count.
@@ -628,9 +630,15 @@ def coniZpM(
         raise ValueError(f"ellipsoid_dilation must be > 0, got {ellipsoid_dilation}.")
 
     if low_level_parallelism:
+        util.warn_unused("low_level_parallelism",
+                         "the gcd step it parallelized is now vectorized; "
+                         "parallelize over p-vectors with n_jobs instead", stacklevel=2)
         if n_jobs != 1:
             print("Setting n_jobs = 1 since low_level_parallelism = True...")
             n_jobs = 1
+    if extra_checks:
+        util.warn_unused("extra_checks", "the ellipsoid matrix is always computed in exact integer arithmetic", stacklevel=2)
+        extra_checks = False
     if n_jobs == -1:
         n_jobs = 2*os.cpu_count()
 

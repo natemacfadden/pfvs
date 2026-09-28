@@ -25,11 +25,19 @@ import functools
 import math
 from numba import njit
 import numpy as np
+import warnings
 
 from numpy.typing import ArrayLike
 
 # errors
 # ======
+def warn_unused(name: str, reason: str, stacklevel: int = 3):
+    """FutureWarning for a parameter that no longer has any effect."""
+    warnings.warn(
+        f"`{name}` has no effect and will be removed in a future version: "
+        f"{reason}. Stop passing it.", FutureWarning, stacklevel=stacklevel)
+
+
 class IncompleteSearchError(RuntimeError):
     """
     A p-vector could not be searched exactly and completely (e.g. an

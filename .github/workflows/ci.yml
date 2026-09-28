@@ -16,23 +16,40 @@ concurrency:
 
 jobs:
   test:
-    name: Build + test (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} / ${{ matrix.cc }} / py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        include:
+          - {os: ubuntu-latest, cc: gcc,   python-version: "3.11"}
+          - {os: ubuntu-latest, cc: gcc,   python-version: "3.12"}
+          - {os: ubuntu-latest, cc: clang, python-version: "3.12"}   # Linux clang (int128 portability)
+          - {os: macos-latest,  cc: clang, python-version: "3.12"}   # Apple Silicon, Apple clang
+    env:
+      CC: ${{ matrix.cc }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install libgmp
-        run: sudo apt-get update && sudo apt-get install -y libgmp-dev
+      - name: Install libgmp (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y libgmp-dev
+          echo "GMP_PREFIX=/usr" >> "$GITHUB_ENV"
+      - name: Install libgmp (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install gmp
+          # Homebrew's prefix (/opt/homebrew) is not on the default search path
+          echo "GMP_PREFIX=$(brew --prefix)" >> "$GITHUB_ENV"
+          echo "CPATH=$(brew --prefix)/include" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
       - name: Build + install (with test extras)
         run: pip install -e .[test]
       - name: Build the standalone C driver (warnings are errors)
-        run: make -C tests/c PREFIX=/usr CFLAGS="-O2 -Werror"
+        run: make -C tests/c PREFIX="$GMP_PREFIX" CFLAGS="-O2 -Werror -Wpedantic"
       - name: Fast vs GMP exact factorization cross-check
         run: tests/c/test_factor
       - name: Run the test suite

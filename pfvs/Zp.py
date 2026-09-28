@@ -161,8 +161,8 @@ def M_ellipsoid(p: ArrayLike,
         the updated M vector lattice basis, Binter. Useful since otherwise
         there are sometimes overflows. Defaults to True.
     extra_checks : bool, optional
-        Unused; kept for backwards compatibility. (mat is now always computed
-        in exact integer arithmetic, so there is nothing to check.)
+        Deprecated, no effect (warns if set): mat is always computed in
+        exact integer arithmetic, so there is nothing to check.
 
     Returns
     -------
@@ -175,6 +175,8 @@ def M_ellipsoid(p: ArrayLike,
     Binter : ndarray of shape (h11, h11-1)
         Updated M-vector lattice basis, integrating the dot(K,p)=0 constraint.
     """
+    if extra_checks:
+        util.warn_unused("extra_checks", "the ellipsoid matrix is always computed in exact integer arithmetic")
     if data is None:
         if kappa is None or Mbasis is None:
             raise ValueError("If data is None, both kappa and Mbasis must be provided.")
@@ -276,10 +278,7 @@ def K_ellipsoid(p: ArrayLike,
         the updated M vector lattice basis, Binter. Useful since otherwise
         there are sometimes overflows. Defaults to True.
     extra_checks : bool, optional
-        Whether to check that the defining matrix of the output ellipsoid, mat,
-        is actually integer before casting it to int. This check has never
-        failed and can actually add non-negligible timing, so it defaults to
-        False.
+        Deprecated, no effect (warns if set): it is not used here.
 
     Returns
     -------
@@ -288,6 +287,8 @@ def K_ellipsoid(p: ArrayLike,
     B : ndarray of shape (h11, h11-1)
         The K-vector lattice basis, integrating just the dot(K,p)=0 constraint.
     """
+    if extra_checks:
+        util.warn_unused("extra_checks", "it is not used by the K-ellipsoid path")
     if data is None:
         if kappa is None or Mbasis is None:
             raise ValueError("If data is None, both kappa and Mbasis must be provided.")
@@ -461,6 +462,9 @@ def ZpM(
         ``ellipsoid_dilation <= 0``, or if ``_allow_gcds`` finds no valid
         GCD expansions.
     """
+    if extra_checks:
+        util.warn_unused("extra_checks", "the ellipsoid matrix is always computed in exact integer arithmetic", stacklevel=2)
+        extra_checks = False
     warnings.warn("non-coni Zp methods are slightly outdated relative to the coni path", stacklevel=2)
     if data.coni:
         raise ValueError(
@@ -698,8 +702,7 @@ def ZpK(
         How many jobs to spawn for per-p-vector parallelism. Defaults to twice
         the CPU count.
     extra_checks : bool, optional
-        Whether to do extra sanity checks in the ellipsoid generation. Never
-        seen these fail so defaults to False.
+        Deprecated, no effect (warns if set): it is not used by the K-ellipsoid path.
     extra_lll_reduction : bool, optional
         Whether to perform an extra (technically unnecessary) LLL reduction on
         the updated M vector lattice basis, Binter. Useful since otherwise
@@ -733,6 +736,9 @@ def ZpK(
         ``ellipsoid_dilation <= 0``, or if ``_allow_gcds`` finds no valid
         GCD expansions.
     """
+    if extra_checks:
+        util.warn_unused("extra_checks", "it is not used by the K-ellipsoid path", stacklevel=2)
+        extra_checks = False
     warnings.warn("non-coni Zp methods are slightly outdated relative to the coni path", stacklevel=2)
     if data.coni:
         raise ValueError(

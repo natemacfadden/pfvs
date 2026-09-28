@@ -259,6 +259,20 @@ static inline pfl_u128 pfl_uabs128(pfl_i128 x)
     return x < 0 ? (pfl_u128)0 - (pfl_u128)x : (pfl_u128)x;
 }
 
+// r = a * b with overflow detection (returns 1 on overflow). Written out
+// rather than __builtin_mul_overflow on __int128, which older clang lowers
+// to a __muloti4 call that libgcc does not provide (link failure on Linux).
+static inline int pfl_mul_ovf(pfl_i128 a, pfl_i128 b, pfl_i128 *r)
+{
+    pfl_u128 ua = pfl_uabs128(a), ub = pfl_uabs128(b);
+    const pfl_u128 lim = (pfl_u128)1 << 63;
+    if (ua < lim && ub < lim) { *r = a * b; return 0; }   /* |a b| < 2^126 */
+    if (ua && ub > (((pfl_u128)1 << 127) - 1) / ua) return 1;  /* |a b| >= 2^127 */
+    pfl_u128 m = ua * ub;
+    *r = ((a < 0) != (b < 0)) ? -(pfl_i128)m : (pfl_i128)m;
+    return 0;
+}
+
 // floor division on int128 (b != 0; no overflow for |a|, |b| < 2^126)
 static inline pfl_i128 pfl_fdiv128(pfl_i128 a, pfl_i128 b)
 {
@@ -302,7 +316,7 @@ static int pfl_hnf(const int64_t *A64, int r, int n, pfl_i128 *Aout)
                 pfl_i128 q = pfl_fdiv128(a, A[row * n + col]);
                 for (int c = col; c < n; ++c) {
                     pfl_i128 x;
-                    if (__builtin_mul_overflow(q, A[row * n + c], &x)) return -1;
+                    if (pfl_mul_ovf(q, A[row * n + c], &x)) return -1;
                     if (__builtin_sub_overflow(A[i * n + c], x, &x)) return -1;
                     if (!PFL_FITS125(x)) return -1;
                     A[i * n + c] = x;
@@ -321,7 +335,7 @@ static int pfl_hnf(const int64_t *A64, int r, int n, pfl_i128 *Aout)
             if (!q) continue;
             for (int c = col; c < n; ++c) {
                 pfl_i128 x;
-                if (__builtin_mul_overflow(q, A[row * n + c], &x)) return -1;
+                if (pfl_mul_ovf(q, A[row * n + c], &x)) return -1;
                 if (__builtin_sub_overflow(A[i * n + c], x, &x)) return -1;
                 if (!PFL_FITS125(x)) return -1;
                 A[i * n + c] = x;
@@ -357,8 +371,8 @@ static inline int pfl_gvec(const int64_t *y, const int64_t *G, int n, pfl_i128 *
         pfl_i128 r = 0;
         for (int j = 0; j < n; ++j) {
             pfl_i128 t;
-            if (__builtin_mul_overflow((pfl_i128)G[i * n + j], (pfl_i128)y[j], &t) ||
-                __builtin_add_overflow(r, t, &r)) return 0;
+            t = (pfl_i128)G[i * n + j] * y[j];      /* int64 * int64: fits */
+            if (__builtin_add_overflow(r, t, &r)) return 0;
         }
         Gy[i] = r;
     }
@@ -372,7 +386,7 @@ static inline double pfl_gdot(const int64_t *x, const pfl_i128 *Gy, int n, int *
     for (int i = 0; i < n; ++i) {
         if (!x[i]) continue;
         pfl_i128 t;
-        if (__builtin_mul_overflow(Gy[i], (pfl_i128)x[i], &t) ||
+        if (pfl_mul_ovf(Gy[i], (pfl_i128)x[i], &t) ||
             __builtin_add_overflow(s, t, &s)) { *ok = 0; return 0.0; }
     }
     return (double)s;
@@ -422,7 +436,7 @@ static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *las
                     if (!PFL_FITS64(x)) return -1;
                     B[k * n + c] = (int64_t)x;
                     pfl_i128 t;
-                    if (__builtin_mul_overflow(GB[j][c], (pfl_i128)qi, &t) ||
+                    if (pfl_mul_ovf(GB[j][c], (pfl_i128)qi, &t) ||
                         __builtin_sub_overflow(GB[k][c], t, &GB[k][c])) return -1;
                 }
                 changed = 1;
