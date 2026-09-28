@@ -428,12 +428,6 @@ def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
     if M0min <= 0:
         raise ValueError("coniZpM requires M0min > 0")
 
-    # canonical order within a p-vector, by (M, K_nat): the search order
-    # depends on the lattice basis, which can differ between the CPU and GPU
-    # paths, and this makes their outputs identical
-    order = np.lexsort(tuple(Kns[::-1]) + tuple(Ms[::-1]) + (key,))
-    Ms, Kns, Qs, key = Ms[:, order], Kns[:, order], Qs[order], key[order]
-
     # All arithmetic below is exact: int64 when a bound on every intermediate
     # shows it cannot overflow (the normal case), else Python ints.
     Mb, Kb, Qb = util.absmax(Ms), util.absmax(Kns), util.absmax(Qs)
@@ -450,6 +444,14 @@ def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
     Ms, Kns, Qs, K_gcds, key = Ms[:, mask], Kns[:, mask], Qs[mask], K_gcds[mask], key[mask]
     if Qs.shape[0] == 0:
         return empty
+
+    # canonical order within a p-vector, by (M, K_nat): the search order
+    # depends on the lattice basis, which can differ between the CPU and GPU
+    # paths, and this makes their outputs identical. (Sorted after the cut
+    # above, which keeps few of the raw points; nothing before it depends on
+    # the order.)
+    order = np.lexsort(tuple(Kns[::-1]) + tuple(Ms[::-1]) + (key,))
+    Ms, Kns, Qs, K_gcds, key = Ms[:, order], Kns[:, order], Qs[order], K_gcds[order], key[order]
 
     # Kperp need not be primitive. Its gcd g is bounded per point:
     #   tadpole:  K0 = (g*rawQperp - Q)/M0
