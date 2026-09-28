@@ -270,6 +270,52 @@ def is_positive_definite(mat: ArrayLike) -> bool:
     return True
 
 
+def as_exact(*arrays):
+    """
+    The given integer arrays as object arrays of Python ints (exact, no
+    wraparound). Used when a bound shows int64 arithmetic could overflow.
+    """
+    return tuple(np.array(np.asarray(a).tolist(), dtype=object).reshape(np.shape(a))
+                 for a in arrays)
+
+
+def colsum_prod(A: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """sum(A * B, axis=0) exactly: int64 if a bound allows it, else Python ints."""
+    A, B = np.asarray(A), np.asarray(B)
+    if A.dtype != object and B.dtype != object and \
+            (A.shape[0] if A.ndim else 1) * absmax(A) * absmax(B) < 2**62:
+        return np.sum(A * B, axis=0)
+    A, B = as_exact(A, B)
+    return np.sum(A * B, axis=0)
+
+
+def singular_mask(Ns: ArrayLike) -> np.ndarray:
+    """
+    Exactly which integer matrices in the stack Ns (n, m, m) are singular.
+
+    A float SVD is only a prefilter, with a loose threshold: anything it
+    flags (and everything, if the entries are too large to be exact in
+    float64) is decided by an exact rank computation (flint). So a
+    nonsingular but ill-conditioned matrix is never discarded, and a
+    singular one is never kept.
+    """
+    Ns = np.asarray(Ns)
+    n = Ns.shape[0]
+    if n == 0:
+        return np.zeros(0, dtype=bool)
+    m = Ns.shape[1]
+    if Ns.dtype != object and absmax(Ns) < 2**52:
+        sv = np.linalg.svdvals(Ns.astype(float))
+        flagged = sv[:, -1] <= 1e-6 * sv[:, 0]
+    else:
+        flagged = np.ones(n, dtype=bool)
+    singular = np.zeros(n, dtype=bool)
+    for k in np.flatnonzero(flagged):
+        N = flint.fmpz_mat([[int(x) for x in row] for row in Ns[k].tolist()])
+        singular[k] = N.rank() < m
+    return singular
+
+
 def exact_matmul(A: ArrayLike, B: ArrayLike) -> np.ndarray:
     """
     Integer matrix product A @ B without silent int64 wraparound.
@@ -445,9 +491,12 @@ def fp_iterative_njit(
     linmin : int, optional
         Minimum value for the linear constraint.
     max_N_out : int, optional
-        Maximum number of output vectors allowed.
+        Maximum number of output vectors allowed. Raises RuntimeError if
+        exceeded (it used to truncate silently).
     eps : float, optional
-        Small tolerance for floating-point bound computations.
+        Small tolerance for floating-point bound computations. All decisions
+        here are floating point: for exact enumeration of integral ellipsoids
+        use the C kernel (pfvs.pfv_kernel / pfvs.conipfv_kernel).
     COORD_BUFF_SIZE : int, optional
         Size of the per-depth candidate value buffer.
 
@@ -455,8 +504,9 @@ def fp_iterative_njit(
     -------
     out : np.ndarray, shape (N, dim)
         Vectors in the ellipsoid.
-    Qs : np.ndarray, shape (N,)
-        Quadratic form value vec^T @ mat @ vec for each output vector.
+    Qs : np.ndarray, shape (N,), float32
+        Quadratic form value vec^T @ mat @ vec for each output vector
+        (float32: exact only up to ~1.7e7).
     """
     dim        = L.shape[0]
     L_diag_inv = 1.0 / np.diag(L)
@@ -535,7 +585,9 @@ def fp_iterative_njit(
         if i == -1:
             if nz:
                 if op >= max_N_out:
-                    break
+                    # never truncate silently: a partial list means missing PFVs
+                    raise RuntimeError("fp_iterative_njit: more than max_N_out "
+                                       "lattice points; increase max_N_out")
                 out[op, :] = vec
                 Qs[op]      = Q - remQ
                 op += 1

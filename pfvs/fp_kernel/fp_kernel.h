@@ -453,7 +453,7 @@ static inline int fpk_bounds(double R, double off, double Uii_inv,
     double b = ( R - off) * Uii_inv;
     a = ceil(a - 1e-9 * (1.0 + fabs(a)));
     b = floor(b + 1e-9 * (1.0 + fabs(b)));
-    if (a < -2147483647.0 || b > 2147483647.0) return -8;
+    if (!(a >= -2147483647.0 && b <= 2147483647.0)) return -8;   /* also NaN */
     *lo = (int64_t)a;
     *hi = (int64_t)b;
     return 0;

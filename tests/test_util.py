@@ -358,3 +358,22 @@ def test_is_positive_definite():
     assert not is_positive_definite(np.array([[1, 1], [1, 1]]))          # PSD, singular
     big = 2**60
     assert is_positive_definite(np.array([[big, big - 1], [big - 1, big]], dtype=object))
+
+
+def test_singular_mask_exact():
+    """Exact singularity: an ill-conditioned nonsingular matrix is kept."""
+    from pfvs.util import singular_mask
+    A = np.array([[10**10, 10**10 + 1], [10**10 - 1, 10**10]], dtype=np.int64)  # det 1
+    assert np.linalg.cond(A.astype(float)) > 1e12       # the old float test's rtol
+    S = np.array([[2, 4], [1, 2]], dtype=np.int64)
+    Hg = np.array([[2**70, 1], [1, 1]], dtype=object)   # beyond float64 exactness
+    assert singular_mask(np.stack([A, S])).tolist() == [False, True]
+    assert singular_mask(np.stack([Hg])).tolist() == [False]
+    assert singular_mask(np.zeros((0, 3, 3), dtype=np.int64)).tolist() == []
+
+
+def test_fp_iterative_raises_instead_of_truncating():
+    L = np.linalg.cholesky(np.array([[2., 1.], [1., 3.]]))
+    assert len(fp_iterative_njit(L, 20.0)[0]) > 3
+    with pytest.raises(RuntimeError, match="max_N_out"):
+        fp_iterative_njit(L, 20.0, max_N_out=3)

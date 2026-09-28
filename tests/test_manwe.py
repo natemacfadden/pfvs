@@ -347,7 +347,7 @@ def test_ZpM_routes_agree(dilation):
 def test_coniZpM_c_lattice_matches_python_lattice(coni_data):
     """The C lattice setup finds the same coni-PFVs as the Python one."""
     ps = pvecs(coni_data, min_N_pts=2_000)
-    kw = dict(M0min=13, ellipsoid_dilation=30, max_N_pfvs=10_000_000, n_jobs=1)
+    kw = {"M0min": 13, "ellipsoid_dilation": 30, "max_N_pfvs": 10_000_000, "n_jobs": 1}
     a = coniZpM(data=coni_data, ps=ps, use_c_lattice=True, **kw)
     b = coniZpM(data=coni_data, ps=ps, use_c_lattice=False, **kw)
     sa = {(tuple(map(int, k)), tuple(map(int, m))) for k, m in zip(*a)}
@@ -371,3 +371,63 @@ def test_deprecated_parameters_warn(coni_data):
     with pytest.warns(FutureWarning, match="low_level_parallelism"):
         coniZpM(coni_data, np.array([P_MANWE]), ellipsoid_dilation=5, n_jobs=1,
                 low_level_parallelism=True)
+
+
+def test_postprocessing_exact_path_matches(coni_data, monkeypatch):
+    """
+    The post-processing's exact (Python-int) fallback, used when an int64
+    bound fails, gives exactly the int64 path's output.
+    """
+    import pfvs.coniZp as cz
+    ps = pvecs(coni_data, min_N_pts=2_000)
+    kw = {"M0min": 13, "ellipsoid_dilation": 30, "max_N_pfvs": 10_000_000, "n_jobs": 1}
+    Ks, Ms = coniZpM(data=coni_data, ps=ps, **kw)
+    real = cz._pfvs_from_points
+
+    def forced_exact(Mv, Kv, qv, key, *a, **k):          # force the object path
+        Mv, Kv, qv = cz.util.as_exact(Mv, Kv, qv)
+        return real(Mv, Kv, qv, key, *a, **k)
+    monkeypatch.setattr(cz, "_pfvs_from_points", forced_exact)
+    Ks2, Ms2 = coniZpM(data=coni_data, ps=ps, **kw)
+    assert len(Ks) > 0
+    assert [list(map(int, r)) for r in Ks] == [list(map(int, r)) for r in Ks2]
+    assert [list(map(int, r)) for r in Ms] == [list(map(int, r)) for r in Ms2]
+
+
+def _inv_fraction(A):
+    """Exact inverse by Gauss-Jordan in Fractions (independent reference)."""
+    from fractions import Fraction
+    n = len(A)
+    M = [[Fraction(int(x)) for x in row] + [Fraction(int(i == j)) for j in range(n)]
+         for i, row in enumerate(A)]
+    for c in range(n):
+        piv = next(r for r in range(c, n) if M[r][c] != 0)
+        M[c], M[piv] = M[piv], M[c]
+        pv = M[c][c]
+        M[c] = [x / pv for x in M[c]]
+        for r in range(n):
+            if r != c and M[r][c] != 0:
+                f = M[r][c]
+                M[r] = [x - f * y for x, y in zip(M[r], M[c])]
+    return [row[n:] for row in M]
+
+
+def test_K_ellipsoid_is_exact():
+    """K_ellipsoid's matrix equals -B^T (kappa p)^{-1} B exactly."""
+    from fractions import Fraction
+
+    from pfvs import K_ellipsoid
+    data = CYData(h21=H21, kappa=KAPPA, c2=C2, H=H)          # non-coni
+    for p in pvecs(data, min_N_pts=20)[:10]:
+        mat, B = K_ellipsoid(p, data=data)
+        Ainv = _inv_fraction((np.array(KAPPA) @ p).tolist())
+        Bl = [[int(x) for x in r] for r in B.tolist()]
+        n, m = len(Bl), len(Bl[0])
+        for i in range(m):
+            for j in range(m):
+                ref = -sum(Bl[a][i] * Ainv[a][b] * Bl[b][j] for a in range(n) for b in range(n))
+                got = mat[i][j]
+                if np.asarray(mat).dtype.kind in "iuO":
+                    assert Fraction(int(got)) == ref            # integral: exact
+                else:
+                    assert abs(float(got) - float(ref)) <= 1e-12 * max(1.0, abs(float(ref)))

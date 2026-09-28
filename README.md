@@ -93,15 +93,38 @@ The core of the coniPFV search is enumerating integer vectors in a (dilated) ell
 
 Both take the same ellipsoid (Zp-style) approach and return identical results; they differ only in how they enumerate it. The new kernel keeps only its output and an $O(h^{1,1})$ recursion stack, while dSv1 also materializes the whole bounding box, whose size grows as $(Q\cdot p_{denom})^{h^{1,1}/2}$. That box is what drives dSv1's time and memory up sharply as the dilation grows.
 
-**Kernel rewrite (`fp_kernel`).** The coni and non-coni kernels are now one exact kernel (see [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md)). Measured against the previous kernels with outputs checked to be identical:
+**Current pipeline (`fp_kernel`).** Relative to the previous version of this repo, the search is now:
 
-- End-to-end `coniZpM` on 20 dataset geometries (833k p-vectors, identical PFV sets, old and new pinned to the same core): **1.44×** faster at $p_{denom}=20$ and **1.59×** at $p_{denom}=150$.
-- The full [coni-PFV dataset](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) (18,253 geometries, 8.6M p-vectors at $|p|_\infty\le5$, $p_{denom}=150$) is reproduced exactly: all 33,376 PFVs, none missing or extra.
-- Kernel alone on 2,637 real instances: coni **1.9–2.8×**, non-coni **9–15×**. The non-coni kernel previously indexed its $H$ rows off by one, so it pruned far less than intended; its output was still correct.
+- **Exact.** A single C kernel serves both pipelines (see [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md)), and every accept/reject decision is exact integer arithmetic. The per-p-vector lattice setup (M-lattice basis, ellipsoid, $H$-matrix) is also C, and also exact.
+- **Batched.** `coniZpM` runs the lattice setup and the kernel for a whole chunk of p-vectors in one C call, then post-processes all lattice points at once.
+- **Built on a cut-aware basis.** The lattice basis is chosen so that the $M_0\ge M_{0,\min}$ cut is decided at the first coordinate searched, and it is LLL-reduced with respect to the ellipsoid itself. This makes searches ~4–5× smaller at high $h^{1,1}$ and $p_{denom}$.
 
-At low $h^{1,1}$ and moderate $p_{denom}$, the per-p lattice generation (LLL/HNF, currently in Python via flint) now dominates rather than the kernel.
+End-to-end `coniZpM` speedup over the previous version. Each cell covers 2–3 dataset geometries, with ≤200 p-vectors per geometry. Old and new ran on identical inputs, pinned to the same core, and found identical PFV sets:
 
-The table below compares the *previous* C kernel with dSv1 and was measured before the rewrite. It is kept for the box-vs-Fincke–Pohst comparison, which the rewrite only improves on. Measured on the $h^{1,1}=7$ "Manwe" example (identical inputs, identical output, same cuts), on one CPU (Intel Core Ultra 7 270K, 24 cores, 30 GB), three runs each, reported as mean $\pm$ std:
+| $h^{1,1}$ \ $p_{denom}$ | 20 | 50 | 150 | 400 |
+|---:|---:|---:|---:|---:|
+| 4  | 34.8× | 29.3× | 24.8× | 16.9× |
+| 5  | 20.3× | 20.0× | 15.1× | 11.8× |
+| 6  | 14.0× | 12.0× | 8.3×  | 5.2×  |
+| 7  | 9.8×  | 9.8×  | 8.5×  | 6.3×  |
+| 8  | 8.4×  | 8.3×  | 6.3×  | 5.0×  |
+| 9  | 10.2× | 12.4× | 10.4× | 8.8×  |
+| 10 | 6.6×  | 11.5× | 14.0× | 12.2× |
+| 11 | 4.8×  | 7.3×  | 8.7×  | 7.9×  |
+
+- **Low $h^{1,1}$.** The old code's time was mostly per-p overhead in Python/flint, which is now gone.
+- **High $h^{1,1}$.** The gain comes from the smaller searches. For example, $h^{1,1}=11$ at $p_{denom}=400$ went from 7.0 to 0.9 ms per p-vector.
+- **Whole dataset.** The full [coni-PFV dataset](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) is reproduced exactly: 18,253 geometries, 8.6M p-vectors at $|p|_\infty\le5$ and $p_{denom}=150$, all 33,376 PFVs, none missing or extra. The run takes 3,374 CPU-seconds, about 3.4 minutes on 23 cores.
+
+**Behaviour changes to be aware of:**
+
+- **PFV order.** The C lattice setup chooses a different (equally valid) basis. `coniZpM`/`ZpM` therefore find the same PFVs but may list them in a different order. Pass `use_c_lattice=False` to reproduce the previous order exactly.
+- **Errors instead of skipped p-vectors.** A p-vector that cannot be searched exactly and completely now raises `pfvs.IncompleteSearchError`; it is never silently skipped or truncated. Examples: more than `max_N_pfvs` outputs, coordinates beyond int32, or a non-positive-definite ellipsoid.
+- **`ZpM` defaults to the C kernel** (`use_c_kernel=True`). `ZpK` also uses the exact C kernel now, with its rational ellipsoid scaled to an integer one.
+- **Deprecated parameters.** `extra_checks` and `low_level_parallelism` no longer have any effect and emit a `FutureWarning` when set.
+- **Exact singularity test.** PFVs are filtered on $\det N\ne0$ exactly. A float SVD is only a prefilter, and every "singular" verdict is confirmed by an exact rank. Previously a float test with `rtol=1e-12` could drop a valid PFV whose $N$ was badly conditioned.
+
+The table below compares the *original* C kernel with dSv1, measured before these changes. It is kept for the box-vs-Fincke–Pohst comparison, which the current pipeline only improves on. Measured on the $h^{1,1}=7$ "Manwe" example (identical inputs, identical output, same cuts), on one CPU (Intel Core Ultra 7 270K, 24 cores, 30 GB), three runs each, reported as mean $\pm$ std:
 
 | dilation $p_{denom}$ | C (ms) | dSv1 (ms) | speedup | dSv1 memory | box (est.) |
 |---:|---:|---:|---:|---:|---:|
@@ -138,7 +161,7 @@ python benchmarks/benchmark_dSv1_vs_coniZpM.py
 ```
 pfvs/
 ├── pfvs/
-│   ├── fp_kernel/         # C kernel* (fp_kernel.h, single header) + Cython binding
+│   ├── fp_kernel/         # C kernel* (fp_kernel.h) + C lattice setup (pfv_lattice.h) + Cython binding
 │   ├── conipfv_kernel/    # re-exports fp_kernel.conipfv_kernel (coni-PFV enumeration)
 │   ├── pfv_kernel/        # re-exports fp_kernel.pfv_kernel (non-coni PFV enumeration)
 │   ├── coniZp.py          # coniZpM: coni-PFV generation pipeline
@@ -156,7 +179,7 @@ pfvs/
 └── setup.py
 ```
 
-*: This C code was originally the bottleneck/core of the problem, hence the name 'kernel'. See [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md) for its exact contract and how it prunes. It remains the dominant cost at the dilations used in practice ($p_{denom}\sim 10^2$).
+*: This C code was originally the bottleneck/core of the problem, hence the name 'kernel'. See [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md) for its exact contract and how it prunes. At high $h^{1,1}$ and $p_{denom}$ it remains the dominant cost.
 
 ## Correctness
 
@@ -165,6 +188,8 @@ The kernel's output is specified exactly (see [`pfvs/fp_kernel/README.md`](pfvs/
 - **Kernel vs. an exact oracle.** [`tests/oracle.py`](tests/oracle.py) is a rational-arithmetic Fincke–Pohst with no floating point. The tests compare the kernel's output against it point for point, in order, on 219 real instances from the dataset below (some with $H$ entries beyond $2^{100}$) and on adversarial synthetic ones: non-echelon or rank-deficient $H$, boundary points, and ill-conditioned ellipsoids with huge entries.
 - **End to end vs. the published dataset.** For 71 stored geometries ($h^{1,1}=3,\dots,11$), `coniZpM` must reproduce *exactly* the PFVs in [calabi-yau-coni-pfvs](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) (every p-vector with $|p|_\infty\le B$ at dilation $D$), with no p-vector skipped. The fixtures are built by [`tests/data/build_fixtures.py`](tests/data/build_fixtures.py) from a pinned dataset revision.
 - **Regression tests for integer overflow.** Large p-vectors used to overflow int64 silently while the M-lattice was being built, and were then skipped. The tests use real large-p cases.
+- **Independent routes agree.** Non-coni `ZpM` via the numba enumerator, the C kernel, and the C kernel with the C lattice setup find identical PFVs. `coniZpM` finds identical PFVs with and without the C lattice setup, and its exact post-processing fallback matches the int64 path.
+- **Exact helpers.** The singularity test keeps ill-conditioned nonsingular $N$. The int128 factorization matches GMP on 200k random matrices (a C test run in CI).
 
 Run `pytest tests/` (add `-n auto` with `pytest-xdist` to parallelize).
 

@@ -219,7 +219,7 @@ static int pfl_lll(int64_t *B, int m, int n)
             for (int j = k - 1; j >= 0; --j) {
                 double q = nearbyint(mu[k][j]);
                 if (q == 0.0) continue;
-                if (fabs(q) > 9.0e18) return -1;
+                if (!(fabs(q) <= 9.0e18)) return -1;   /* also NaN */
                 int64_t qi = (int64_t)q;
                 for (int c = 0; c < n; ++c) {
                     pfl_i128 x = (pfl_i128)B[k * n + c] - (pfl_i128)qi * B[j * n + c];
@@ -429,7 +429,7 @@ static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *las
             for (int j = k - 1; j >= 0; --j) {
                 double q = nearbyint(mu[k][j]);
                 if (q == 0.0) continue;
-                if (fabs(q) > 9.0e18) return -1;
+                if (!(fabs(q) <= 9.0e18)) return -1;   /* also NaN */
                 int64_t qi = (int64_t)q;
                 for (int c = 0; c < n; ++c) {
                     pfl_i128 x = (pfl_i128)B[k * n + c] - (pfl_i128)qi * B[j * n + c];
@@ -477,7 +477,7 @@ static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *las
             for (int j = m - 1; j >= 0; --j) {
                 double q = nearbyint(mw[j]);
                 if (q == 0.0) continue;
-                if (fabs(q) > 9.0e18) return -1;
+                if (!(fabs(q) <= 9.0e18)) return -1;   /* also NaN */
                 int64_t qi = (int64_t)q;
                 for (int c = 0; c < n; ++c) {
                     pfl_i128 x = (pfl_i128)last[c] - (pfl_i128)qi * B[j * n + c];
@@ -562,7 +562,8 @@ int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
     // Z = kappa . p ; T = Z p ; v = T Mbasis
     for (int i = 0; i < h * h; ++i) {
         pfl_i128 s = 0;
-        for (int k = 0; k < h; ++k) s += (pfl_i128)S->kappa[i * h + k] * p[k];
+        for (int k = 0; k < h; ++k)          /* each term < 2^126; the sum is checked */
+            if (__builtin_add_overflow(s, (pfl_i128)S->kappa[i * h + k] * p[k], &s)) return -1;
         if (!PFL_FITS64(s)) return -1;
         R->Z[i] = (int64_t)s;
     }
@@ -576,7 +577,9 @@ int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
     for (int a = 0; a < d; ++a)
         for (int i = 0; i < h; ++i) {
             pfl_i128 s = 0;
-            for (int l = 0; l < h; ++l) s += (pfl_i128)S->Mbasis[i * h + l] * O[a * h + l];
+            for (int l = 0; l < h; ++l)
+                if (__builtin_add_overflow(s, (pfl_i128)S->Mbasis[i * h + l] * O[a * h + l], &s))
+                    return -1;
             if (!PFL_FITS64(s)) return -1;
             BT[a * h + i] = (int64_t)s;
         }

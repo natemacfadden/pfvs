@@ -42,12 +42,37 @@ $U$ is computed from the exact integer $M$ by fraction-free (Bareiss) $LDL^T$ el
 
 Along each search path the kernel carries the bound $K\sum_i(a_i^2 + \text{rem}_i)$ with $a_i = \sum_{j\ge i}|U_{ij}c_j|$ and $K \approx 2(\dim+8)\,2^{-53}$. This bounds the deviation of every float partial norm from the exact one. Every float test is widened by it: interval bounds, ellipsoid rejection, $q_{\text{lb}}$ in the GCD cut, and the M0 bound. For well-scaled inputs the bound is negligible. It matters for ellipsoids with huge entries but small $q$ (heavy cancellation), where a fixed epsilon silently loses points.
 
+## Lattice setup (`pfv_lattice.h`) and batching
+
+For each p-vector, `coniZpM`/`ZpM` need a lattice basis `Binter` for the M-vectors, the ellipsoid $M = -B^T Z B$ with $Z=\kappa\cdot p$, and $H = \mathrm{HNF}(Z B)$. `pfv_lattice.h` builds them in C:
+
+1. An orthogonal lattice, by Bezout elimination.
+2. LLL: floating-point Gram–Schmidt chooses the operations, but the basis updates themselves are exact, overflow-checked integer operations. So the lattice is always preserved exactly.
+3. A 128-bit HNF.
+
+On any overflow the p-vector falls back to the exact Python/flint path. If only the HNF overflows, only the HNF is computed in Python.
+
+**Cut-aware basis.** The kernel's cuts depend on the basis it searches in, so the basis is chosen for them.
+
+- **Coni.** Take $T = [K\,|\,w]$ with:
+  - $K$ an LLL basis of $\ker(\ell)$, where $\ell$ is the M0 row. $K$ is reduced *with respect to the ellipsoid form* $M$, not the Euclidean norm.
+  - $w$ a vector with $\ell\cdot w = \gcd(\ell)$, size-reduced against $K$.
+
+  Then $\ell = (0,\dots,0,g)$, so $M_0$ is fixed at the first level searched, where $M_0 \ge M_{0,\min}$ becomes an interval bound.
+- **Non-coni.** $T$ is the LLL reduction of the whole basis with respect to $M$.
+
+It is the same lattice either way, so the same PFVs are found, possibly in a different order. On 340 heavy $h^{1,1}=10$, $p_{denom}=150$ problems this made searches 4.7× smaller: the median per problem was 3.6×, and no problem got slower.
+
+**Batching.** `_coni_batch` runs lattice setup plus kernel for a whole chunk of p-vectors in one C loop, without the GIL. For each lattice point $c$ it returns only what the post-processing needs: $M = B c$, $K_{nat} = Z B c$, $q$ and the p-index. All of these are exact and checked. $H$ goes to the kernel as int64 (`fpk_problem.H64`), which avoids GMP. The kernel's exact factorization uses an int128 fraction-free (Bareiss) fast path, with GMP as the fallback.
+
+**Portability.** Checked 128-bit multiplies are written out explicitly rather than with `__builtin_mul_overflow`, which older Clang lowers to a call libgcc lacks. The code builds warning-free with `-Wpedantic` on GCC and on Clang ≥ 13. It needs a 64-bit GCC/Clang target, which covers Linux and macOS.
+
 ## Building / testing the C directly
 
 `tests/c/fp_kernel_cli.c` is a standalone driver (no Python), for profiling and debugging:
 
 ```
-make -C tests/c            # builds fp_kernel_cli and fp_kernel_cli_stats (-DFPK_STATS)
+make -C tests/c            # fp_kernel_cli, fp_kernel_cli_stats (-DFPK_STATS), test_factor
 tests/c/fp_kernel_cli 3 < problems.txt
 ```
 

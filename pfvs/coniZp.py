@@ -41,27 +41,13 @@ from .cydata import CYData
 
 # coniZp helpers
 # ==============
-def _check_singular(Ns: ArrayLike, rtol: float = 1e-12) -> np.ndarray:
+def _check_singular(Ns: ArrayLike, rtol: float | None = None) -> np.ndarray:
     """
-    Check which matrices in a stack are singular.
-
-    Parameters
-    ----------
-    Ns : ArrayLike, shape (n, m, m)
-        Stack of n square matrices.
-    rtol : float, optional
-        Relative tolerance: matrix is singular if
-        sval_min <= rtol * sval_max.
-
-    Returns
-    -------
-    np.ndarray, shape (n,), dtype bool
-        True at index i iff Ns[i] is singular.
+    Which integer matrices in the stack Ns (n, m, m) are singular, decided
+    exactly (see util.singular_mask; a float SVD is only a prefilter). rtol
+    is ignored (kept for backwards compatibility).
     """
-    svals    = np.linalg.svdvals(Ns)
-    singular = (svals[:,-1] <= rtol * svals[:,0])
-
-    return singular
+    return util.singular_mask(Ns)
 
 # we often compute projection matrices that project out 0th component
 # these are only used in matrix product, so mutability is not a concern
@@ -409,13 +395,16 @@ def _Kperp_gcd_lattice(data: CYData, Z: ArrayLike, Binter: ArrayLike, gcd: int):
 
 def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
                       key: np.ndarray, kappa: np.ndarray, h11: int, Q: int,
-                      M0min: int, max_Kperp_gcd: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                      M0min: int, max_Kperp_gcd: int,
+                      verbosity: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Turn lattice points into coni-PFVs (the post-processing of coniZpM),
     vectorized over points from any number of p-vectors.
 
     Parameters
     ----------
+    verbosity : int
+        >= 2 prints the counts after each filter (as coniZpM used to).
     Ms, Kns : ndarray of shape (h11, N)
         For each lattice point c: M = Binter c and K_nat = (Z Binter) c.
     Qs : ndarray of shape (N,)
@@ -436,6 +425,16 @@ def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
         return empty
     if M0min <= 0:
         raise ValueError("coniZpM requires M0min > 0")
+
+    # All arithmetic below is exact: int64 when a bound on every intermediate
+    # shows it cannot overflow (the normal case), else Python ints.
+    Mb, Kb, Qb = util.absmax(Ms), util.absmax(Kns), util.absmax(Qs)
+    Qperp_b = max_Kperp_gcd * (Qb + Mb * Kb)                 # |Qperp|
+    K0_b    = Qperp_b + Q + max_Kperp_gcd * Kb               # |K0| (lo/up ranges)
+    K_b     = max(K0_b, max_Kperp_gcd * Kb)                  # |entries of K|
+    if (Ms.dtype == object or Kns.dtype == object or Qs.dtype == object
+            or max(Q * Kb, Qperp_b, K0_b + len(Qs), h11 * K_b * Mb) >= 2**62):
+        Ms, Kns, Qs = util.as_exact(Ms, Kns, Qs)
 
     # cut on feasibility of finding a K0 giving K'>0 (see coniZpM)
     Kperps = Kns[1:]
@@ -463,6 +462,8 @@ def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
         num = num[sel]
         if num.size == 0:
             continue
+        if num.dtype == object:          # counts of K0 values: small
+            num = np.array([int(x) for x in num], dtype=np.int64)
         total = int(np.sum(num))
         K0s = np.repeat(lo[sel], num) + np.arange(total) \
             - np.repeat(np.cumsum(num) - num, num)
@@ -471,7 +472,7 @@ def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
         new_Ms = np.repeat(Ms[:, sel], num, axis=1)
         new_key = np.repeat(key[sel], num)
 
-        tad = -np.sum(new_Ks * new_Ms, axis=0)
+        tad = -util.colsum_prod(new_Ks, new_Ms)
         if np.any(tad > Q):
             i = int(np.argmax(tad > Q))
             raise RuntimeError(
@@ -480,18 +481,26 @@ def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
         Ks_out.append(new_Ks); Ms_out.append(new_Ms); key_out.append(new_key)
 
     if not Ks_out:
+        if verbosity >= 2:
+            print("# PFVs after setting K0s = 0")
         return empty
     Ks, Ms, key = np.hstack(Ks_out), np.hstack(Ms_out), np.concatenate(key_out)
+    if verbosity >= 2:
+        print(f"# PFVs after setting K0s = {Ms.shape[1]}")
 
     # filter by N invertibility
     singular = []
     for i in range(0, Ms.shape[1], 5000):
         chunk = Ms[:, i:i+5000]
-        Ns = (kappa.reshape(h11*h11, h11) @ chunk).reshape(h11, h11, -1)
+        Ns = util.exact_matmul(kappa.reshape(h11*h11, h11), chunk).reshape(h11, h11, -1)
         Ns = Ns.transpose(2, 0, 1)[:, 1:, 1:]
         singular.append(_check_singular(Ns))
     singular = np.concatenate(singular)
+    if verbosity >= 2:
+        print(f"{int(np.sum(singular))}/{len(singular)} 'PFVs' had det(N)=0 :(")
     Ks, Ms, key = Ks[:, ~singular], Ms[:, ~singular], key[~singular]
+    if verbosity >= 2:
+        print(f"# invertible = {Ms.shape[1]}")
 
     order = np.argsort(key, kind="stable")
     return Ks.T[order], Ms.T[order], key[order]
@@ -673,15 +682,24 @@ def coniZpM(
         # batched C path: lattice setup + kernel for all p at once; p-vectors
         # it cannot handle exactly (status 1) go through the per-p path below
         if use_c_lattice and not use_gcd_lattice and len(p_chunk):
+            p_int = util._as_integral(p_chunk)       # raises if non-integral
+            if p_int.dtype == object:
+                raise util.IncompleteSearchError("p-vector entries exceed int64")
             p_full_all = np.hstack([np.zeros((len(p_chunk), 1), dtype=np.int64),
-                                    p_chunk.astype(np.int64)])
+                                    p_int.astype(np.int64)])
             Mv, Kv, qv, pv, pstat = _coni_batch(
                 kappa, Mbasis, p_full_all, Q, ellipsoid_dilation, M0min,
                 max_N_pfvs, extra_lll_reduction)
             for ip in np.flatnonzero(pstat < 0):
                 _raise_kernel_status(p_chunk[ip], int(pstat[ip]))
+            if verbosity >= 1:
+                print(f"found {len(qv)} lattice points for {len(p_chunk)} p-vectors "
+                      f"({int(np.sum(pstat == 1))} handled by the per-p path)...")
+                if verbosity >= 10:
+                    print("they were (M = Binter c, one per row):")
+                    print(Mv)
             pieces.append(_pfvs_from_points(Mv.T, Kv.T, qv, pv, kappa, h11, Q,
-                                            M0min, max_Kperp_gcd))
+                                            M0min, max_Kperp_gcd, verbosity))
             todo = np.flatnonzero(pstat == 1)
 
         for ip in todo:
@@ -802,7 +820,7 @@ def coniZpM(
             Kv = util.exact_matmul(ZBinter, np.asarray(lattice_points).T)
             pieces.append(_pfvs_from_points(
                 Mv, Kv, rawQs, np.full(len(rawQs), ip), kappa, h11, Q, M0min,
-                max_Kperp_gcd))
+                max_Kperp_gcd, verbosity))
 
         print(f"Finished job #{job_i}...",flush=True)
 

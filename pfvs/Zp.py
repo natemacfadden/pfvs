@@ -25,43 +25,31 @@
 # external imports
 import flint
 import joblib
+import math
 import numpy as np
 import os
 import warnings
 
+from fractions import Fraction
 from numpy.typing import ArrayLike
 
 # local imports
 from . import util
 from .cydata import CYData
 from .pfv_kernel import pfv_kernel
-from .fp_kernel.fp_kernel import _lattice_build
+from .fp_kernel.fp_kernel import _enumerate, _lattice_build
 
 # Zp helpers
 # ==========
 # generic
 # -------
-def _check_singular(Ns: ArrayLike, rtol: float = 1e-12) -> np.ndarray:
+def _check_singular(Ns: ArrayLike, rtol: float | None = None) -> np.ndarray:
     """
-    Check which matrices in a stack are singular.
-
-    Parameters
-    ----------
-    Ns : ArrayLike, shape (n, m, m)
-        Stack of n square matrices.
-    rtol : float, optional
-        Relative tolerance: matrix is singular if
-        sval_min <= rtol * sval_max.
-
-    Returns
-    -------
-    np.ndarray, shape (n,), dtype bool
-        True at index i iff Ns[i] is singular.
+    Which integer matrices in the stack Ns (n, m, m) are singular, decided
+    exactly (see util.singular_mask; a float SVD is only a prefilter). rtol
+    is ignored (kept for backwards compatibility).
     """
-    svals = np.linalg.svdvals(Ns)
-    singular = (svals[:,-1] <= rtol * svals[:,0])
-
-    return singular
+    return util.singular_mask(Ns)
 
 # non-coni
 # --------
@@ -311,19 +299,33 @@ def K_ellipsoid(p: ArrayLike,
     # (doesn't seem to have a huge effect...)
     B = util.lll_reduce(B)
 
-    # find lattice points in tadpole
-    try:
-        Ainv = np.linalg.inv(kappa@p)
-    except np.linalg.LinAlgError as e:
-        raise ValueError(
-            f"K_ellipsoid: kappa@p is singular for p={np.array(p).tolist()}."
-        ) from e
-    mat = -B.T@Ainv@B
-
-    if np.allclose(mat, np.round(mat)):
-        mat = np.rint(mat).astype(int)
-
+    # the ellipsoid -B^T (kappa p)^{-1} B, exactly: s (kappa p)^{-1} is an
+    # integer matrix (inv_scaled), so mat = mat_int / s
+    mat_int, s = _K_ellipsoid_scaled(p, kappa, B)
+    if all(int(x) % s == 0 for x in np.asarray(mat_int).ravel()):
+        mat = util._to_int64_or_object(np.asarray(mat_int, dtype=object) // s)
+    else:
+        mat = np.array([[int(x) / s for x in row] for row in np.asarray(mat_int).tolist()])
     return mat, B
+
+
+def _K_ellipsoid_scaled(p: ArrayLike, kappa: ArrayLike, B: ArrayLike) -> tuple[np.ndarray, int]:
+    """
+    (mat_int, s) with -B^T (kappa p)^{-1} B = mat_int / s exactly (mat_int
+    integer; int64 when it fits, else Python ints).
+    """
+    h11 = kappa.shape[0]
+    p = util._as_integral(np.asarray(p).ravel())
+    A = util.exact_matmul(np.asarray(kappa).reshape(-1, h11), p).reshape(h11, h11)
+    if A.dtype == object:
+        raise OverflowError(f"kappa@p exceeds int64 for p={np.array(p).tolist()}")
+    try:
+        Ainv_s, s = util.inv_scaled(A)                # Ainv_s A = s I
+    except ValueError as e:
+        raise ValueError(
+            f"K_ellipsoid: kappa@p is singular for p={np.array(p).tolist()}.") from e
+    mat_int = -util.exact_matmul(np.asarray(B).T, util.exact_matmul(Ainv_s, B))
+    return mat_int, int(s)
 
 def H_matrix(ZBinter: ArrayLike):
     """
@@ -375,7 +377,7 @@ def ZpM(
     Qmin: int = 0,
     ellipsoid_dilation: float = 1, # typically want >=1
     # algorithm selection
-    use_c_kernel: bool = False,
+    use_c_kernel: bool = True,
     use_c_lattice: bool = True,
     n_jobs: int = -1,
     # misc
@@ -420,9 +422,10 @@ def ZpM(
         PFVs but may list them in a different order. Set False to reproduce
         the previous order exactly. Defaults to True.
     use_c_kernel : bool, optional
-        Enumeration backend. False (default) uses `util.fp_iterative_njit`
-        (Numba, no GCD pruning). True uses `pfv_kernel` (C, with GCD pruning;
-        faster for dilated ellipsoids). Both produce the same output.
+        Enumeration backend. True (default) uses `pfv_kernel` (C: exact
+        decisions, GCD pruning; much faster for dilated ellipsoids). False
+        uses `util.fp_iterative_njit` (Numba, floating-point decisions, no
+        GCD pruning), kept for reference. They find the same PFVs.
     n_jobs : int, optional
         How many jobs to spawn for per-p-vector parallelism. Defaults to twice
         the CPU count.
@@ -581,7 +584,7 @@ def ZpM(
 
             # compute Ms
             # ----------
-            Ms = Binter@lattice_points.T # as columns
+            Ms = util.exact_matmul(Binter, lattice_points.T) # as columns
 
             # filter by N invertibility
             # -------------------------
@@ -590,7 +593,7 @@ def ZpM(
             for i in range(0, Ms.shape[1], batch_size):
                 chunk = Ms[:,i:i+batch_size]
 
-                Ns = (kappa.reshape(h11*h11,h11)@chunk).reshape(h11,h11,-1)
+                Ns = util.exact_matmul(kappa.reshape(h11*h11,h11), chunk).reshape(h11,h11,-1)
                 Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
                 singular.append(_check_singular(Ns))
@@ -607,13 +610,13 @@ def ZpM(
 
             # compute Ks, reduce by GCDs
             # --------------------------
-            Ks = Z@Ms
+            Ks = util.exact_matmul(Z, Ms)
 
             K_gcds = np.gcd.reduce(Ks, axis=0)
             Ks = Ks//K_gcds
 
             # filter by tadpole
-            Qs = -np.sum(Ks*Ms,axis=0)
+            Qs = -util.colsum_prod(Ks, Ms)
             in_tadpole = (Qs>=Qmin) & (Qs<=Qmax)
             if verbosity >= 2:
                 if not only_positive_news:
@@ -783,35 +786,46 @@ def ZpK(
 
         for p in p_chunk:
             # helper variables
-            A = kappa@p@Mbasis
+            A = util.exact_matmul(
+                util.exact_matmul(kappa.reshape(-1, h11), p).reshape(h11, h11), Mbasis)
             try:
                 Ainv, _ = util.inv_scaled(A)
+            except OverflowError as e:
+                raise util.IncompleteSearchError(
+                    f"p={p.tolist()}: scaled inverse of kappa@p@Mbasis exceeds int64") from e
             except Exception as e:
                 raise ValueError(
                     f"inv_scaled failed for p={p.tolist()}; kappa@p@Mbasis "
                     f"may be singular."
                 ) from e
 
-            mat, B = K_ellipsoid(
-                p,
-                kappa=kappa,
-                Mbasis=Mbasis,
-                extra_lll_reduction=extra_lll_reduction,
-                extra_checks=extra_checks
-            )
-
-            # the core enumeration
-            # --------------------
+            # the K-lattice and the (rational) ellipsoid, exactly:
+            # c^T mat c <= D Qmax  <=>  c^T mat_int c <= floor(s D Qmax)
+            B = util.lll_reduce(util.orthogonal_lattice(p=p))
             try:
-                L = np.linalg.cholesky(mat)
-                lattice_points, _ = util.fp_iterative_njit(
-                    L=L,
-                    Q=ellipsoid_dilation*Qmax,
-                    max_N_out=max_N_pfvs)
-            except Exception as e:
-                raise RuntimeError(
-                    f"Kernel failed for p={np.array(p).tolist()}: {type(e).__name__}: {e}"
-                ) from e
+                mat_int, s_den = _K_ellipsoid_scaled(p, kappa, B)
+            except OverflowError as e:
+                raise util.IncompleteSearchError(f"p={p.tolist()}: {e}") from e
+            qmax = math.floor(Fraction(ellipsoid_dilation) * Qmax * s_den)
+            if mat_int.dtype == object or qmax >= 2**62:
+                raise util.IncompleteSearchError(
+                    f"p={p.tolist()}: the scaled K-ellipsoid exceeds int64")
+
+            # the core enumeration: the exact C kernel (no GCD cut here)
+            # --------------------
+            d = mat_int.shape[0]
+            try:
+                lattice_points, _, status = _enumerate(
+                    np.eye(d), mat_int, 1, qmax, np.zeros((0, d), dtype=object),
+                    None, 0, False, max_N_pfvs, 1e-4, 0)
+            except ValueError as e:
+                raise util.IncompleteSearchError(
+                    f"p={p.tolist()}: K-ellipsoid not positive definite ({e})") from e
+            if status != 0:
+                raise util.IncompleteSearchError(
+                    f"p={p.tolist()}: kernel status {status} "
+                    + ("(more than max_N_pfvs outputs; increase max_N_pfvs)"
+                       if status == -2 else ""))
 
             # only keep primitive lattice points (can reclaim other PFVs easily)
             primitiveQ = np.gcd.reduce(lattice_points, axis=1) == 1
@@ -820,15 +834,15 @@ def ZpK(
             # compute Ms, Ks, and reduced by GCD
             # ----------------------------------
             # read the data
-            cs = ((Ainv@B)@lattice_points.T).T
+            cs = util.exact_matmul(util.exact_matmul(Ainv, B), lattice_points.T).T
             gcds = np.gcd.reduce(cs,axis=1)
             cs_scaled = cs//gcds.reshape(-1,1)
 
-            Ks = B@lattice_points.T # as columns
-            Ms = Mbasis@cs_scaled.T
+            Ks = util.exact_matmul(B, lattice_points.T) # as columns
+            Ms = util.exact_matmul(Mbasis, cs_scaled.T)
 
             # filter on tadpole
-            Qs = -np.sum(Ks*Ms,axis=0)
+            Qs = -util.colsum_prod(Ks, Ms)
             in_tadpole = (Qs>=Qmin) & (Qs<=Qmax)
             if verbosity >= 2:
                 if not only_positive_news:
@@ -845,7 +859,7 @@ def ZpK(
             for i in range(0, Ms.shape[1], batch_size):
                 chunk = Ms[:,i:i+batch_size]
 
-                Ns = (kappa.reshape(h11*h11,h11)@chunk).reshape(h11,h11,-1)
+                Ns = util.exact_matmul(kappa.reshape(h11*h11,h11), chunk).reshape(h11,h11,-1)
                 Ns = Ns.transpose(2,0,1) # (N,h11,h11)
 
                 singular.append(_check_singular(Ns))
