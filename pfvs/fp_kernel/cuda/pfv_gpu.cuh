@@ -36,13 +36,9 @@
 //
 // Requires pfv_lattice.h (PFV_LATTICE_IMPLEMENTATION) to be included first.
 #pragma once
-#include <cooperative_groups.h>
+#include "pfg_compat.h"
 
 namespace pfg {
-namespace cg = cooperative_groups;
-
-enum { TL = 16 };
-typedef cg::thread_block_tile<TL> Tile;
 
 // status codes (0 = ok)
 enum {

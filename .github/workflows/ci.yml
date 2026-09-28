@@ -54,3 +54,27 @@ jobs:
         run: tests/c/test_factor
       - name: Run the test suite
         run: pytest tests/ -n auto
+
+  gpu-build:
+    # No GPUs on hosted runners: check that the CUDA backend compiles cleanly
+    # for several architectures (tests of it run where a GPU is present).
+    name: GPU backend compiles (CUDA)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: nvcc
+      - name: Install nvcc (conda-forge)
+        run: conda install -y -c conda-forge cuda-nvcc cuda-cudart-dev "gxx_linux-64=13"
+      - name: Compile for sm_70 ... sm_120 (warnings are errors)
+        run: |
+          for a in sm_70 sm_80 sm_90 sm_120; do
+            nvcc -ccbin x86_64-conda-linux-gnu-g++ -arch=$a -Wno-deprecated-gpu-targets -O3 -std=c++17 -shared \
+                 -Xcompiler -fPIC -Xcompiler -Wall,-Wextra,-Werror \
+                 pfvs/fp_kernel/cuda/pfvs_gpu.cu -o /tmp/libpfvs_gpu_$a.so
+          done

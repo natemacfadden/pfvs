@@ -116,6 +116,12 @@ FPK_HD int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R);
 // (INT64_MIN is excluded so negation and x / -1 are always defined)
 #define PFL_FITS64(x) ((x) <= PFL_I64_MAX && (x) > PFL_I64_MIN)
 
+// n int64 values (memcpy is host-only under HIP)
+FPK_HD static inline void pfl_copy64(int64_t *dst, const int64_t *src, size_t n)
+{
+    for (size_t k = 0; k < n; ++k) dst[k] = src[k];
+}
+
 // Extended Euclid on int64: returns g = gcd(a, b) >= 0 and s, t with
 // s a + t b = g, matching util.extended_euclidean (including signs).
 FPK_HD static inline int64_t pfl_xgcd(int64_t a, int64_t b, int64_t *s, int64_t *t)
@@ -158,7 +164,7 @@ FPK_HD static int pfl_orthogonal(const int64_t *v, int n, int64_t *O)
     int64_t U[PFL_MAX_H11 * PFL_MAX_H11];
     int rc = pfl_unimodular(v, n, U);
     if (rc) return rc;
-    memcpy(O, &U[n], (size_t)(n - 1) * n * sizeof(int64_t));
+    pfl_copy64(O, &U[n], (size_t)((n - 1) * n));
     return 0;
 }
 
@@ -188,7 +194,7 @@ FPK_HD static int pfl_unimodular(const int64_t *v, int n, int64_t *Uout)
             U[k * n + r] = (int64_t)t2;
         }
     }
-    memcpy(Uout, U, (size_t)n * n * sizeof(int64_t));
+    pfl_copy64(Uout, U, (size_t)(n * n));
     return 0;
 }
 
@@ -584,9 +590,9 @@ FPK_HD static int pfl_m0_basis(pfl_result *R, int h, int d, int coni)
     }
 
     if ((rc = pfl_matmul(R->Binter, T, tmp, h, d, d))) return rc;
-    memcpy(R->Binter, tmp, (size_t)h * d * sizeof(int64_t));
+    pfl_copy64(R->Binter, tmp, (size_t)(h * d));
     if ((rc = pfl_matmul(R->ZB, T, tmp, h, d, d))) return rc;
-    memcpy(R->ZB, tmp, (size_t)h * d * sizeof(int64_t));
+    pfl_copy64(R->ZB, tmp, (size_t)(h * d));
     // mat <- T^T (mat T)
     int64_t MT[PFL_MAX_H11 * PFL_MAX_H11];
     if ((rc = pfl_matmul(R->mat, T, MT, d, d, d))) return rc;
@@ -600,7 +606,7 @@ FPK_HD static int pfl_m0_basis(pfl_result *R, int h, int d, int coni)
             if (!PFL_FITS64(s)) return -1;
             tmp[a * d + b] = (int64_t)s;
         }
-    memcpy(R->mat, tmp, (size_t)d * d * sizeof(int64_t));
+    pfl_copy64(R->mat, tmp, (size_t)(d * d));
     return 0;
 }
 

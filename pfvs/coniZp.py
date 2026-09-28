@@ -642,10 +642,9 @@ def coniZpM(
     use_c_lattice : bool, optional
         Whether to build each p-vector's lattice data (the M-lattice basis
         Binter, the ellipsoid and the H-matrix) in C (fast, exact, with
-        automatic fallback to the Python path on overflow). The C path picks
-        a different, equally valid LLL-reduced basis, so it finds the same
-        PFVs but may list them in a different order. Set False to reproduce
-        the previous order exactly. Defaults to True.
+        automatic fallback to the Python path on overflow). Either way the
+        PFVs of each p-vector are listed in a canonical order (by M, then K),
+        independent of the lattice basis. Defaults to True.
     use_gcd_lattice : bool, optional
         Whether to construct explicit lattice bases for guaranteeing sufficient
         GCD of Kperp. Not recommended - it's generally quicker to just prune FP.
@@ -665,8 +664,9 @@ def coniZpM(
         the updated M vector lattice basis, Binter. Useful since otherwise
         there are sometimes overflows. Defaults to True.
     device : str, optional
-        Where the lattice setup and search run: "cpu", "gpu" (the CUDA
-        backend; raises if it is not built or no device is present) or
+        Where the lattice setup and search run: "cpu", "gpu" (the GPU
+        backend, NVIDIA or AMD; raises if it is not built or no device is
+        present) or
         "auto" (the GPU when available and worthwhile, else the CPU; the
         environment variable PFVS_DEVICE overrides "auto"). Results are
         identical either way. Defaults to "auto".
