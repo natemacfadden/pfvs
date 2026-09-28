@@ -428,6 +428,12 @@ def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
     if M0min <= 0:
         raise ValueError("coniZpM requires M0min > 0")
 
+    # canonical order within a p-vector, by (M, K_nat): the search order
+    # depends on the lattice basis, which can differ between the CPU and GPU
+    # paths, and this makes their outputs identical
+    order = np.lexsort(tuple(Kns[::-1]) + tuple(Ms[::-1]) + (key,))
+    Ms, Kns, Qs, key = Ms[:, order], Kns[:, order], Qs[order], key[order]
+
     # All arithmetic below is exact: int64 when a bound on every intermediate
     # shows it cannot overflow (the normal case), else Python ints.
     Mb, Kb, Qb = util.absmax(Ms), util.absmax(Kns), util.absmax(Qs)
@@ -532,6 +538,38 @@ def _pfvs_from_points(Ms: np.ndarray, Kns: np.ndarray, Qs: np.ndarray,
     order = np.argsort(key, kind="stable")
     return Ks.T[order], Ms.T[order], key[order]
 
+# below this many p-vectors, "auto" stays on the CPU (device start-up and
+# transfer costs dominate)
+_GPU_MIN_PS = 256
+
+
+def _use_gpu(device, h11, n_ps, use_c_lattice, use_gcd_lattice, extra_lll):
+    """Resolve coniZpM's `device` argument to use-the-GPU or not."""
+    if device not in ("auto", "cpu", "gpu"):
+        raise ValueError(f'device must be "auto", "cpu" or "gpu", got {device!r}')
+    if device == "auto":
+        env = os.environ.get("PFVS_DEVICE", "auto").lower()
+        if env not in ("auto", "cpu", "gpu"):
+            raise ValueError(f'PFVS_DEVICE must be "auto", "cpu" or "gpu", got {env!r}')
+        device = env
+    if device == "cpu":
+        return False
+    from . import gpu
+    reasons = []
+    if not gpu.available():
+        reasons.append(gpu.unavailable_reason())
+    elif not 3 <= h11 <= gpu.max_h11():
+        reasons.append(f"h11 = {h11} is outside the GPU build's 3..{gpu.max_h11()}")
+    if not use_c_lattice or use_gcd_lattice or not extra_lll:
+        reasons.append("the GPU path needs use_c_lattice=True, use_gcd_lattice=False, "
+                       "extra_lll_reduction=True")
+    if device == "gpu":
+        if reasons:
+            raise RuntimeError("device='gpu' unavailable: " + "; ".join(reasons))
+        return True
+    return not reasons and n_ps >= _GPU_MIN_PS
+
+
 def _raise_kernel_status(p, status: int):
     """Raise IncompleteSearchError for a nonzero kernel status."""
     reason = {-2: "(more than max_N_pfvs outputs; increase max_N_pfvs)",
@@ -559,6 +597,7 @@ def coniZpM(
     # misc
     extra_checks: bool = False,
     extra_lll_reduction: bool = True,
+    device: str = "auto",
     # output/verbosity
     max_N_pfvs: int = 1_000_000_000,
     return_formal_pfvs: bool = False,
@@ -625,6 +664,12 @@ def coniZpM(
         Whether to perform an extra (technically unnecessary) LLL reduction on
         the updated M vector lattice basis, Binter. Useful since otherwise
         there are sometimes overflows. Defaults to True.
+    device : str, optional
+        Where the lattice setup and search run: "cpu", "gpu" (the CUDA
+        backend; raises if it is not built or no device is present) or
+        "auto" (the GPU when available and worthwhile, else the CPU; the
+        environment variable PFVS_DEVICE overrides "auto"). Results are
+        identical either way. Defaults to "auto".
     max_N_pfvs : int, optional
         The maximum number of PFVs that can be output. The C-kernel requires a
         limit. Defaults excessively high to 1,000,000,000.
@@ -684,6 +729,12 @@ def coniZpM(
     if Q is None:
         Q = (h11+h21+2) + 2
 
+    use_gpu = _use_gpu(device, h11, len(ps), use_c_lattice, use_gcd_lattice,
+                       extra_lll_reduction)
+    gpu_required = use_gpu and device == "gpu"
+    if use_gpu:
+        n_jobs = 1      # one device call for all p-vectors
+
     # the search
     # ----------
     # iterate over p-vectors
@@ -707,9 +758,24 @@ def coniZpM(
                 raise util.IncompleteSearchError("p-vector entries exceed int64")
             p_full_all = np.hstack([np.zeros((len(p_chunk), 1), dtype=np.int64),
                                     p_int.astype(np.int64)])
-            Mv, Kv, qv, pv, pstat = _coni_batch(
-                kappa, Mbasis, p_full_all, Q, ellipsoid_dilation, M0min,
-                max_N_pfvs, extra_lll_reduction)
+            batch_done = False
+            if use_gpu:
+                from . import gpu
+                try:
+                    Mv, Kv, qv, pv, pstat = gpu.coni_batch(
+                        kappa, Mbasis, p_full_all, Q, ellipsoid_dilation, M0min,
+                        max_N_pfvs)
+                    batch_done = True
+                except RuntimeError as e:
+                    if gpu_required:
+                        raise
+                    # "auto": e.g. device memory taken by other processes
+                    warnings.warn(f"GPU path failed ({e}); using the CPU", RuntimeWarning,
+                                  stacklevel=3)
+            if not batch_done:
+                Mv, Kv, qv, pv, pstat = _coni_batch(
+                    kappa, Mbasis, p_full_all, Q, ellipsoid_dilation, M0min,
+                    max_N_pfvs, extra_lll_reduction)
             for ip in np.flatnonzero(pstat < 0):
                 _raise_kernel_status(p_chunk[ip], int(pstat[ip]))
             if verbosity >= 1:

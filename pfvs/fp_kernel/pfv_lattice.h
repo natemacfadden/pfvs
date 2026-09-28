@@ -21,8 +21,10 @@
 // ======
 #include <stdint.h>
 
-__extension__ typedef __int128 pfl_i128;
-__extension__ typedef unsigned __int128 pfl_u128;
+#include "fpk_common.h"
+
+typedef fpk_i128 pfl_i128;
+typedef fpk_u128 pfl_u128;
 
 /*
 **Description:**
@@ -69,6 +71,10 @@ interval bound. Same lattice, same PFVs; ~4.7x smaller searches on heavy
 h11 = 10 problems. Non-coni (no M0 cut): T is the LLL reduction of the whole
 basis with respect to mat, which alone shrinks searches ~1.4-1.8x.
 */
+#ifndef PFL_MAX_H11
+#define PFL_MAX_H11 64     /* the GPU build uses a smaller limit */
+#endif
+
 typedef struct {
     int h11;
     const int64_t *kappa;    // (h11, h11, h11), symmetric
@@ -79,24 +85,28 @@ typedef struct {
 } pfl_setup;
 
 typedef struct {
-    int64_t Z[64 * 64];      // (h11, h11)
-    int64_t Binter[64 * 63]; // (h11, h11-1) row-major
-    int64_t ZB[64 * 63];     // (h11, h11-1) = Z Binter
-    int64_t mat[63 * 63];    // (h11-1, h11-1)
-    pfl_i128 H[64 * 63];     // (nrows, h11-1), row-HNF (entries < 2^125)
+    int64_t Z[PFL_MAX_H11 * PFL_MAX_H11];            // (h11, h11)
+    int64_t Binter[PFL_MAX_H11 * (PFL_MAX_H11 - 1)]; // (h11, h11-1) row-major
+    int64_t ZB[PFL_MAX_H11 * (PFL_MAX_H11 - 1)];     // (h11, h11-1) = Z Binter
+    int64_t mat[(PFL_MAX_H11 - 1) * (PFL_MAX_H11 - 1)]; // (h11-1, h11-1)
+    pfl_i128 H[PFL_MAX_H11 * (PFL_MAX_H11 - 1)];     // (nrows, h11-1), row-HNF (< 2^125)
     int     nrows;
 } pfl_result;
 
-#define PFL_MAX_H11 64
 
-int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R);
+FPK_HD int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R);
 
 
 // IMPLEMENTATION
 // ==============
 #ifdef PFV_LATTICE_IMPLEMENTATION
 
+// GMP (the HNF fallback) is host-only; PFL_NO_GMP drops it from host code too
+// (the GPU library), in which case pfl_build returns -15 where it is needed.
+#if !defined(__CUDA_ARCH__) && !defined(PFL_NO_GMP)
+#define PFL_HAVE_GMP 1
 #include <gmp.h>
+#endif
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -108,7 +118,7 @@ int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R);
 
 // Extended Euclid on int64: returns g = gcd(a, b) >= 0 and s, t with
 // s a + t b = g, matching util.extended_euclidean (including signs).
-static inline int64_t pfl_xgcd(int64_t a, int64_t b, int64_t *s, int64_t *t)
+FPK_HD static inline int64_t pfl_xgcd(int64_t a, int64_t b, int64_t *s, int64_t *t)
 {
     int64_t or_ = a, r = b, os = 1, s_ = 0, ot = 0, t_ = 1;
     while (r != 0) {
@@ -125,13 +135,13 @@ static inline int64_t pfl_xgcd(int64_t a, int64_t b, int64_t *s, int64_t *t)
 }
 
 // |x| as unsigned (defined for INT64_MIN)
-static inline uint64_t pfl_uabs(int64_t x)
+FPK_HD static inline uint64_t pfl_uabs(int64_t x)
 {
     return x < 0 ? (uint64_t)0 - (uint64_t)x : (uint64_t)x;
 }
 
 // floor division, as Python's //
-static inline int64_t pfl_fdiv(int64_t a, int64_t b)
+FPK_HD static inline int64_t pfl_fdiv(int64_t a, int64_t b)
 {
     int64_t q = a / b;
     if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
@@ -141,9 +151,9 @@ static inline int64_t pfl_fdiv(int64_t a, int64_t b)
 // Basis of the lattice orthogonal to v (length n), as the n-1 rows of O
 // (row-major, stride n). A port of util._orthogonal_lattice_int64 (same
 // Bezout elimination, same result), with exact overflow checks.
-static int pfl_unimodular(const int64_t *v, int n, int64_t *U);
+FPK_HD static int pfl_unimodular(const int64_t *v, int n, int64_t *U);
 
-static int pfl_orthogonal(const int64_t *v, int n, int64_t *O)
+FPK_HD static int pfl_orthogonal(const int64_t *v, int n, int64_t *O)
 {
     int64_t U[PFL_MAX_H11 * PFL_MAX_H11];
     int rc = pfl_unimodular(v, n, U);
@@ -154,7 +164,7 @@ static int pfl_orthogonal(const int64_t *v, int n, int64_t *O)
 
 // Unimodular U (n x n, row-major) with U v = (gcd(v), 0, ..., 0): rows 1..
 // span the lattice orthogonal to v, row 0 has v . U[0] = gcd(v).
-static int pfl_unimodular(const int64_t *v, int n, int64_t *Uout)
+FPK_HD static int pfl_unimodular(const int64_t *v, int n, int64_t *Uout)
 {
     int64_t U[PFL_MAX_H11 * PFL_MAX_H11];
     int64_t w[PFL_MAX_H11];
@@ -182,28 +192,12 @@ static int pfl_unimodular(const int64_t *v, int n, int64_t *Uout)
     return 0;
 }
 
-// |x| as unsigned 128-bit
-static inline pfl_u128 pfl_uabs128(pfl_i128 x)
-{
-    return x < 0 ? (pfl_u128)0 - (pfl_u128)x : (pfl_u128)x;
-}
+#define pfl_uabs128 fpk_abs128
 
-// r = a * b with overflow detection (returns 1 on overflow). Written out
-// rather than __builtin_mul_overflow on __int128, which older clang lowers
-// to a __muloti4 call that libgcc does not provide (link failure on Linux).
-static inline int pfl_mul_ovf(pfl_i128 a, pfl_i128 b, pfl_i128 *r)
-{
-    pfl_u128 ua = pfl_uabs128(a), ub = pfl_uabs128(b);
-    const pfl_u128 lim = (pfl_u128)1 << 63;
-    if (ua < lim && ub < lim) { *r = a * b; return 0; }   /* |a b| < 2^126 */
-    if (ua && ub > (((pfl_u128)1 << 127) - 1) / ua) return 1;  /* |a b| >= 2^127 */
-    pfl_u128 m = ua * ub;
-    *r = ((a < 0) != (b < 0)) ? -(pfl_i128)m : (pfl_i128)m;
-    return 0;
-}
+#define pfl_mul_ovf fpk_mul_ovf
 
 // floor division on int128 (b != 0; no overflow for |a|, |b| < 2^126)
-static inline pfl_i128 pfl_fdiv128(pfl_i128 a, pfl_i128 b)
+FPK_HD static inline pfl_i128 pfl_fdiv128(pfl_i128 a, pfl_i128 b)
 {
     pfl_i128 q = a / b;
     if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
@@ -213,75 +207,119 @@ static inline pfl_i128 pfl_fdiv128(pfl_i128 a, pfl_i128 b)
 #define PFL_I128_LIM ((pfl_i128)1 << 125)
 #define PFL_FITS125(x) ((x) < PFL_I128_LIM && (x) > -PFL_I128_LIM)
 
-// Row-style Hermite normal form of the r x n integer matrix A (row-major),
-// matching flint's fmpz_mat_hnf: upper echelon, positive pivots, entries
-// above each pivot reduced into [0, pivot), zero rows last. Worked in int128
-// (intermediates grow well beyond the final entries); exact, with overflow
-// detection. Input int64 (A64), output int128 (Aout).
-static int pfl_hnf(const int64_t *A64, int r, int n, pfl_i128 *Aout)
+// Row-style Hermite normal form (pfl_hnf below) of an r x n integer matrix
+// (row-major), matching flint's fmpz_mat_hnf: upper echelon, positive pivots,
+// entries above each pivot reduced into [0, pivot), zero rows last.
+//
+// Rows are inserted one at a time into an HNF that is kept fully reduced,
+// combining equal-pivot rows with an extended gcd. Entries then stay near the
+// size of the final HNF; column-wise Euclidean elimination instead blows up
+// on these rank-deficient inputs (int128 overflowed for ~60% of h11 = 11
+// p-vectors whose final HNF entries are < 2^48). Checked int128 throughout:
+// -1 on overflow (the host then redoes it in GMP), 0 on success.
+
+// r = a*b + c, checked
+FPK_HD static inline int pfl_muladd(pfl_i128 a, pfl_i128 b, pfl_i128 c, pfl_i128 *r)
 {
-    pfl_i128 *A = Aout;
-    for (int i = 0; i < r * n; ++i) A[i] = A64[i];
-    int row = 0;
-    for (int col = 0; col < n && row < r; ++col) {
-        // Euclid on column `col` over rows row..r-1 until one nonzero remains
-        for (;;) {
-            int piv = -1;
-            for (int i = row; i < r; ++i)
-                if (A[i * n + col] != 0 &&
-                    (piv < 0 || pfl_uabs128(A[i * n + col]) < pfl_uabs128(A[piv * n + col])))
-                    piv = i;
-            if (piv < 0) break;                      // column is zero here
-            if (piv != row)
-                for (int c = 0; c < n; ++c) {
-                    pfl_i128 t = A[row * n + c];
-                    A[row * n + c] = A[piv * n + c];
-                    A[piv * n + c] = t;
-                }
-            int done = 1;
-            for (int i = row + 1; i < r; ++i) {
-                pfl_i128 a = A[i * n + col];
-                if (a == 0) continue;
-                pfl_i128 q = pfl_fdiv128(a, A[row * n + col]);
-                for (int c = col; c < n; ++c) {
-                    pfl_i128 x;
-                    if (pfl_mul_ovf(q, A[row * n + c], &x)) return -1;
-                    if (__builtin_sub_overflow(A[i * n + c], x, &x)) return -1;
-                    if (!PFL_FITS125(x)) return -1;
-                    A[i * n + c] = x;
-                }
-                if (A[i * n + col] != 0) done = 0;
-            }
-            if (done) break;
-        }
-        if (A[row * n + col] == 0) continue;
-        if (A[row * n + col] < 0)
-            for (int c = col; c < n; ++c) A[row * n + c] = -A[row * n + c];
-        // reduce the entries above the pivot into [0, pivot)
-        pfl_i128 pv = A[row * n + col];
-        for (int i = 0; i < row; ++i) {
-            pfl_i128 q = pfl_fdiv128(A[i * n + col], pv);
-            if (!q) continue;
-            for (int c = col; c < n; ++c) {
-                pfl_i128 x;
-                if (pfl_mul_ovf(q, A[row * n + c], &x)) return -1;
-                if (__builtin_sub_overflow(A[i * n + c], x, &x)) return -1;
-                if (!PFL_FITS125(x)) return -1;
-                A[i * n + c] = x;
-            }
-        }
-        row++;
+    pfl_i128 x;
+    if (pfl_mul_ovf(a, b, &x) || fpk_add_ovf(x, c, &x) || !PFL_FITS125(x)) return -1;
+    *r = x;
+    return 0;
+}
+
+// row[c0:] -= q * piv_row[c0:]
+FPK_HD static inline int pfl_rowsub(pfl_i128 *row, const pfl_i128 *prow, pfl_i128 q, int c0, int n)
+{
+    if (!q) return 0;
+    for (int c = c0; c < n; ++c)
+        if (pfl_muladd(-q, prow[c], row[c], &row[c])) return -1;
+    return 0;
+}
+
+// reduce row (all of it) by rows t0..m-1 of H at their pivots, in pivot order
+FPK_HD static inline int pfl_reduce_by(pfl_i128 *row, const pfl_i128 *H, const int *piv, int t0, int m, int n)
+{
+    for (int l = t0; l < m; ++l) {
+        int j = piv[l];
+        if (pfl_rowsub(row, &H[l * n], pfl_fdiv128(row[j], H[l * n + j]), j, n)) return -1;
     }
     return 0;
 }
 
+// Input int64 (A64), output int128 (H).
+FPK_HD static int pfl_hnf(const int64_t *A64, int r, int n, pfl_i128 *H)
+{
+    int piv[PFL_MAX_H11];
+    pfl_i128 v[PFL_MAX_H11], w[PFL_MAX_H11];
+    int m = 0;
+    for (int k = 0; k < r; ++k) {
+        for (int c = 0; c < n; ++c) v[c] = A64[k * n + c];
+        int t = 0;
+        for (;;) {
+            int j = 0;
+            while (j < n && v[j] == 0) ++j;
+            if (j == n) break;                              // v in the span: done
+            while (t < m && piv[t] < j) ++t;
+            if (t == m || piv[t] > j) {                     // new pivot j at row t
+                for (int l = m; l > t; --l) {
+                    piv[l] = piv[l - 1];
+                    for (int c = 0; c < n; ++c) H[l * n + c] = H[(l - 1) * n + c];
+                }
+                m++;
+                if (v[j] < 0) for (int c = j; c < n; ++c) v[c] = -v[c];
+                for (int c = 0; c < n; ++c) H[t * n + c] = v[c];
+                piv[t] = j;
+                if (pfl_reduce_by(&H[t * n], H, piv, t + 1, m, n)) return -1;
+                break;
+            }
+            // piv[t] == j: combine v with row t
+            pfl_i128 *h = &H[t * n];
+            pfl_i128 a = h[j], b = v[j];
+            if (b % a == 0) {
+                if (pfl_rowsub(v, h, b / a, j, n)) return -1;
+            } else {
+                // xgcd: s a + x b = g > 0
+                pfl_i128 r0 = a, r1 = b, s0 = 1, s1 = 0, x0 = 0, x1 = 1;
+                while (r1) {
+                    pfl_i128 q = r0 / r1, tt;
+                    tt = r0 - q * r1; r0 = r1; r1 = tt;
+                    tt = s0 - q * s1; s0 = s1; s1 = tt;
+                    tt = x0 - q * x1; x0 = x1; x1 = tt;
+                }
+                if (r0 < 0) { r0 = -r0; s0 = -s0; x0 = -x0; }
+                pfl_i128 ag = a / r0, bg = b / r0;
+                for (int c = j; c < n; ++c) {
+                    pfl_i128 hn, vn, t1;
+                    if (pfl_mul_ovf(s0, h[c], &t1) || pfl_muladd(x0, v[c], t1, &hn)) return -1;
+                    if (pfl_mul_ovf(-bg, h[c], &t1) || pfl_muladd(ag, v[c], t1, &vn)) return -1;
+                    w[c] = hn; v[c] = vn;
+                }
+                for (int c = j; c < n; ++c) h[c] = w[c];
+                if (pfl_reduce_by(h, H, piv, t + 1, m, n)) return -1;
+            }
+            if (pfl_reduce_by(v, H, piv, t + 1, m, n)) return -1;   // keep v small
+            // rows above t: re-reduce at the changed pivot and below
+            for (int l = 0; l < t; ++l)
+                if (pfl_reduce_by(&H[l * n], H, piv, t, m, n)) return -1;
+            t++;
+        }
+        // (the new row at t: reduce the rows above it)
+        for (int l = 0; l < t && l < m; ++l)
+            if (pfl_reduce_by(&H[l * n], H, piv, t < m ? t : m, m, n)) return -1;
+    }
+    for (int l = m; l < r; ++l)
+        for (int c = 0; c < n; ++c) H[l * n + c] = 0;
+    return 0;
+}
+
+#ifdef PFL_HAVE_GMP
 // The same HNF in GMP, for when the int128 version's intermediates exceed
-// 2^125 (common at h11 >= 10: the final H fits, the elimination does not).
+// 2^125 (rare with row insertion; the final H may still fit).
 // Exact; the result (canonical, as flint's) is returned in int128, or -1 if
 // an entry of the final H does not fit.
 static int pfl_hnf_mpz(const int64_t *A64, int r, int n, pfl_i128 *Aout)
 {
-    mpz_t *A = malloc((size_t)r * n * sizeof(mpz_t));
+    mpz_t *A = (mpz_t *)malloc((size_t)r * n * sizeof(mpz_t));
     if (!A) return -1;
     mpz_t q;
     mpz_init(q);
@@ -328,9 +366,10 @@ static int pfl_hnf_mpz(const int64_t *A64, int r, int n, pfl_i128 *Aout)
     free(A);
     return rc;
 }
+#endif
 
 // C = A B for int64 matrices with exact overflow checks
-static int pfl_matmul(const int64_t *A, const int64_t *B, int64_t *C,
+FPK_HD static int pfl_matmul(const int64_t *A, const int64_t *B, int64_t *C,
                       int m, int k, int n)
 {
     for (int i = 0; i < m; ++i)
@@ -338,7 +377,7 @@ static int pfl_matmul(const int64_t *A, const int64_t *B, int64_t *C,
             pfl_i128 s = 0;
             for (int l = 0; l < k; ++l) {
                 pfl_i128 t = (pfl_i128)A[i * k + l] * B[l * n + j];
-                if (__builtin_add_overflow(s, t, &s)) return -1;
+                if (fpk_add_ovf(s, t, &s)) return -1;
             }
             if (!PFL_FITS64(s)) return -1;
             C[i * n + j] = (int64_t)s;
@@ -354,7 +393,7 @@ static int pfl_matmul(const int64_t *A, const int64_t *B, int64_t *C,
 // the basis. The Gram matrix is kept exact (checked int128) under every
 // basis operation, so Gram-Schmidt needs no inner products: floating point
 // only chooses the unimodular operations, which are exact.
-static int pfl_lll_core(int64_t *B, int m, int n, pfl_i128 *GG, int64_t *last)
+FPK_HD static int pfl_lll_core(int64_t *B, int m, int n, pfl_i128 *GG, int64_t *last)
 {
     const int L = m + 1;                        // GG stride
     const int M = m + (last != NULL);           // rows tracked in GG
@@ -375,13 +414,13 @@ static int pfl_lll_core(int64_t *B, int m, int n, pfl_i128 *GG, int64_t *last)
         pfl_i128 kj_ = GG[(kk) * L + (jj)], jj_ = GG[(jj) * L + (jj)], t_, u_; \
         /* new G_kk = G_kk - 2 q G_kj + q^2 G_jj */                            \
         if (pfl_mul_ovf(jj_, (pfl_i128)(qi), &t_) ||                           \
-            __builtin_sub_overflow(t_, 2 * kj_, &t_) ||                        \
+            fpk_sub_ovf(t_, 2 * kj_, &t_) ||                        \
             pfl_mul_ovf(t_, (pfl_i128)(qi), &u_) ||                            \
-            __builtin_add_overflow(GG[(kk) * L + (kk)], u_, &u_)) return -1;   \
+            fpk_add_ovf(GG[(kk) * L + (kk)], u_, &u_)) return -1;   \
         for (int l_ = 0; l_ < M; ++l_) {                                       \
             if (l_ == (kk)) continue;                                          \
             if (pfl_mul_ovf(GG[(jj) * L + l_], (pfl_i128)(qi), &t_) ||         \
-                __builtin_sub_overflow(GG[(kk) * L + l_], t_, &t_)) return -1; \
+                fpk_sub_ovf(GG[(kk) * L + l_], t_, &t_)) return -1; \
             GG[(kk) * L + l_] = t_;                                            \
             GG[l_ * L + (kk)] = t_;                                            \
         }                                                                      \
@@ -453,7 +492,8 @@ static int pfl_lll_core(int64_t *B, int m, int n, pfl_i128 *GG, int64_t *last)
                 if (q == 0.0) continue;
                 if (!(fabs(q) <= 9.0e18)) return -1;
                 int64_t qi = (int64_t)q;
-                PFL_SUB(m, j, qi);
+                const int row_last = m;         // (a named row: m == m would warn)
+                PFL_SUB(row_last, j, qi);
                 for (int l = 0; l < j; ++l) mw[l] -= q * mu[j][l];
                 mw[j] -= q;
                 changed = 1;
@@ -468,7 +508,7 @@ static int pfl_lll_core(int64_t *B, int m, int n, pfl_i128 *GG, int64_t *last)
 }
 
 // Euclidean LLL of the m rows of B (length n).
-static int pfl_lll(int64_t *B, int m, int n)
+FPK_HD static int pfl_lll(int64_t *B, int m, int n)
 {
     if (m < 2) return 0;
     pfl_i128 GG[(PFL_MAX_H11 + 1) * (PFL_MAX_H11 + 1)];
@@ -477,7 +517,7 @@ static int pfl_lll(int64_t *B, int m, int n)
         for (int j = 0; j <= i; ++j) {
             pfl_i128 sum = 0;
             for (int c = 0; c < n; ++c)
-                if (__builtin_add_overflow(sum, (pfl_i128)B[i * n + c] * B[j * n + c], &sum)) return -1;
+                if (fpk_add_ovf(sum, (pfl_i128)B[i * n + c] * B[j * n + c], &sum)) return -1;
             GG[i * L + j] = GG[j * L + i] = sum;
         }
     return pfl_lll_core(B, m, n, GG, NULL);
@@ -485,7 +525,7 @@ static int pfl_lll(int64_t *B, int m, int n)
 
 // LLL of the m coefficient vectors B (rows, length n) with respect to the
 // quadratic form G (n x n); then size-reduce `last` (if given) against them.
-static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *last)
+FPK_HD static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *last)
 {
     pfl_i128 GG[(PFL_MAX_H11 + 1) * (PFL_MAX_H11 + 1)];
     pfl_i128 Gy[PFL_MAX_H11];
@@ -495,7 +535,7 @@ static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *las
         for (int i = 0; i < n; ++i) {           // Gy = G y (int64 * int64 terms)
             pfl_i128 r = 0;
             for (int c = 0; c < n; ++c)
-                if (__builtin_add_overflow(r, (pfl_i128)G[i * n + c] * y[c], &r)) return -1;
+                if (fpk_add_ovf(r, (pfl_i128)G[i * n + c] * y[c], &r)) return -1;
             Gy[i] = r;
         }
         for (int i = 0; i <= j; ++i) {          // GG[i][j] = x_i . G y_j
@@ -503,7 +543,7 @@ static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *las
             pfl_i128 sum = 0, t;
             for (int c = 0; c < n; ++c) {
                 if (!x[c]) continue;
-                if (pfl_mul_ovf(Gy[c], (pfl_i128)x[c], &t) || __builtin_add_overflow(sum, t, &sum))
+                if (pfl_mul_ovf(Gy[c], (pfl_i128)x[c], &t) || fpk_add_ovf(sum, t, &sum))
                     return -1;
             }
             GG[i * L + j] = GG[j * L + i] = sum;
@@ -514,7 +554,7 @@ static int pfl_lll_gram(int64_t *B, int m, int n, const int64_t *G, int64_t *las
 
 // Cut-aware basis change (see the header comment): Binter <- Binter T,
 // ZB <- ZB T, mat <- T^T mat T with T = [K | w].
-static int pfl_m0_basis(pfl_result *R, int h, int d, int coni)
+FPK_HD static int pfl_m0_basis(pfl_result *R, int h, int d, int coni)
 {
     int64_t l[PFL_MAX_H11], V[PFL_MAX_H11 * PFL_MAX_H11];
     int64_t T[PFL_MAX_H11 * PFL_MAX_H11];      // columns: new basis vectors
@@ -555,7 +595,7 @@ static int pfl_m0_basis(pfl_result *R, int h, int d, int coni)
             pfl_i128 s = 0;
             for (int i = 0; i < d; ++i) {
                 pfl_i128 t = (pfl_i128)T[i * d + a] * MT[i * d + b];
-                if (__builtin_add_overflow(s, t, &s)) return -1;
+                if (fpk_add_ovf(s, t, &s)) return -1;
             }
             if (!PFL_FITS64(s)) return -1;
             tmp[a * d + b] = (int64_t)s;
@@ -564,7 +604,7 @@ static int pfl_m0_basis(pfl_result *R, int h, int d, int coni)
     return 0;
 }
 
-int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
+FPK_HD int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
 {
     const int h = S->h11, d = S->h11 - 1;
     if (h < 2 || h > PFL_MAX_H11) return -2;
@@ -580,7 +620,7 @@ int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
     for (int i = 0; i < h * h; ++i) {
         pfl_i128 s = 0;
         for (int k = 0; k < h; ++k)          /* each term < 2^126; the sum is checked */
-            if (__builtin_add_overflow(s, (pfl_i128)S->kappa[i * h + k] * p[k], &s)) return -1;
+            if (fpk_add_ovf(s, (pfl_i128)S->kappa[i * h + k] * p[k], &s)) return -1;
         if (!PFL_FITS64(s)) return -1;
         R->Z[i] = (int64_t)s;
     }
@@ -595,7 +635,7 @@ int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
         for (int i = 0; i < h; ++i) {
             pfl_i128 s = 0;
             for (int l = 0; l < h; ++l)
-                if (__builtin_add_overflow(s, (pfl_i128)S->Mbasis[i * h + l] * O[a * h + l], &s))
+                if (fpk_add_ovf(s, (pfl_i128)S->Mbasis[i * h + l] * O[a * h + l], &s))
                     return -1;
             if (!PFL_FITS64(s)) return -1;
             BT[a * h + i] = (int64_t)s;
@@ -622,7 +662,7 @@ int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
             pfl_i128 s = 0;
             for (int i = 0; i < h; ++i) {
                 pfl_i128 t = (pfl_i128)R->Binter[i * d + a] * R->ZB[i * d + b];
-                if (__builtin_add_overflow(s, t, &s)) return -1;
+                if (fpk_add_ovf(s, t, &s)) return -1;
             }
             if (!PFL_FITS64(s) || s == PFL_I64_MIN) return -1;
             R->mat[a * d + b] = (int64_t)(-s);
@@ -635,8 +675,10 @@ int pfl_build(const pfl_setup *S, const int64_t *p, pfl_result *R)
     int r0 = S->coni ? 1 : 0;
     R->nrows = h - r0;
     rc = pfl_hnf(&R->ZB[r0 * d], R->nrows, d, R->H);
+#ifdef PFL_HAVE_GMP
     if (rc == -1)                 /* int128 intermediates overflowed: redo in GMP */
         rc = pfl_hnf_mpz(&R->ZB[r0 * d], R->nrows, d, R->H);
+#endif                            /* (without GMP: status -15, the caller finishes) */
     return rc ? rc * 10 - 5 : 0;
 }
 
