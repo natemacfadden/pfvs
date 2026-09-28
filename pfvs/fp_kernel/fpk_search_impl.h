@@ -35,11 +35,15 @@
 // Callers get Kerr and slack from FPK_N(fpk_search_consts).
 
 FPK_HD static inline void FPK_N(fpk_search_consts)(int dim, int64_t qmax, double eps,
-                                                   FPK_R *slack, FPK_R *Kerr)
+                                                   FPK_R *slack, FPK_R *Kerr, FPK_R *max_err)
 {
     FPK_R qd = (FPK_R)qmax;
     *slack = FPK_FMAX((FPK_R)eps, FPK_G * (qd + FPK_L(1.0)));
     *Kerr  = FPK_L(2.0) * (FPK_R)(dim + 8) * FPK_U;
+    // error budget: a heavily cancelling (ill-conditioned) problem can have
+    // a rounding bound so large that nothing is pruned; past this the search
+    // stops with -11 and the caller uses a wider type (double does not stop)
+    *max_err = sizeof(FPK_R) < sizeof(double) ? FPK_L(1.0) + FPK_L(0.05) * qd : (FPK_R)INFINITY;
 }
 
 // Smallest gcd that can pass the GCD cut when q(c) >= q_lb, rounded down so
@@ -161,7 +165,7 @@ FPK_HD static inline int FPK_N(fpk_sparse_candidates)(
 typedef struct {
     int dim, strict, use_gcd, m0_level;
     int64_t Q, qmax, linmin;
-    FPK_R qmax_d, slack, Kerr;
+    FPK_R qmax_d, slack, Kerr, max_err;       // from FPK_N(fpk_search_consts)
     const FPK_R  *U, *Uinv;                   // U: (dim, dim)
     const FPK_R  *m0N, *m0V, *m0Va;           // M0 bound (if linvec)
     const int64_t *linvec, *mat;               // mat: exact, for the leaf
@@ -170,7 +174,8 @@ typedef struct {
 } FPK_N(fpk_prep);
 
 
-// Status: 0 done; -2 emit asked to stop; -8 a coordinate range exceeds int32.
+// Status: 0 done; -2 emit asked to stop; -8 a coordinate range exceeds int32;
+// -11 the error bound exceeded max_err (use a wider floating-point type).
 FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32_t *prefix,
                                     int n_prefix, int stop_depth, int32_t *clist,
                                     fpk_emit_fn emit, void *ctx, fpk_counts *cnt)
@@ -184,9 +189,16 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
     int64_t  cur[MD], hi[MD];
     FPK_R   rem[MD], off[MD], err[MD], aoff[MD];
     fpk_i128 m0p[MD];
-    fpk_gval g[MD + 1];
+    fpk_u128 g[MD + 1];                         // gcd of the rows determined above
     int      lmode[MD], lcnt[MD], lidx[MD];
     fpk_i128 pre_s[MD + 1];
+    // Residue mode (dense levels whose parent gcd G = g[i+1] is in [1, 2^63)):
+    // only gcd(g, x) matters for a row value x = pre + h v, with g | G, and
+    // gcd(g, x) = gcd(g, x mod G). As v steps by 1, x mod G steps by h mod G,
+    // so it is tracked with one add and compare per candidate instead of an
+    // int128 multiply-add, and the gcd runs on values < G.
+    uint64_t rres[MD + 1], rstep[MD + 1], rcur[MD + 1], gpar[MD];
+    int      lres[MD];
     for (int j = 0; j < dim; ++j) c[j] = 0;
 
     // prepare level i (c[i+1:] set); returns -8 on an int32 range overflow
@@ -212,9 +224,9 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
         R_ += Kerr * (R_ + FPK_L(2.0) * a_) + FPK_TINY;                                   \
         FPK_R R0_ = R_;                                                        \
         int empty_ = 0;                                                         \
-        if (S->use_gcd && g[(i) + 1].s != 0 && (g[(i) + 1].s >> 64) == 0) {     \
+        if (S->use_gcd && g[(i) + 1] != 0 && (g[(i) + 1] >> 64) == 0) {     \
             FPK_R am_ = R_ + FPK_L(2.0) * a_;                                         \
-            FPK_R Rg2_ = (FPK_R)S->Q * (FPK_R)(uint64_t)g[(i) + 1].s         \
+            FPK_R Rg2_ = (FPK_R)S->Q * (FPK_R)(uint64_t)g[(i) + 1]         \
                         - (qmax_d - rem[(i)]) + slack + err[(i)]                \
                         + Kerr * (am_ * am_ + rem[(i)]);                        \
             if (Rg2_ < FPK_L(0.0)) {                                                   \
@@ -251,16 +263,16 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
                 if (b_ < hi_) hi_ = b_ < lo_ ? lo_ - 1 : (int64_t)b_;           \
             }                                                                   \
         }                                                                       \
-        lmode[(i)] = 0;                                                         \
-        if (!empty_ && S->use_gcd && clist && hi_ - lo_ + 1 >= FPK_SPARSE_MIN_W \
+        if (FPK_SEARCH_SPARSE) lmode[(i)] = 0;                                  \
+        if (FPK_SEARCH_SPARSE && !empty_ && S->use_gcd && clist && hi_ - lo_ + 1 >= FPK_SPARSE_MIN_W \
                 && S->level_start[(i) + 1] - S->level_start[(i)] == 1           \
-                && g[(i) + 1].s != 0 && g[(i) + 1].s <= FPK_SPARSE_MAX_G) {     \
+                && g[(i) + 1] != 0 && g[(i) + 1] <= FPK_SPARSE_MAX_G) {     \
             int r_ = S->order[S->level_start[(i)]];                             \
             FPK_R am_ = R0_ + FPK_L(2.0) * a_;                                        \
             FPK_R mg_ = slack + err[(i)] + Kerr * (am_ * am_ + rem[(i)]);      \
             FPK_R base_ = qmax_d - rem[(i)];                                   \
             int n_ = FPK_N(fpk_sparse_candidates)(                                     \
-                (uint64_t)g[(i) + 1].s, S->Hs[r_ * dim + (i)], pre_s[r_], lo_, hi_, \
+                (uint64_t)g[(i) + 1], S->Hs[r_ * dim + (i)], pre_s[r_], lo_, hi_, \
                 off[(i)], S->Uinv[(i)], base_, mg_, S->Q,                       \
                 FPK_N(fpk_need)(base_ - mg_, S->Q, S->strict), Kerr, a_,               \
                 &clist[(size_t)(i) * FPK_SPARSE_CAP]);                          \
@@ -272,15 +284,29 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
         if ((i) >= dim - n_prefix) {                                            \
             int32_t pv_ = prefix[(i) - (dim - n_prefix)];                                \
             int ok_ = 0;                                                        \
-            if (lmode[(i)]) {                                                   \
+            if (FPK_SEARCH_SPARSE && lmode[(i)]) {                              \
                 for (int t_ = 0; t_ < lcnt[(i)]; ++t_)                          \
                     if (clist[(size_t)(i) * FPK_SPARSE_CAP + t_] == pv_) { ok_ = 1; break; } \
             } else {                                                            \
                 ok_ = (lo_ <= pv_ && pv_ <= hi_);                               \
             }                                                                   \
-            lmode[(i)] = 0;                                                     \
+            if (FPK_SEARCH_SPARSE) lmode[(i)] = 0;                              \
             cur[(i)] = pv_;                                                     \
             hi[(i)] = ok_ ? pv_ : (int64_t)pv_ - 1;                             \
+        }                                                                       \
+        lres[(i)] = 0;                                                          \
+        if (S->use_gcd && !(FPK_SEARCH_SPARSE && lmode[(i)]) && hi[(i)] - cur[(i)] + 1 >= FPK_RES_MIN_W \
+                && g[(i) + 1] != 0 && (g[(i) + 1] >> 63) == 0) {             \
+            const uint64_t G_ = (uint64_t)g[(i) + 1];                         \
+            for (int k_ = S->level_start[(i)]; k_ < S->level_start[(i) + 1]; ++k_) { \
+                int r_ = S->order[k_];                                          \
+                fpk_i128 x_ = (pre_s[r_] + (fpk_i128)S->Hs[r_ * dim + (i)] * cur[(i)]) % (fpk_i128)G_; \
+                fpk_i128 h_ = (fpk_i128)S->Hs[r_ * dim + (i)] % (fpk_i128)G_;   \
+                rres[r_]  = (uint64_t)(x_ < 0 ? x_ + (fpk_i128)G_ : x_);        \
+                rstep[r_] = (uint64_t)(h_ < 0 ? h_ + (fpk_i128)G_ : h_);        \
+            }                                                                   \
+            gpar[(i)] = G_;                                                     \
+            lres[(i)] = 1;                                                      \
         }                                                                       \
         if (cnt) cnt->n_nodes++;                                                \
     } while (0)
@@ -289,18 +315,24 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
     rem[i] = qmax_d;
     err[i] = Kerr * qmax_d;
     m0p[i] = 0;
-    g[dim].big = 0;
-    g[dim].s = 0;
+    g[dim] = 0;
     FPK_ENTER(i);
 
     while (i < dim) {
         int32_t v;
-        if (lmode[i]) {
+        if (FPK_SEARCH_SPARSE && lmode[i]) {
             if (lidx[i] == lcnt[i]) { c[i] = 0; i++; continue; }
             v = clist[(size_t)i * FPK_SPARSE_CAP + lidx[i]++];
         } else {
             if (cur[i] > hi[i]) { c[i] = 0; i++; continue; }
             v = (int32_t)cur[i]++;
+            if (lres[i])                                // residues at v; advance
+                for (int k = S->level_start[i]; k < S->level_start[i + 1]; ++k) {
+                    int r = S->order[k];
+                    rcur[r] = rres[r];
+                    uint64_t t = rres[r] + rstep[r];    // < 2 G < 2^64
+                    rres[r] = t >= gpar[i] ? t - gpar[i] : t;
+                }
         }
         c[i] = v;
         if (cnt) cnt->n_cand++;
@@ -309,20 +341,24 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
         FPK_R nr = rem[i] - x * x;
         FPK_R ai = FPK_FABS(U[i * dim + i] * v) + aoff[i];
         FPK_R en = err[i] + Kerr * (ai * ai + rem[i]);
+        if (en > S->max_err) return -11;
         if (nr < -(slack + en)) continue;
 
         fpk_i128 m0 = m0p[i] + (linvec ? (fpk_i128)linvec[i] * v : 0);
         if (i == S->m0_level && m0 < S->linmin) continue;
 
         if (S->use_gcd) {
-            fpk_gval gn = g[i + 1];
+            fpk_gval gn;
+            gn.big = 0;
+            gn.s = g[i + 1];
             FPK_R q_lb = (qmax_d - nr) - (slack + en);
             uint64_t need = FPK_N(fpk_need)(q_lb, S->Q, S->strict);
             int pruned = 0;
             for (int k = S->level_start[i]; k < S->level_start[i + 1]; ++k) {
                 if (FPK_N(fpk_gcd_fails)(&gn, S->Q, q_lb, S->strict)) { pruned = 1; break; }
                 int r = S->order[k];
-                fpk_u128 a = fpk_abs128(pre_s[r] + (fpk_i128)S->Hs[r * dim + i] * v);
+                fpk_u128 a = lres[i] ? (fpk_u128)rcur[r]
+                                     : fpk_abs128(pre_s[r] + (fpk_i128)S->Hs[r * dim + i] * v);
                 if ((gn.s >> 64) == 0 && (a >> 64) == 0 && (gn.s | a) != 0) {
                     uint64_t gg = fpk_gcd64_ge((uint64_t)gn.s, (uint64_t)a, need);
                     if (!gg) { pruned = 1; break; }
@@ -332,7 +368,7 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
                 }
             }
             if (pruned || FPK_N(fpk_gcd_fails)(&gn, S->Q, q_lb, S->strict)) continue;
-            g[i] = gn;
+            g[i] = gn.s;
         }
 
         if (stop_depth > 0 && i == dim - stop_depth) {      // emit the prefix
@@ -356,8 +392,8 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
             continue;
         }
         if (q > S->qmax) continue;
-        if (S->use_gcd && g[0].s != 0 && (g[0].s >> 64) == 0) {
-            fpk_i128 Qg = (fpk_i128)S->Q * (fpk_i128)(uint64_t)g[0].s;
+        if (S->use_gcd && g[0] != 0 && (g[0] >> 64) == 0) {
+            fpk_i128 Qg = (fpk_i128)S->Q * (fpk_i128)(uint64_t)g[0];
             if (S->strict ? (Qg <= q) : (Qg < q)) continue;
         }
         if (emit(ctx, 0, c, dim, (int64_t)q)) return -2;

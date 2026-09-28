@@ -318,6 +318,75 @@ static int fpk_factor_exact(const int64_t *mat, int dim, double *U,
     return status;
 }
 
+#ifndef FPK_STATS   /* (statistics builds use the general loop only) */
+// Fast path (the common case: every H row fits int64): the shared search of
+// fpk_common.h, in float when qmax < 2^22 (exact; see fpk_search_impl.h) --
+// same visiting order and output as the general loop in fpk_enumerate, ~25%
+// faster with float plus residue-mode gcds. Returns a kernel status, or 1 if
+// a leaf's exact q needs GMP (the caller then reruns the general loop).
+typedef struct { fpk_output *out; long max_N_out; int rc, need_gmp; } fpk_fast_ctx;
+
+static int fpk_fast_emit(void *vc, int kind, const int32_t *c, int n, int64_t q)
+{
+    fpk_fast_ctx *X = (fpk_fast_ctx *)vc;
+    if (kind == 2) { X->need_gmp = 1; return 1; }
+    int rc = fpk_push(X->out, c, n, q, X->max_N_out);
+    if (rc) { X->rc = rc; return 1; }
+    return 0;
+}
+
+static int fpk_enumerate_fast(const fpk_problem *P, fpk_output *out, const double *U,
+                              const double *Uinv, const double *m0N, const double *m0V,
+                              const double *m0Va, int m0_level, const int64_t *Hs,
+                              const int *level_start, const int *order, int32_t *clist)
+{
+    const int dim = P->dim;
+    fpk_fast_ctx X = {out, P->max_N_out, 0, 0};
+    fpk_counts cnt = {0, 0, 0};
+    int st = 0;
+    if (P->qmax < (1LL << 22)) {
+        size_t nf = 3 * (size_t)dim * dim + 2 * (size_t)dim;
+        float *f = malloc(nf * sizeof(float));
+        if (!f) return -7;
+        float *Uf = f, *Vf = f + dim * dim, *Vaf = f + 2 * dim * dim;
+        float *Uinvf = f + 3 * dim * dim, *Nf = Uinvf + dim;
+        for (int k = 0; k < dim * dim; ++k) {
+            Uf[k] = (float)U[k];
+            Vf[k] = m0V ? (float)m0V[k] : 0.0f;
+            Vaf[k] = m0Va ? (float)m0Va[k] : 0.0f;
+        }
+        for (int i = 0; i < dim; ++i) {
+            Uinvf[i] = 1.0f / Uf[i * dim + i];
+            Nf[i] = m0N ? (float)m0N[i] : 0.0f;
+        }
+        fpk_prep_f S = {dim, P->strict, P->nrows > 0, m0_level, P->Q, P->qmax, P->linmin,
+                        (float)P->qmax, 0.0f, 0.0f, 0.0f, Uf, Uinvf, Nf, Vf, Vaf,
+                        P->linvec, P->mat, Hs, level_start, order};
+        fpk_search_consts_f(dim, P->qmax, P->eps, &S.slack, &S.Kerr, &S.max_err);
+        st = fpk_search_f(&S, NULL, 0, 0, clist, fpk_fast_emit, &X, &cnt);
+        free(f);
+        if (st == -11) {                     // float too narrow (heavy cancellation)
+            out->n = 0;
+            X.rc = X.need_gmp = 0;
+            cnt.n_nodes = cnt.n_cand = cnt.n_leaf = 0;
+        }
+    }
+    if (P->qmax >= (1LL << 22) || st == -11) {
+        fpk_prep S = {dim, P->strict, P->nrows > 0, m0_level, P->Q, P->qmax, P->linmin,
+                      (double)P->qmax, 0.0, 0.0, 0.0, U, Uinv, m0N, m0V, m0Va,
+                      P->linvec, P->mat, Hs, level_start, order};
+        fpk_search_consts(dim, P->qmax, P->eps, &S.slack, &S.Kerr, &S.max_err);
+        st = fpk_search(&S, NULL, 0, 0, clist, fpk_fast_emit, &X, &cnt);
+    }
+    out->n_nodes = cnt.n_nodes;
+    out->n_cand  = cnt.n_cand;
+    out->n_leaf  = cnt.n_leaf;
+    if (X.need_gmp) return 1;
+    if (st == -2) return X.rc ? X.rc : -2;
+    return st;
+}
+#endif
+
 int fpk_enumerate(const fpk_problem *P, fpk_output *out)
 {
     const int dim = P->dim;
@@ -451,6 +520,18 @@ int fpk_enumerate(const fpk_problem *P, fpk_output *out)
         for (int l = 0; l <= dim; ++l) mpz_init(gbig[l]);
         n_mpz_levels = dim + 1;
     }
+
+#ifndef FPK_STATS
+    if (!have_big && dim <= FPK_SEARCH_MAXD) {
+        status = fpk_enumerate_fast(P, out, U, Uinv, m0N, m0V, m0Va, m0_level,
+                                    Hs, level_start, order, clist);
+        if (status != 1) goto end;
+        // an exact q needed GMP: start over with the general loop
+        out->n = 0;
+        out->n_nodes = out->n_cand = out->n_leaf = 0;
+        status = 0;
+    }
+#endif
 
     // Prepare level i (c[i+1:] is set): center offset, per-row prefixes and
     // the candidate range. g[i+1], rem[i], m0p[i] are set by the caller.

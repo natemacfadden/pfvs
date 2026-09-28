@@ -26,7 +26,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#if defined(__CUDACC__)
+#if defined(__CUDACC__) || defined(__HIPCC__) || defined(__HIP__)
 #define FPK_HD __host__ __device__
 #else
 #define FPK_HD
@@ -338,6 +338,17 @@ FPK_HD static inline int fpk_factor_fast(const int64_t *mat, int dim, double *U,
 #ifndef FPK_SEARCH_MAXD
 #define FPK_SEARCH_MAXD 256
 #endif
+// residue mode (see fpk_search_impl.h) is set up per node at an int128
+// modulo per row: only worth it with at least this many candidates (1 on
+// CPUs; the GPU build turns it off -- there the search is latency-bound)
+// sparse candidate lists (fpk_sparse_candidates) in fpk_search: 0 compiles
+// them out (the GPU build, which passes no list buffer)
+#ifndef FPK_SEARCH_SPARSE
+#define FPK_SEARCH_SPARSE 1
+#endif
+#ifndef FPK_RES_MIN_W
+#define FPK_RES_MIN_W 1
+#endif
 
 // emit(ctx, kind, c, n, q): kind 0 = point c[0:n] with exact q; kind 1 =
 // prefix (the top n coordinates, c[dim-n:]); kind 2 = leaf c[0:n] still to be
@@ -366,7 +377,7 @@ typedef struct {
 #define FPK_FLOOR        floor
 #define FPK_FMAX         fmax
 #include "fpk_search_impl.h"
-#if defined(__CUDACC__) || defined(FPK_SEARCH_FLOAT)
+#if 1   /* float instantiation: GPUs, and fp_kernel.h's CPU fast path */
 #define FPK_R            float
 #define FPK_N(name)      name##_f
 #define FPK_L(x)         ((float)(x))
