@@ -3,7 +3,7 @@
 
 Tools for computing/verifying perturbatively flat vacua (PFVs). For some references on PFVs, see
 - [Vacua with Small Flux Superpotential](https://arxiv.org/abs/1912.10047) by Mehmet Demirtas, Manki Kim, Liam McAllister, Jakob Moritz
-- [Small Cosmological Constants in String Theory](https://arxiv.org/abs/1912.10047) by Mehmet Demirtas, Manki Kim, Liam McAllister, Jakob Moritz, Andres Rios-Tascon, and
+- [Small Cosmological Constants in String Theory](https://arxiv.org/abs/2107.09064) by Mehmet Demirtas, Manki Kim, Liam McAllister, Jakob Moritz, Andres Rios-Tascon, and
 - [Candidate de Sitter Vacua](https://arxiv.org/abs/2406.13751) by Liam McAllister, Jakob Moritz, Richard Nally, Andreas Schachner,
 
 as well as their references. This repo focuses solely on PFVs as a combinatorial problem abstracted from the physics. In this light, there are also unpublished notes by Richard Nally/Mehmet Demirtas that much of this builds off of. The relevant aspects of such notes will be briefly restated below.
@@ -61,6 +61,8 @@ Zp algorithms require special care with $p_{denom}$. Focus on ZpM and call $0\le
 This gets to the point of efficiency (no careful analysis is done here). First, box-style algorithms are efficient at low $h^{1,1}$ but scale poorly with $h^{1,1}$. This is potentially due to the increasing narrowness of the Kähler cone $\\{x : Hx\geq 0\\}$ as dimension increases. In contrast, Zp-style algorithms typically scale better with $h^{1,1}$ than box. ZpM is particularly efficient, arguably running up to $h^{1,1}=60$. Unfortunately, the base ZpK ellipsoid is typically too large for ZpK to be usable.
 
 ## Installation
+
+Requires Python 3.10+ on Linux or macOS.
 
 ### Using conda (recommended):
 ```bash
@@ -131,32 +133,26 @@ Both take the same ellipsoid (Zp-style) approach and return identical results; t
 - **Batched.** `coniZpM` runs the lattice setup and the kernel for a whole chunk of p-vectors in one C call, then post-processes all lattice points at once.
 - **Built on a cut-aware basis.** The lattice basis is chosen so that the $M_0\ge M_{0,\min}$ cut is decided at the first coordinate searched, and it is LLL-reduced with respect to the ellipsoid itself. This makes searches ~4–5× smaller at high $h^{1,1}$ and $p_{denom}$.
 
-End-to-end `coniZpM` speedup over the previous version. Each cell covers 2–3 dataset geometries, with ≤200 p-vectors per geometry. Old and new ran on identical inputs, pinned to the same core, and found identical PFV sets:
+End-to-end `coniZpM` speedup over the previous version. Each cell covers 2–3 dataset geometries, with ≤200 p-vectors per geometry. Old and new ran on identical inputs, pinned to the same core, and found identical PFV sets, apart from PFVs with $\gcd(K_{1:})\ge2$ that only the new code finds (measured 2026-09-28):
 
 | $h^{1,1}$ \ $p_{denom}$ | 20 | 50 | 150 | 400 |
 |---:|---:|---:|---:|---:|
-| 4  | 34.8× | 29.3× | 24.8× | 16.9× |
-| 5  | 20.3× | 20.0× | 15.1× | 11.8× |
-| 6  | 14.0× | 12.0× | 8.3×  | 5.2×  |
-| 7  | 9.8×  | 9.8×  | 8.5×  | 6.3×  |
-| 8  | 8.4×  | 8.3×  | 6.3×  | 5.0×  |
-| 9  | 10.2× | 12.4× | 10.4× | 8.8×  |
-| 10 | 6.6×  | 11.5× | 14.0× | 12.2× |
-| 11 | 4.8×  | 7.3×  | 8.7×  | 7.9×  |
+| 4  | 27.6× | 24.6× | 18.5× | 13.2× |
+| 5  | 17.5× | 17.2× | 13.6× | 11.7× |
+| 6  | 11.0× | 10.3× | 8.0×  | 5.2×  |
+| 7  | 8.9×  | 9.2×  | 8.4×  | 6.6×  |
+| 8  | 7.8×  | 8.3×  | 6.5×  | 5.1×  |
+| 9  | 10.6× | 13.2× | 11.3× | 9.0×  |
+| 10 | 8.1×  | 13.6× | 15.6× | 12.6× |
+| 11 | 7.6×  | 10.7× | 10.4× | 8.3×  |
 
 - **Low $h^{1,1}$.** The old code's time was mostly per-p overhead in Python/flint, which is now gone.
-- **High $h^{1,1}$.** The gain comes from the smaller searches. For example, $h^{1,1}=11$ at $p_{denom}=400$ went from 7.0 to 0.9 ms per p-vector.
-- **Whole dataset.** The full [coni-PFV dataset](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) covers 18,253 geometries and 8.6M p-vectors at $|p|_\infty\le5$ and $p_{denom}=150$. All 33,376 of its PFVs are found, none missing. Because $K_{1:}$ is no longer assumed primitive (automatic Kperp handling), 820 further PFVs are found as well; each has $\gcd(K_{1:})\ge2$ and passes `PFV.check_all`. The dataset predates that change. The run takes 3,564 CPU-seconds, about 3.5 minutes on 23 cores.
+- **High $h^{1,1}$.** The gain comes from the smaller searches. For example, $h^{1,1}=11$ at $p_{denom}=400$ went from 7.0 to 0.84 ms per p-vector.
+- **Whole dataset.** The full [coni-PFV dataset](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) covers 18,253 geometries and 8.6M p-vectors at $|p|_\infty\le5$ and $p_{denom}=150$. All 33,376 of its PFVs are found, none missing. Because $K_{1:}$ is no longer assumed primitive (automatic Kperp handling), 820 further PFVs are found as well; each has $\gcd(K_{1:})\ge2$ and passes `PFV.check_all`. The dataset predates that change. The run takes 3,093 CPU-seconds, about 3 minutes on 23 cores.
 
-**On a GPU.** The same pipeline on an RTX 5090 does the whole dataset run above in about 10 s of device time (8.6M p-vectors, 1.1 µs each), with exactly the CPU's lattice points. Against all 22 cores of the CPU box, the GPU is ~3-6x faster at $p_{denom}\le10$ (where the per-p lattice setup dominates) and ~10-20x at $p_{denom}=200$-$400$ for $h^{1,1}\ge 9$ (where the search dominates). An RX 6700 XT runs at about 1/6, and a Radeon 8060S (integrated) about 1/9, of the RTX 5090.
+**On a GPU.** The same pipeline on an RTX 5090 does the whole dataset run above in 9.8 s of device time (8.6M p-vectors, 1.14 µs each; 15 s for the whole call), with exactly the CPU's lattice points. Against all 22 cores of the CPU box, the GPU is ~3-6x faster at $p_{denom}\le10$ (where the per-p lattice setup dominates) and ~10-20x at $p_{denom}=200$-$400$ for $h^{1,1}\ge 9$ (where the search dominates). An RX 6700 XT runs at about 1/6, and a Radeon 8060S (integrated) about 1/9, of the RTX 5090.
 
-**Behaviour changes to be aware of:**
-
-- **PFV order.** Within each p-vector, PFVs are now listed in a canonical order (by $M$, then $K$), independent of the lattice basis, so the CPU and GPU paths return identical arrays. This differs from the previous (basis-dependent) order; the PFVs themselves are the same.
-- **Errors instead of skipped p-vectors.** A p-vector that cannot be searched exactly and completely now raises `pfvs.IncompleteSearchError`; it is never silently skipped or truncated. Examples: more than `max_N_pfvs` outputs, coordinates beyond int32, or a non-positive-definite ellipsoid.
-- **`ZpM` defaults to the C kernel** (`use_c_kernel=True`). `ZpK` also uses the exact C kernel now, with its rational ellipsoid scaled to an integer one.
-- **Deprecated parameters.** `extra_checks` and `low_level_parallelism` no longer have any effect and emit a `FutureWarning` when set.
-- **Exact singularity test.** PFVs are filtered on $\det N\ne0$ exactly. A float SVD is only a prefilter, and every "singular" verdict is confirmed by an exact rank. Previously a float test with `rtol=1e-12` could drop a valid PFV whose $N$ was badly conditioned.
+Behaviour changes relative to the previous version (PFV order, errors instead of skipped p-vectors, defaults) are listed in [CHANGELOG.md](CHANGELOG.md).
 
 The table below compares the *original* C kernel with dSv1, measured before these changes. It is kept for the box-vs-Fincke–Pohst comparison, which the current pipeline only improves on. Measured on the $h^{1,1}=7$ "Manwe" example (identical inputs, identical output, same cuts), on one CPU (Intel Core Ultra 7 270K, 24 cores, 30 GB), three runs each, reported as mean $\pm$ std:
 
@@ -174,14 +170,9 @@ The table below compares the *original* C kernel with dSv1, measured before thes
 | 60  | 0.049 $\pm$ 0.001 | out of memory   | --       | --      | 120 GB  |
 | 100 | 0.094 $\pm$ 0.001 | out of memory   | --       | --      | 659 GB  |
 
-- The new kernel's working set is just its output and the recursion stack, below RSS resolution here (at most two output vectors), so its speedup keeps growing with dilation while dSv1 follows its box. The "box (est.)" column is $3\times$ the candidate array $(Q\cdot p_{denom})^{h^{1,1}/2}$: the vectorized ellipsoid test holds three same-size arrays at once (the integer coordinate grid, the float `candidates @ Zp` product, and their elementwise product) before the sum reduces them. Measured memory matches this estimate from $p_{denom}\gtrsim 5$; below that the box is smaller than page/pool granularity and RSS reads under it.
-- By $p_{denom}=30$ the box is 13.4 GB (measured). Past that the harness skips dSv1 rather than risk exhausting the 30 GB machine: the budget guard triggers once the estimated box crosses its threshold, which is why those rows show only "box (est.)". The C kernel keeps running at flat cost through $p_{denom}=100$ (0.09 ms), where dSv1's box would need hundreds of GB.
-
-Notes:
-
-- Results are three runs on one machine, reported as mean $\pm$ std. dSv1 timings under about 10 ms have larger relative spread from system noise on short measurements (for example $p_{denom}=5$); the larger-dilation figures are tight.
-- Memory is peak resident set above the run's baseline (Linux VmHWM, reset per measurement so a fork-inherited high-water mark cannot leak in). The C kernel also reserves an untouched `max_N_out` output buffer that never becomes resident and is not counted.
-- The "box (est.)" column is `predict_box_gb`: $3\times$ the candidate-box footprint $(Q\cdot p_{denom})^{h^{1,1}/2}$. The harness's budget guard uses it to skip runs that would exhaust memory, so the high-dilation rows read "out of memory" rather than a measured number.
+- The new kernel's working set is just its output and the recursion stack (below RSS resolution here), so its speedup keeps growing with dilation while dSv1 follows its box.
+- "box (est.)" is $3\times$ the candidate array $(Q\cdot p_{denom})^{h^{1,1}/2}$ (the vectorized ellipsoid test holds three such arrays at once); measured memory matches it from $p_{denom}\gtrsim 5$. Past $p_{denom}=30$ (13.4 GB measured) the harness skips dSv1 rather than exhaust the 30 GB machine, hence "out of memory".
+- Memory is peak resident set above the run's baseline (Linux VmHWM, reset per measurement). dSv1 timings under ~10 ms are noisier (e.g. $p_{denom}=5$).
 - The dSv1 baseline is a faithful reimplementation: verbatim `points_in_ellipsoid` plus a reimplemented metric-LLL, giving identical output and box memory, with `maximum_box_size` set to infinity (else it truncates) and `fluxbound=2`.
 - Both methods are timed on enumeration only: the C kernel receives its factorization ($U$) precomputed, so the baseline's metric-LLL is likewise hoisted out of the timed region (reported separately as `prep_lll_s`).
 
@@ -221,7 +212,7 @@ pfvs/
 
 ## Correctness
 
-The kernel's output is specified exactly (see [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md)). All accept/reject decisions are exact integer arithmetic, and floating point is only used for pruning, widened by a rigorous error bound. The test suite checks this at three levels:
+The kernel's output is specified exactly (see [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md)). All accept/reject decisions are exact integer arithmetic, and floating point is only used for pruning, widened by a rigorous error bound. The test suite checks this:
 
 - **Kernel vs. an exact oracle.** [`tests/oracle.py`](tests/oracle.py) is a rational-arithmetic Fincke–Pohst with no floating point. The tests compare the kernel's output against it point for point, in order, on 219 real instances from the dataset below (some with $H$ entries beyond $2^{100}$) and on adversarial synthetic ones: non-echelon or rank-deficient $H$, boundary points, and ill-conditioned ellipsoids with huge entries.
 - **End to end vs. the published dataset.** For 71 stored geometries ($h^{1,1}=3,\dots,11$), `coniZpM` runs over every p-vector with $|p|_\infty\le B$ at dilation $D$, with no p-vector skipped. Among its output, the PFVs with primitive $K_{1:}$ must equal *exactly* those in [calabi-yau-coni-pfvs](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs); the dataset predates automatic Kperp handling. Every other PFV found must have $\gcd(K_{1:})\ge2$ and pass `PFV.check_all`. The fixtures are built by [`tests/data/build_fixtures.py`](tests/data/build_fixtures.py) from a pinned dataset revision.
@@ -231,6 +222,10 @@ The kernel's output is specified exactly (see [`pfvs/fp_kernel/README.md`](pfvs/
 - **Exact helpers.** The singularity test keeps ill-conditioned nonsingular $N$. The int128 factorization matches GMP on 200k random matrices (a C test run in CI).
 
 Run `pytest tests/` (add `-n auto` with `pytest-xdist` to parallelize).
+
+## Citing
+
+See [CITATION.cff](CITATION.cff) (GitHub's "Cite this repository"), and cite the papers above that introduced the method.
 
 ## License
 

@@ -12,7 +12,22 @@ First packaged release. Relative to the code used for arXiv:2406.13751 ("dSv1"):
   row-insertion HNF in int128 with a GMP fallback, incremental-Gram LLL, and a
   cut-aware basis (4-5x smaller searches).
 - Automatic handling of non-primitive K-perp; f/h fluxes for non-coni PFVs.
-- `ZpM` uses the C kernel by default.
+
+### Behaviour changes
+- PFV order: within each p-vector, PFVs are listed in a canonical order (by M,
+  then K), independent of the lattice basis, so the CPU and GPU paths return
+  identical arrays. The PFVs themselves are unchanged.
+- A p-vector that cannot be searched exactly and completely raises
+  `pfvs.IncompleteSearchError` (more than `max_N_pfvs` outputs, coordinates
+  beyond int32, a non-positive-definite ellipsoid); it used to be skipped or
+  truncated silently.
+- `ZpM` defaults to the C kernel (`use_c_kernel=True`); `ZpK` uses the exact C
+  kernel too, with its rational ellipsoid scaled to an integer one.
+- `extra_checks` and `low_level_parallelism` have no effect and emit a
+  `FutureWarning` when set.
+- PFVs are filtered on det N != 0 exactly: a float SVD only prefilters, and
+  every "singular" verdict is confirmed by an exact rank (a float test with
+  rtol=1e-12 could drop a valid, badly conditioned N).
 
 ### GPUs and clusters
 - Optional GPU backend for the batched coni pipeline, one source for NVIDIA
