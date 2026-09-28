@@ -83,6 +83,33 @@ For a slightly faster (~5%), machine-specific kernel, set `PFVS_NATIVE=1` (adds 
 PFVS_NATIVE=1 pip install -e .
 ```
 
+### GPU backend (optional; NVIDIA or AMD)
+`coniZpM` can run its lattice setup and search on a GPU, with results identical to the CPU path (same arrays, same order). The backend is a small shared library built from `pfvs/fp_kernel/cuda/` by `nvcc` (NVIDIA, CUDA 11.5+) or `hipcc` (AMD, ROCm 6+). By default (`PFVS_GPU=auto`) the build uses whichever toolchain it finds and never fails the install over it:
+```bash
+pip install -e .                    # + GPU backend if nvcc/hipcc is found
+PFVS_GPU=cuda pip install -e .      # require the NVIDIA backend
+PFVS_GPU=hip  pip install -e .      # require the AMD backend
+```
+The GPUs of the build machine are targeted (`native`); set `PFVS_CUDA_ARCH` / `PFVS_HIP_ARCH` (e.g. `sm_80,sm_90` or `gfx90a,gfx1100`) to build for others. A pip-installed ROCm SDK is found automatically, or point `PFVS_ROCM_PATH` at a ROCm tree; `NVCC_CCBIN` selects nvcc's host compiler. See `setup.py` for the rest.
+
+Then `coniZpM(..., device="auto")` (the default) uses the GPU for batches of 256+ p-vectors, `device="gpu"` requires it and `device="cpu"` avoids it; `PFVS_DEVICE` overrides `"auto"`. `pfvs.gpu.available()` reports whether a device is usable, and `pfvs.gpu.coni_batch_multi` runs many geometries in one device call.
+
+## Running on many machines
+
+`pfvs.distributed` spreads coni-PFV searches over any number of machines and devices -- NVIDIA and AMD GPUs and CPUs, Linux or macOS. A coordinator splits each geometry's p-box into units; workers lease units, search them, and send back PFVs. Units are checkpointed as they arrive (a restarted coordinator resumes), units of vanished workers are reissued, oversized units are split on the fly, and slow workers get backup copies near the end.
+```python
+from pfvs import distributed
+jobs = distributed.make_jobs(datas, B=..., D=..., n_p=...)   # one job per CYData
+pickle.dump(jobs, open("jobs.pkl", "wb"))
+```
+```bash
+export PFVS_AUTHKEY=...                                          # same secret everywhere
+python -m pfvs.distributed serve jobs.pkl out/ --address 0.0.0.0:5055    # coordinator
+python -m pfvs.distributed work HOST:5055 --device gpu           # a worker per GPU of this machine
+python -m pfvs.distributed work HOST:5055 --device cpu --procs 16
+```
+`distributed.load_results("out/")` then gives each job's PFVs (K, M) and their p-vectors. The connection is authenticated, but it exchanges pickles: use it on a trusted network only.
+
 ## Demos
 
 Example notebooks are in `demo_notebooks/`; `manwe_demo.ipynb` is the self-contained starting point -- it finds the perturbatively-flat vacua of the "Manwe" geometry from scratch.
@@ -116,9 +143,11 @@ End-to-end `coniZpM` speedup over the previous version. Each cell covers 2–3 d
 - **High $h^{1,1}$.** The gain comes from the smaller searches. For example, $h^{1,1}=11$ at $p_{denom}=400$ went from 7.0 to 0.9 ms per p-vector.
 - **Whole dataset.** The full [coni-PFV dataset](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) covers 18,253 geometries and 8.6M p-vectors at $|p|_\infty\le5$ and $p_{denom}=150$. All 33,376 of its PFVs are found, none missing. Because $K_{1:}$ is no longer assumed primitive (automatic Kperp handling), 820 further PFVs are found as well; each has $\gcd(K_{1:})\ge2$ and passes `PFV.check_all`. The dataset predates that change. The run takes 3,564 CPU-seconds, about 3.5 minutes on 23 cores.
 
+**On a GPU.** The same pipeline on an RTX 5090 does the whole dataset run above in about 10 s of device time (8.6M p-vectors, 1.1 µs each), with exactly the CPU's lattice points. Against all 22 cores of the CPU box, the GPU is ~3-6x faster at $p_{denom}\le10$ (where the per-p lattice setup dominates) and ~10-20x at $p_{denom}=200$-$400$ for $h^{1,1}\ge 9$ (where the search dominates). An RX 6700 XT runs at about 1/6, and a Radeon 8060S (integrated) about 1/9, of the RTX 5090.
+
 **Behaviour changes to be aware of:**
 
-- **PFV order.** The C lattice setup chooses a different (equally valid) basis. `coniZpM`/`ZpM` therefore find the same PFVs but may list them in a different order. Pass `use_c_lattice=False` to reproduce the previous order exactly.
+- **PFV order.** Within each p-vector, PFVs are now listed in a canonical order (by $M$, then $K$), independent of the lattice basis, so the CPU and GPU paths return identical arrays. This differs from the previous (basis-dependent) order; the PFVs themselves are the same.
 - **Errors instead of skipped p-vectors.** A p-vector that cannot be searched exactly and completely now raises `pfvs.IncompleteSearchError`; it is never silently skipped or truncated. Examples: more than `max_N_pfvs` outputs, coordinates beyond int32, or a non-positive-definite ellipsoid.
 - **`ZpM` defaults to the C kernel** (`use_c_kernel=True`). `ZpK` also uses the exact C kernel now, with its rational ellipsoid scaled to an integer one.
 - **Deprecated parameters.** `extra_checks` and `low_level_parallelism` no longer have any effect and emit a `FutureWarning` when set.
@@ -162,12 +191,15 @@ python benchmarks/benchmark_dSv1_vs_coniZpM.py
 pfvs/
 ├── pfvs/
 │   ├── fp_kernel/         # C kernel* (fp_kernel.h) + C lattice setup (pfv_lattice.h) + Cython binding
+│   │   └── cuda/          # GPU backend (CUDA/HIP): pipeline + C API (pfvs_gpu.cu)
 │   ├── conipfv_kernel/    # re-exports fp_kernel.conipfv_kernel (coni-PFV enumeration)
 │   ├── pfv_kernel/        # re-exports fp_kernel.pfv_kernel (non-coni PFV enumeration)
 │   ├── coniZp.py          # coniZpM: coni-PFV generation pipeline
 │   ├── Zp.py              # ZpM / ZpK: PFV generation pipeline
 │   ├── cydata.py          # CYData: CY-data holder
 │   ├── pfv.py             # PFV class + diagnostics
+│   ├── gpu.py             # GPU backend loader (ctypes)
+│   ├── distributed.py     # multi-machine coordinator/workers
 │   ├── pvectors.py        # p-vector generation
 │   └── util.py            # shared helpers (+ njit kernels)
 ├── tests/                 # pytest suite, exact oracle (oracle.py), fixtures (data/)

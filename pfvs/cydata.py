@@ -89,7 +89,6 @@ class CYData:
         # ===================
         # store information on the conifold curve if it is set
         self._coni_curve = np.array(coni_curve)
-        type(self).coni_curve = property(lambda self: self._coni_curve.copy())
 
         # change of basis matrix to basis where coni_curve = (1,0,...,0)
         # --------------------------------------------------------------
@@ -112,7 +111,6 @@ class CYData:
                 "coni_cob is not a valid change of basis: "
                 "cob @ coni_curve must equal (1, 0, ..., 0)."
             )
-        type(self).cob = property(lambda self: self._cob.copy())
 
 
         # map kappa, c2, and H via this change of basis
@@ -125,9 +123,6 @@ class CYData:
         nonzero_mask = self._H_cob.any(axis=1)
         self._H_cob = self._H_cob[nonzero_mask]
 
-        type(self).kappa_cob = property(lambda self: self._kappa_cob.copy())
-        type(self).c2_cob    = property(lambda self: self._c2_cob.copy())
-        type(self).H_cob     = property(lambda self: self._H_cob.copy())
 
     # alternative constructor
     # -----------------------
@@ -197,6 +192,24 @@ class CYData:
 
     # getters
     # -------
+    # coni-basis data (coni contexts only). Plain class properties -- setting
+    # them on the class from __init__, as before, left objects unpickled in a
+    # fresh process (e.g. a worker) without them.
+    def _coni_attr(name, doc):
+        def get(self):
+            if not self._coni:
+                raise AttributeError(f"{name} is only defined for coni CYData")
+            return getattr(self, "_" + name).copy()
+        return property(get, doc=doc)
+
+    coni_curve = _coni_attr("coni_curve", "The conifold curve.")
+    cob        = _coni_attr("cob", "Change of basis taking coni_curve to (1, 0, ..., 0).")
+    kappa_cob  = _coni_attr("kappa_cob", "kappa in the coni basis, shape (h11, h11, h11).")
+    c2_cob     = _coni_attr("c2_cob", "c2 in the coni basis, shape (h11,).")
+    H_cob      = _coni_attr("H_cob", "Kahler cone hyperplanes in the coni basis, without "
+                                     "the coni coordinate (zero rows removed).")
+    del _coni_attr
+
     @property
     def vertices(self) -> ArrayLike | str:
         """Vertices of the associated polytope, or a string identifier."""
