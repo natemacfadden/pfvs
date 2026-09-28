@@ -85,7 +85,8 @@ def make_jobs(datas, B, D, Q=None, M0min=13, ids=None, n_p=None):
     *(list of dict)* The jobs.
     """
     n = len(datas)
-    per = lambda x: list(x) if isinstance(x, (list, tuple, np.ndarray)) else [x] * n
+    def per(x):
+        return list(x) if isinstance(x, (list, tuple, np.ndarray)) else [x] * n
     B, D, Q, M0min = per(B), per(D), per(Q), per(M0min)
     ids = list(ids) if ids is not None else list(range(n))
     n_p = per(n_p)

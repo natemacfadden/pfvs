@@ -280,11 +280,9 @@ def K_ellipsoid(p: ArrayLike,
     if data is None:
         if kappa is None or Mbasis is None:
             raise ValueError("If data is None, both kappa and Mbasis must be provided.")
-        h11 = kappa.shape[0]
     else:
         if kappa is not None or Mbasis is not None:
             raise ValueError("kappa and Mbasis must be None when data is provided.")
-        h11    = data.h11
         kappa  = data.kappa
         Mbasis = data.M_lattice()
 
@@ -634,7 +632,8 @@ def ZpM(
             all_Ks = np.vstack([all_Ks, Ks])
             all_Ms = np.vstack([all_Ms, Ms])
 
-        print(f"Finished job #{job_i}...",flush=True)
+        if verbosity > 0:
+            print(f"Finished job #{job_i}...", flush=True)
 
         return all_Ks, all_Ms
 
@@ -882,7 +881,8 @@ def ZpK(
             all_Ks = np.vstack([all_Ks, Ks])
             all_Ms = np.vstack([all_Ms, Ms])
 
-        print(f"Finished job #{job_i}...",flush=True)
+        if verbosity > 0:
+            print(f"Finished job #{job_i}...", flush=True)
 
         return all_Ks, all_Ms
 

@@ -908,7 +908,8 @@ def coniZpM(
                 Mv, Kv, rawQs, np.full(len(rawQs), ip), kappa, h11, Q, M0min,
                 verbosity))
 
-        print(f"Finished job #{job_i}...",flush=True)
+        if verbosity > 0:
+            print(f"Finished job #{job_i}...", flush=True)
 
         Ks   = np.vstack([pc[0] for pc in pieces] or [np.zeros((0, h11), dtype=np.int64)])
         Ms   = np.vstack([pc[1] for pc in pieces] or [np.zeros((0, h11), dtype=np.int64)])

@@ -521,7 +521,7 @@ def fp_iterative_njit(
         zeros     = True
         for i in range(dim):
             if linvec[i] == 0:
-                if zeros == False:
+                if not zeros:
                     raise ValueError("linvec is not sorted so 0s are first...")
                 num_zeros += 1
             else:

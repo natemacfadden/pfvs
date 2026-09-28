@@ -47,7 +47,7 @@ import numpy as np
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parent))
-from oracle import kernel_reference
+from oracle import kernel_reference  # noqa: E402 (needs the path above)
 
 REPO     = "natemacfadden/calabi-yau-coni-pfvs"
 REVISION = "63d2db7942df733e1c92845451f5557cbbd16e87"

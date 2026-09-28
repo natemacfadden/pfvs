@@ -26,6 +26,10 @@ import itertools
 import numpy as np
 
 from numpy.typing import ArrayLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import cytools
 
 # local imports
 from . import util
@@ -150,7 +154,7 @@ class CYData:
             CalabiYau.
         """
         try:
-            import cytools
+            import cytools  # noqa: F401 (only checks that it is installed)
         except ImportError as e:
             raise ImportError(
                 "cytools is required for reading data from a CalabiYau object..."

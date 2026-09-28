@@ -221,8 +221,8 @@ def geometry(repo, out):
         if sec == "6.1":
             k61 = np.zeros((5, 5, 5), dtype=int)
             for (a, b, c), v in KAPPA_61.items():
-                for i, j, l in set(itertools.permutations((a - 1, b - 1, c - 1))):
-                    k61[i, j, l] = v
+                for i, j, k in set(itertools.permutations((a - 1, b - 1, c - 1))):
+                    k61[i, j, k] = v
             assert np.array_equal(kappa, k61) and c2.tolist() == C2_61, "6.1 does not reproduce the paper"
         gvs = _gvs(cy)
         cap, eff, nz = _cones(cy, gvs)
@@ -255,12 +255,12 @@ def finalize(geom, out, max_dilation=200):
         p_s = p[1:] if coni else p
         Q = -int(np.dot(e["M"], e["K"]))
 
-        def run(ps, D):
+        def run(ps, D, coni=coni, data=data, Q=Q):
             if coni:
                 return coniZpM(data, ps, Q=Q, M0min=13, ellipsoid_dilation=D, n_jobs=-1, device="cpu")
             return ZpM(data, ps, Qmin=0, Qmax=Q, ellipsoid_dilation=D, n_jobs=-1)
 
-        def hit(res):
+        def hit(res, e=e):
             return any(np.array_equal(k, e["K"]) and np.array_equal(m, e["M"]) for k, m in zip(*res))
 
         e["min_dilation"] = next(D for D in range(1, max_dilation + 1) if hit(run(np.array([p_s]), D)))

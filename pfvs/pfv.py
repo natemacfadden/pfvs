@@ -20,6 +20,7 @@
 # -----------------------------------------------------------------------------
 
 # external imports
+import ast
 import flint
 import functools
 import math
@@ -29,6 +30,10 @@ import warnings
 
 from collections.abc import Generator
 from numpy.typing import ArrayLike
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import cytools
 
 # local imports
 from . import util, cydata, coniZp
@@ -163,15 +168,31 @@ class PFV():
         pfv : PFV
             The reconstructed PFV object.
         """
+        # parse the `name = literal` assignments (never executed: the
+        # `cy = Polytope(...)...` line is rebuilt from verts and heights)
+        ns = {}
+        for node in ast.parse(str_).body:
+            if not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)):
+                raise ValueError(f"not a PFV string: unexpected line {ast.unparse(node)!r}")
+            name = node.targets[0].id
+            if name == "cy":
+                continue
+            try:
+                ns[name] = ast.literal_eval(node.value)
+            except ValueError as e:
+                raise ValueError(f"not a PFV string: {name} is not a literal") from e
+        missing = {"verts", "heights", "K", "M"} - ns.keys()
+        if missing:
+            raise ValueError(f"not a PFV string: missing {sorted(missing)}")
+
         try:
             import cytools
         except ImportError as e:
             raise ImportError(
                 "cytools is required for reading data from a string object..."
             ) from e
-
-        ns = {}
-        exec(str_, {'Polytope':cytools.Polytope}, ns)
+        ns["cy"] = cytools.Polytope(ns["verts"]).triangulate(heights=ns["heights"]).cy()
 
         # construct the CYData
         # --------------------
@@ -261,7 +282,7 @@ class PFV():
         return self._cydata.heights
 
     @property
-    def cy(self) -> "CalabiYau":
+    def cy(self) -> "cytools.CalabiYau":
         """
         The CY object (requires cytools).
         """
@@ -541,7 +562,7 @@ class PFV():
             Maximum degree of GV invariants to compute.
         """
         try:
-            import cytools
+            import cytools  # noqa: F401 (only checks that it is installed)
         except ImportError as e:
             raise ImportError(
                 "cytools is required for automatic computation of GVs..."
@@ -570,11 +591,11 @@ class PFV():
             # not arraylike... maybe CYTools GV class?
             try:
                 val = val.coo
-            except Exception:
+            except Exception as e:
                 raise ValueError(
                     "Unknown GV format: expected a numeric array in coo "
                     "format, or a CYTools GV object with a .coo attribute."
-                )
+                ) from e
 
         # change the basis
         if self.coni:
@@ -813,7 +834,7 @@ class PFV():
         """
         # check if PFV has valid leading coefficients
         validQ = self.valid_coeff_ratio()
-        if validQ == False:
+        if validQ is False:
             return np.nan
         elif validQ is None:
             return np.nan
@@ -850,7 +871,7 @@ class PFV():
 
         # check if PFV has valid leading coefficients
         validQ = self.valid_coeff_ratio()
-        if validQ == False:
+        if validQ is False:
             return np.nan
         elif validQ is None:
             return np.nan
@@ -892,7 +913,7 @@ class PFV():
         gs = 1/np.imag(self.tau0)
 
         if gs < 0:
-            warnings.warn("Negative string coupling!")
+            warnings.warn("Negative string coupling!", stacklevel=2)
 
         return gs
 

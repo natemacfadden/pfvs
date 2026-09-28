@@ -18,8 +18,8 @@
 # -----------------------------------------------------------------------------
 # Description:  Optional GPU backend for the batched coni pipeline (lattice
 #               setup + search per p-vector), see fp_kernel/cuda/pfvs_gpu.cu.
-#               Built with PFVS_CUDA=1 (NVIDIA, nvcc) or PFVS_HIP=1 (AMD,
-#               hipcc); loaded via ctypes.
+#               Built with PFVS_GPU=cuda (NVIDIA, nvcc) or PFVS_GPU=hip (AMD,
+#               hipcc), or found automatically; loaded via ctypes.
 #               Results are exact and identical to the CPU path's.
 # -----------------------------------------------------------------------------
 
@@ -85,7 +85,8 @@ def _load():
 def available() -> bool:
     """
     **Description:**
-    Whether the CUDA backend is built and a CUDA device is present.
+    Whether the GPU backend is built and a GPU (of the kind it was built
+    for) is present.
 
     **Returns:**
     *(bool)* True if `coniZpM(..., device="gpu")` can run.
@@ -100,7 +101,7 @@ def unavailable_reason() -> str:
     if lib is None:
         return _lib_error
     if lib.pfg_device_count() == 0:
-        return "no CUDA device found"
+        return f"no {backend().upper()} device found"
     return ""
 
 
@@ -145,7 +146,7 @@ def coni_batch_multi(geoms, ps, pgeo, device=0, batch=0, verbose=False):
     - `ps` *(list/array of int arrays)*: The p-vectors, each of length h of
         its geometry, *with* the leading 0 (as `_coni_batch` takes them).
     - `pgeo` *(array of int)*: The geometry index of each p-vector.
-    - `device` *(int, optional)*: CUDA device ordinal.
+    - `device` *(int, optional)*: GPU device ordinal.
     - `batch` *(int, optional)*: p-vectors per device batch (0: default).
     - `verbose` *(bool, optional)*: Per-batch timings on stderr.
 

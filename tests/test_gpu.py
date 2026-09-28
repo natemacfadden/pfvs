@@ -69,7 +69,7 @@ def test_gpu_matches_cpu(g, dil):
 def test_multi_geometry_batch_matches_single():
     """One call over several geometries equals one call per geometry."""
     geoms, ps_all, pgeo, singles = [], [], [], []
-    for gi, g in enumerate(CASES[:6]):
+    for g in CASES[:6]:
         data = cydata(g)
         ps = _ps(data, g["B"])[:200]
         if len(ps) == 0:
@@ -84,7 +84,7 @@ def test_multi_geometry_batch_matches_single():
         singles.append(gpu.coni_batch_multi([spec], p_full, np.zeros(len(p_full), dtype=np.int32)))
     M, Kn, q, pidx, pstat, _ = gpu.coni_batch_multi(geoms, ps_all, np.array(pgeo))
     off = 0
-    for k, (M1, K1, q1, p1, s1, _) in enumerate(singles):
+    for M1, K1, q1, p1, s1, _ in singles:
         n = len(s1)
         sel = (pidx >= off) & (pidx < off + n)
         np.testing.assert_array_equal(M[sel], M1)

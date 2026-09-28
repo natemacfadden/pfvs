@@ -25,7 +25,7 @@ from pathlib import Path
 from pfvs import CYData, PFV, pvecs, coniZpM
 
 try:
-    import cytools as _cytools
+    import cytools  # noqa: F401
     CYTOOLS_AVAILABLE = True
 except ImportError:
     CYTOOLS_AVAILABLE = False
@@ -330,6 +330,28 @@ def test_manwe_gvs_match_cytools():
         return arr[np.lexsort(arr[:, :-1].T[::-1])]
 
     np.testing.assert_array_equal(sort_coo(gvs_cytools), sort_coo(gvs_saved))
+
+@pytest.mark.skipif(not CYTOOLS_AVAILABLE, reason="requires CYTools")
+def test_from_str_roundtrip():
+    """PFV.from_str(str(pfv)) rebuilds the same PFV."""
+    from cytools import Polytope
+    cy = Polytope(VERTS).triangulate(heights=HEIGHTS).cy()
+    data = CYData.from_cy(cy, coni_curve=CONI_CURVE, coni_cob=COB)
+    pfv = PFV(data, K=K_MANWE, M=M_MANWE)
+    back = PFV.from_str(str(pfv))
+    assert back.coni and np.array_equal(back.cob, pfv.cob)
+    assert np.array_equal(back.K, pfv.K) and np.array_equal(back.M, pfv.M)
+
+@pytest.mark.parametrize("bad", [
+    "verts = [[0, 0, 0, 0]]\nheights = [0]\nK = [1]\nM = [1]\nimport os",
+    "verts = [[0, 0, 0, 0]]\nheights = [0]\nK = __import__('os')\nM = [1]",
+    "verts = [[0, 0, 0, 0]]\nheights = [0]\nK = [1]",
+])
+def test_from_str_only_reads_literals(bad):
+    """PFV.from_str never executes its input: anything other than
+    `name = literal` lines (and the cy line) is rejected."""
+    with pytest.raises(ValueError, match="not a PFV string"):
+        PFV.from_str(bad)
 
 
 # =============================================================================
