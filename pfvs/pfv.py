@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     import cytools
 
 # local imports
-from . import util, cydata, coniZp
+from . import util, cydata, coniZp, dilation
 from .cydata import CYData
 
 class PFV():
@@ -121,6 +121,14 @@ class PFV():
     def Kprime(self):
         """K' = -K_0 + (M kappa p)_0 (must be positive)."""
         return -self.K[0] + (self.M@self.kappa@self.p)[0]
+
+    @_coni_only
+    def dilation_bound(self):
+        """Upper bound on the dilation of any coni PFV with this PFV's
+        direction and tadpole: delta < Q/mu0 (exact; see ``pfvs.dilation``).
+        A diagnostic; None if the bound's hypotheses fail."""
+        return dilation.coni_dilation_bound(self.pgrading[1:], self.kappa,
+                                            -int(np.dot(self.K, self.M)))
 
     @_coni_only
     def gsM(self):
@@ -1038,6 +1046,10 @@ class PFV():
             print(f"gsM  = {self.gsM}")
             print(f"zcf  = {self.zcf}")
             print(f"align= {self.align}")
+            bound = self.dilation_bound
+            if bound is not None:
+                print(f"dilation = {self._p_denom} < {float(bound):.1f} "
+                      f"(upper bound for this direction, Q/mu0)")
             print()
 
         # degrees of leading terms in p-grading

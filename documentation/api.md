@@ -348,6 +348,22 @@ def Kprime()
 
 K' = -K_0 + (M kappa p)_0 (must be positive).
 
+<a id="pfvs.pfv.PFV.dilation_bound"></a>
+
+---
+
+
+#### dilation\_bound
+
+```python
+@_coni_only
+def dilation_bound()
+```
+
+Upper bound on the dilation of any coni PFV with this PFV's
+direction and tadpole: delta < Q/mu0 (exact; see ``pfvs.dilation``).
+A diagnostic; None if the bound's hypotheses fail.
+
 <a id="pfvs.pfv.PFV.check_Kprime"></a>
 
 ---
@@ -1696,6 +1712,73 @@ Returns
 pts : ndarray of shape (N, h11)
     Array of primitive p-vectors, where N >= `min_N_pts`. Each row is an
     integer vector satisfying H @ p > 0
+
+<a id="pfvs.dilation"></a>
+
+---
+
+
+# pfvs.dilation
+
+<a id="pfvs.dilation.coni_mu0"></a>
+
+---
+
+
+#### coni\_mu0
+
+```python
+def coni_mu0(p: ArrayLike,
+             kappa: ArrayLike) -> tuple[Fraction, list[int]] | None
+```
+
+The minimum of K^T S K over nonzero K in Lambda, S = -A_rr^-1.
+
+Parameters
+----------
+p : array of shape (h11-1,)
+    The direction p_hat without its (zero) coni entry, in the coni basis.
+kappa : array of shape (h11, h11, h11)
+    Triple intersection numbers in the coni basis (``CYData.kappa_cob``).
+
+Returns
+-------
+(mu0, K) : the exact minimum and a minimizing K (length h11-1), or None
+    if the bound's hypotheses fail (A_rr singular, s > 0, or S not
+    positive definite on Lambda).
+
+<a id="pfvs.dilation.coni_dilation_bound"></a>
+
+---
+
+
+#### coni\_dilation\_bound
+
+```python
+def coni_dilation_bound(p: ArrayLike, kappa: ArrayLike,
+                        Q: int) -> Fraction | None
+```
+
+Upper bound on the dilation of every coni PFV with direction p_hat.
+
+Every coni PFV with -K.M = Q and p = p_hat / delta has delta < Q / mu0
+(see the module description). Searching p_hat at ellipsoid dilation
+Q / mu0 therefore finds all of them.
+
+Parameters
+----------
+p : array of shape (h11-1,)
+    The direction p_hat without its (zero) coni entry, in the coni basis
+    (as ``coniZpM`` takes p-vectors).
+kappa : array of shape (h11, h11, h11)
+    Triple intersection numbers in the coni basis (``CYData.kappa_cob``).
+Q : int
+    The tadpole, -K.M.
+
+Returns
+-------
+Fraction or None
+    Q / mu0 (exact; the bound is strict), or None if the hypotheses fail.
 
 <a id="pfvs.gpu"></a>
 

@@ -12,6 +12,11 @@ First packaged release. Relative to the code used for arXiv:2406.13751 ("dSv1"):
   row-insertion HNF in int128 with a GMP fallback, incremental-Gram LLL, and a
   cut-aware basis (4-5x smaller searches).
 - Automatic handling of non-primitive K-perp; f/h fluxes for non-coni PFVs.
+- `pfvs.dilation.coni_dilation_bound` / `PFV.dilation_bound`: an exact upper
+  bound on the dilation of every coni PFV with a given direction,
+  delta < Q/mu0, from the Schur complement of kappa.p (checked on all 814,034
+  PFVs of the published dataset). A diagnostic, shown by `PFV.diagnostics()`;
+  not a search parameter, since at h11 >= 8 it is typically ~10^3.
 
 ### Behaviour changes
 - PFV order: within each p-vector, PFVs are listed in a canonical order (by M,
