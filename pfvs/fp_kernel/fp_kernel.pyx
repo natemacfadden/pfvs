@@ -274,17 +274,14 @@ def conipfv_kernel(U,
     - M0 cut:     ``dot(linvec, vec) >= linmin``
     - K' cut:     ``g == 0`` or ``Q * g > vec^T @ mat @ vec``, ``g = gcd(H @ vec)``
 
-    where ``mat = U.T @ U`` is the (integral) ellipsoid matrix and ``H``
-    computes ``Kperp`` (up to a unimodular transform, e.g. its row-HNF). Any
-    ``vec`` passing all three can generate a coni-PFV (given ``det(N) != 0``).
-    All accept/reject decisions are exact. ``U`` is only used to recover
-    ``mat`` when ``mat=`` is not given; the kernel factors ``mat`` itself.
+    where ``mat`` is the integral ellipsoid matrix and ``H`` computes
+    ``Kperp`` up to a unimodular transform (e.g. its row-HNF). All decisions
+    are exact.
 
     Parameters
     ----------
     U : array-like of shape (dim, dim), dtype float64
-        Upper-triangular Cholesky factor: ``mat = U.T @ U``. Only used to
-        recover ``mat`` if ``mat=`` is not given.
+        Cholesky factor, ``mat = U.T @ U``; only used if ``mat=`` is omitted.
     Q : int
         Tadpole charge bound (exact equality for coni).
     dilation : float
@@ -297,15 +294,12 @@ def conipfv_kernel(U,
         Matrix with ``gcd(H @ vec) = gcd(Kperp)``. Row-echelon form (e.g.
         the row-HNF) gives the earliest pruning.
     max_N_out : int
-        Maximum number of output vectors (status -2 if exceeded). Memory is
-        allocated as needed, not up front.
+        Maximum number of output vectors (status -2 if exceeded).
     eps : float, optional
-        Extra absolute slack for the floating-point pruning. The kernel
-        already uses a safe relative slack; results do not depend on it.
+        Extra pruning slack; does not affect results.
     mat : array-like of shape (dim, dim), int, optional (keyword-only)
-        The exact ellipsoid matrix. If omitted, recovered as
-        ``round(U.T @ U)``, which must be integral with entries < 2^53
-        (else pass ``mat=``; ``coniZpM``/``ZpM`` always do).
+        The exact ellipsoid matrix. Defaults to ``round(U.T @ U)`` (entries
+        must be < 2^53).
     return_n_nodes : bool, optional (keyword-only)
         Also return the number of search-tree nodes visited.
 
@@ -340,10 +334,8 @@ def pfv_kernel(U,
     - Ellipsoid:  ``vec^T @ mat @ vec <= floor(dilation * Q)``
     - GCD cut:    ``g == 0`` or ``Q * g >= vec^T @ mat @ vec``, ``g = gcd(H @ vec)``
 
-    where ``mat = U.T @ U`` is the (integral) ellipsoid matrix and ``H``
-    computes ``K`` (up to a unimodular transform, e.g. its row-HNF, which may
-    have more rows than columns). See ``conipfv_kernel`` for the parameters;
-    this is the same kernel without the M0 cut and with a non-strict GCD cut.
+    with ``H`` computing ``K`` up to a unimodular transform. Parameters as
+    for ``conipfv_kernel``.
 
     Returns
     -------

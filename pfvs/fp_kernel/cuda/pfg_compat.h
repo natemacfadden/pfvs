@@ -15,11 +15,9 @@
 //    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // =============================================================================
 //
-// Portability layer for the GPU backend: the same sources build with nvcc
-// (CUDA, NVIDIA) and hipcc (HIP, AMD). The runtime API is spelled cuda* in
-// the sources and mapped to hip* here; the warp-level pieces the kernels need
-// (16-lane tiles, warp-aggregated atomics) are implemented per platform
-// without assuming a warp/wavefront width of 32.
+// Portability layer: the GPU sources build with nvcc (CUDA) and hipcc (HIP).
+// cuda* runtime calls map to hip* here; 16-lane tiles and warp-aggregated
+// atomics are implemented per platform, without assuming a warp width of 32.
 #pragma once
 
 #if defined(__HIPCC__) || defined(__HIP__)

@@ -16,18 +16,9 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  The Schur-complement bound on a coni PFV's dilation.
-#               In the coni basis, with p = p_hat / delta (p_hat primitive,
-#               p_hat_0 = 0) and A = kappa . p_hat, the tadpole reads
-#                 Q = M0 eps + (M0^2/delta)(-s) + delta K_r^T S K_r,
-#               s = a00 - a0r^T A_rr^-1 ar0, S = -A_rr^-1, eps > 0 (K' > 0).
-#               When s <= 0 and S is positive definite on
-#               Lambda = {K_r in Z^(h11-1) : p_hat . K_r = 0}, every coni PFV
-#               with direction p_hat has delta < Q / mu0, mu0 = min over
-#               nonzero K in Lambda of K^T S K.
-#               These tests check the bound against PFVs recovered from real
-#               data (p_hat and delta are recomputed from (K, M) alone) and
-#               against searches run past the bound.
+# Description:  The Schur-complement bound delta < Q/mu0 on a coni PFV's
+#               dilation (pfvs.dilation), checked against PFVs from real data
+#               and against searches run past the bound.
 # -----------------------------------------------------------------------------
 
 import gzip

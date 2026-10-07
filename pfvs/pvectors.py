@@ -16,9 +16,8 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  This module contains methods for constructing p-vectors. These
-#               are vectors p such that H@p>0 for H defined by the Kahler cone.
-#               The exact definition of H varies between coni and non-coni.
+# Description:  p-vectors: integer p with H p > 0 (H from the Kahler cone, or
+#               its coni facet).
 # -----------------------------------------------------------------------------
 
 # external imports
@@ -33,32 +32,23 @@ def pvecs(
     min_N_pts: int,
     verbosity: int = 0) -> np.ndarray:
     """
-    Generate primitive p-vectors using a branch-and-bound search (Kannan).
-
-    I.e., finds integral vectors p satisfying H @ p > 0, where H are the
-    hyperplanes of the associated Kahler cone (for non-coni PFVs) or the
-    hyperplanes of a particular facet of this Kahler cone (for coniPFVs). Only
-    primitive vectors (GCD(p) = 1) are returned.
-
-    Wraps `latticepts.enum_lattice_points`, which searches within an L-inf box
-    |p_i| <= B and iteratively increases B until at least `min_N_pts` p-vectors
-    are found.
+    Primitive integer p with H p > 0: H is data.H (non-coni) or data.H_cob
+    (coni). Returns every such p in the smallest L-inf box |p_i| <= B holding
+    at least min_N_pts (`latticepts.enum_lattice_points`).
 
     Parameters
     ----------
     data : CYData
-        The relevant data from the associated CY, providing the hyperplane
-        matrix H (or H_cob for coni).
+        The CY.
     min_N_pts : int
-        Minimum number of primitive p-vectors to return.
+        Minimum number of p-vectors to return.
     verbosity : int, optional
-        The verbosity level. Higher is more verbose. Defaults to 0.
+        Defaults to 0.
 
     Returns
     -------
-    pts : ndarray of shape (N, h11)
-        Array of primitive p-vectors, where N >= `min_N_pts`. Each row is an
-        integer vector satisfying H @ p > 0
+    pts : ndarray of shape (N, h11), or (N, h11-1) for coni
+        The p-vectors, N >= min_N_pts.
     """
     if min_N_pts <= 0:
         raise ValueError(f"min_N_pts must be > 0, got {min_N_pts}.")

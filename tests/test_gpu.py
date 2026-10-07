@@ -16,11 +16,9 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  The optional CUDA backend (pfvs.gpu). Its results must be
-#               identical to the CPU path's -- the same arrays, in the same
-#               order. Skipped unless the backend is built and a device found.
-#               The device tests share one GPU: run them serially
-#               (pytest -n 0 tests/test_gpu.py) or with few workers.
+# Description:  The optional GPU backend (pfvs.gpu) returns the CPU path's
+#               arrays exactly. Skipped without a built backend and device.
+#               Run serially (pytest -n 0 tests/test_gpu.py): one GPU.
 # -----------------------------------------------------------------------------
 
 import numpy as np

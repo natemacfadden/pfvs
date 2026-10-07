@@ -213,11 +213,9 @@ def coni_batch_multi(geoms, ps, pgeo, device=0, batch=0, verbose=False):
 
 def coni_batch(kappa, Mbasis, ps, Q, dilation, M0min, max_N_out, device=0):
     """
-    GPU counterpart of `fp_kernel._coni_batch` for one geometry (the default
-    lattice options: extra LLL, cut-aware basis): returns (M, Kn, q, pidx,
-    pstat) with the same meaning -- pstat 1 marks p-vectors for the per-p
-    CPU path (including any with more than max_N_out lattice points, so that
-    path reports it as the CPU kernel would).
+    GPU counterpart of `fp_kernel._coni_batch` for one geometry: (M, Kn, q,
+    pidx, pstat), pstat 1 marking p-vectors for the CPU path (including any
+    with more than max_N_out points).
     """
     kappa = np.asarray(kappa)
     h = kappa.shape[0]

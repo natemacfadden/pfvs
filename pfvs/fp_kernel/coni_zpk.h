@@ -44,16 +44,12 @@ delta = j o / g. So delta > D0 is j o > g D0, the tadpole is
 and M0 = l . c = j (l . c1) + t (l . k) >= M0min (l = Binter[0, :]): a range
 of j, and for each j an arithmetic progression of M0 (hence of t).
 
-The points are post-processed like ZpM's (coniZp._pfvs_from_points), which
-also expands the gcd of K_r: some resulting PFVs can have delta <= D0, and a
-point can be emitted more than once, so the union with ZpM's PFVs must be
-deduplicated.
+The points are post-processed like ZpM's (coniZp._pfvs_from_points); some
+resulting PFVs have delta <= D0 and points can repeat, so the union with
+ZpM's PFVs must be deduplicated.
 
-Exact: integer arithmetic (int64 values, checked int128 intermediates);
-floating point only prunes the enumeration, widened by a rigorous
-rounding-error bound (as cb_min in coni_bound.h), and screens the scan over
-j with a margin far above its rounding error. Requires fpk_common.h,
-pfv_lattice.h (with its implementation) and coni_bound.h.
+Exact, as coni_bound.h: floats only prune (rigorous bound) and screen j with
+a wide margin. Requires fpk_common.h, pfv_lattice.h and coni_bound.h.
 
 **Returns** (czk_setup, czk_search, per direction):
      0: done
@@ -557,9 +553,8 @@ static int czk_per_K(czk_ctx *C, const int64_t *x, fpk_i128 val, const fpk_i128 
     const i128 jlo = czk_fdiv(gD0, o) + 1, jhi = (C->QL - 1) / gokn;
     if (jlo > jhi) return 0;
     // for each j: M0 = j lc1 + t lk >= M0min with g L sn M0^2 < R(j) =
-    // sd j o (Q L - g j o kn). M0 runs over a residue class mod |lk|; a
-    // float screen (margin 1e-9, rounding errors ~1e-15) skips j whose
-    // smallest admissible M0 fails, and everything else is decided exactly.
+    // sd j o (Q L - g j o kn), M0 in a residue class mod |lk|. A float screen
+    // (margin 1e-9) skips j whose smallest M0 fails; the rest is exact.
     const i128 step = ((lc1 % alk) + alk) % alk, m0m = ((C->M0min % alk) + alk) % alk;
     i128 res;
     if (cb_mul(jlo % alk, step, &res)) return -90;

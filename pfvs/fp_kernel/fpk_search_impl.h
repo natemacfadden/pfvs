@@ -19,20 +19,13 @@
 // FPK_R; included by fpk_common.h once per type (no include guard). Names go
 // through FPK_N (double: as is; float: suffix _f).
 //
-// Every floating-point test is widened by rigorous bounds written in terms of
-// the type's unit roundoff (see "Error bound" in fp_kernel.h):
-//     FPK_U     unit roundoff (2^-53, 2^-24): Kerr = 2 (dim + 8) FPK_U
-//     FPK_G     relative guard on the few rounded divisions/products whose
-//               error is not in Kerr (1e-9 for double; 64 FPK_U for float)
-//     FPK_TINY  keeps widened radii strictly positive
-// and slack >= FPK_G (qmax + 1) absorbs absolute rounding of O(qmax) terms.
-// The float instantiation additionally needs qmax < 2^22. Then a product
-// Q g < 2^24 is exact in float, and a larger one only ever gives a GCD
-// radius beyond the ellipsoid's (sqrt(Q g - qmax) > sqrt(qmax)), so its
-// rounding cannot tighten anything; likewise the GCD tests compare exact
-// integers (as double does below 2^53). Leaf decisions are exact integers
-// either way, so the type only affects how much is pruned, never the output.
-// Callers get Kerr and slack from FPK_N(fpk_search_consts).
+// Floating-point tests are widened by rigorous bounds (see "Error bound" in
+// fp_kernel.h): FPK_U the unit roundoff (Kerr = 2 (dim + 8) FPK_U), FPK_G a
+// relative guard on the few rounded operations outside Kerr, FPK_TINY keeps
+// radii positive, slack >= FPK_G (qmax + 1).
+// Float needs qmax < 2^22: then Q g < 2^24 is exact, and a larger Q g gives a
+// GCD radius beyond the ellipsoid's, so its rounding prunes nothing extra.
+// Leaves are exact either way: the type changes the pruning, not the output.
 
 FPK_HD static inline void FPK_N(fpk_search_consts)(int dim, int64_t qmax, double eps,
                                                    FPK_R *slack, FPK_R *Kerr, FPK_R *max_err)
@@ -40,9 +33,8 @@ FPK_HD static inline void FPK_N(fpk_search_consts)(int dim, int64_t qmax, double
     FPK_R qd = (FPK_R)qmax;
     *slack = FPK_FMAX((FPK_R)eps, FPK_G * (qd + FPK_L(1.0)));
     *Kerr  = FPK_L(2.0) * (FPK_R)(dim + 8) * FPK_U;
-    // error budget: a heavily cancelling (ill-conditioned) problem can have
-    // a rounding bound so large that nothing is pruned; past this the search
-    // stops with -11 and the caller uses a wider type (double does not stop)
+    // past this error bound pruning is useless: stop with -11 so the caller
+    // uses a wider type (double never stops)
     *max_err = sizeof(FPK_R) < sizeof(double) ? FPK_L(1.0) + FPK_L(0.05) * qd : (FPK_R)INFINITY;
 }
 
@@ -238,11 +230,9 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
     fpk_u128 g[MD + 1];                         // gcd of the rows determined above
     int      lmode[MD], lcnt[MD], lidx[MD];
     fpk_i128 pre_s[MD + 1];
-    // Residue mode (dense levels whose parent gcd G = g[i+1] is in [1, 2^63)):
-    // only gcd(g, x) matters for a row value x = pre + h v, with g | G, and
-    // gcd(g, x) = gcd(g, x mod G). As v steps by 1, x mod G steps by h mod G,
-    // so it is tracked with one add and compare per candidate instead of an
-    // int128 multiply-add, and the gcd runs on values < G.
+    // Residue mode (parent gcd G = g[i+1] in [1, 2^63)): gcd(g, x) =
+    // gcd(g, x mod G) for g | G, and x mod G steps by h mod G as v steps by 1,
+    // so each candidate costs an add and compare, not an int128 multiply-add.
     uint64_t rres[MD + 1], rstep[MD + 1], rcur[MD + 1], gpar[MD];
     int      lres[MD];
     for (int j = 0; j < dim; ++j) c[j] = 0;

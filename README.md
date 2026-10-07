@@ -106,90 +106,37 @@ The bound is ~10³ at $h^{1,1}\ge 8$, which makes ZpM up to it expensive. So eac
 
 ## Running on many machines
 
-`pfvs.distributed` spreads coni-PFV searches over any number of machines and devices -- NVIDIA and AMD GPUs and CPUs, Linux or macOS. A coordinator splits each geometry's p-box into units; workers lease units, search them, and send back PFVs. Units are checkpointed as they arrive (a restarted coordinator resumes), units of vanished workers are reissued, oversized units are split on the fly, and slow workers get backup copies near the end.
+`pfvs.distributed` spreads coni-PFV searches over machines, GPUs and CPUs. A coordinator splits each geometry's p-box into units, checkpoints results, and reissues units of vanished workers.
 ```python
 from pfvs import distributed
-jobs = distributed.make_jobs(datas, B=..., D=..., n_p=...)   # one job per CYData
+jobs = distributed.make_jobs(datas, B=..., D=..., n_p=...)   # exhaustive=True for exhaustive jobs
 pickle.dump(jobs, open("jobs.pkl", "wb"))
 ```
 ```bash
 export PFVS_AUTHKEY=...                                          # same secret everywhere
 python -m pfvs.distributed serve jobs.pkl out/ --address 0.0.0.0:5055    # coordinator
-python -m pfvs.distributed work HOST:5055 --device gpu           # a worker per GPU of this machine
+python -m pfvs.distributed work HOST:5055 --device gpu           # a worker per GPU
 python -m pfvs.distributed work HOST:5055 --device cpu --procs 16
 ```
-`distributed.load_results("out/")` then gives each job's PFVs (K, M) and their p-vectors. The connection is authenticated, but it exchanges pickles: use it on a trusted network only.
-
-`make_jobs(..., exhaustive=True)` makes the jobs exhaustive (as above): GPU workers route each p-vector to ZpM up to its bound or to a split, and the ZpK halves of the splits go to the CPU workers. The coordinator steers the routing (a price, `--lam`) so the GPU and CPU workers finish together.
+`distributed.load_results("out/")` returns each job's PFVs. It exchanges pickles: use it on a trusted network only.
 
 ## Examples
 
 Scripts in `examples/` (run in CI):
+- [`examples/manwe.py`](examples/manwe.py): checks the "Manwe" coni PFV of [arXiv:2406.13751](https://arxiv.org/abs/2406.13751), finds it again from scratch, and ranks the PFVs found by $W_0$. Needs no CYTools.
+- [`examples/h11_11.py`](examples/h11_11.py): builds an $(h^{1,1}, h^{2,1}) = (11, 347)$ geometry with CYTools and scans its conifold.
 
-- [`examples/manwe.py`](examples/manwe.py) is the starting point: it checks the "Manwe" coni PFV of [arXiv:2406.13751](https://arxiv.org/abs/2406.13751), finds it again from scratch, and ranks the PFVs found by $W_0$ (`--plot` saves $W_0$ vs. alignment). It needs no CYTools.
-- [`examples/h11_11.py`](examples/h11_11.py) builds an $(h^{1,1}, h^{2,1}) = (11, 347)$ geometry with CYTools and scans its conifold.
-
-The API reference is [`documentation/api.md`](documentation/api.md), generated from the docstrings (CI checks it is current).
+The API reference is [`documentation/api.md`](documentation/api.md), generated from the docstrings.
 
 ## Performance
 
-The core of the coniPFV search is enumerating integer vectors in a (dilated) ellipsoid subject to several cuts (see the [Algorithm](#algorithm) section for what "dilation" means -- it is the flux denominator $p_{denom}$). The current kernel, `conipfv_kernel` (C), does this with a Fincke-Pohst search that prunes on every cut as it goes. The previous implementation used in [arXiv:2406.13751](https://arxiv.org/abs/2406.13751) ("dSv1") instead materialized a bounding box, filtered it down to the ellipsoid, then rejection-sampled the cuts.
+The search enumerates lattice points in a dilated ellipsoid with a Fincke-Pohst search in C (`pfvs/fp_kernel/`) that prunes on every cut and makes every accept/reject decision in exact integer arithmetic. The implementation used in [arXiv:2406.13751](https://arxiv.org/abs/2406.13751) ("dSv1") materialized a bounding box instead, whose size grows as $(Q\cdot p_{denom})^{h^{1,1}/2}$.
 
-Both take the same ellipsoid (Zp-style) approach and return identical results; they differ only in how they enumerate it. The new kernel keeps only its output and an $O(h^{1,1})$ recursion stack, while dSv1 also materializes the whole bounding box, whose size grows as $(Q\cdot p_{denom})^{h^{1,1}/2}$. That box is what drives dSv1's time and memory up sharply as the dilation grows.
+- **Kernel vs dSv1** (Manwe, $h^{1,1}=7$, one core): 53× faster at $p_{denom}=1$, 280,000× at $p_{denom}=30$; dSv1 runs out of 30 GB beyond that. Reproduce with `python benchmarks/benchmark_dSv1_vs_coniZpM.py`.
+- **End-to-end `coniZpM` vs the previous version of this repo:** 5-28× faster ($h^{1,1}=4$-$11$, $p_{denom}=20$-$400$).
+- **Whole [coni-PFV dataset](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs)** (18,253 geometries, 8.6M p-vectors, $p_{denom}=150$): about 3 minutes on 23 CPU cores, 15 s on an RTX 5090. It finds all 33,376 dataset PFVs, plus 820 with $\gcd(K_{1:})\ge2$ that the dataset's search excluded.
 
-**Current pipeline (`fp_kernel`).** Relative to the previous version of this repo, the search is now:
-
-- **Exact.** A single C kernel serves both pipelines (see [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md)), and every accept/reject decision is exact integer arithmetic. The per-p-vector lattice setup (M-lattice basis, ellipsoid, $H$-matrix) is also C, and also exact.
-- **Batched.** `coniZpM` runs the lattice setup and the kernel for a whole chunk of p-vectors in one C call, then post-processes all lattice points at once.
-- **Built on a cut-aware basis.** The lattice basis is chosen so that the $M_0\ge M_{0,\min}$ cut is decided at the first coordinate searched, and it is LLL-reduced with respect to the ellipsoid itself. This makes searches ~4–5× smaller at high $h^{1,1}$ and $p_{denom}$.
-
-End-to-end `coniZpM` speedup over the previous version. Each cell covers 2–3 dataset geometries, with ≤200 p-vectors per geometry. Old and new ran on identical inputs, pinned to the same core, and found identical PFV sets, apart from PFVs with $\gcd(K_{1:})\ge2$ that only the new code finds (measured 2026-09-28):
-
-| $h^{1,1}$ \ $p_{denom}$ | 20 | 50 | 150 | 400 |
-|---:|---:|---:|---:|---:|
-| 4  | 28.0× | 26.1× | 20.9× | 14.8× |
-| 5  | 17.5× | 17.3× | 13.3× | 11.5× |
-| 6  | 11.0× | 10.3× | 8.0×  | 5.2×  |
-| 7  | 8.9×  | 9.2×  | 8.4×  | 6.6×  |
-| 8  | 7.8×  | 8.3×  | 6.5×  | 5.1×  |
-| 9  | 10.6× | 13.2× | 11.3× | 9.0×  |
-| 10 | 8.1×  | 13.6× | 15.6× | 12.6× |
-| 11 | 7.6×  | 10.7× | 10.4× | 8.3×  |
-
-- **Low $h^{1,1}$.** The old code's time was mostly per-p overhead in Python/flint, which is now gone.
-- **High $h^{1,1}$.** The gain comes from the smaller searches. For example, $h^{1,1}=11$ at $p_{denom}=400$ went from 7.0 to 0.84 ms per p-vector.
-- **Whole dataset.** The full [coni-PFV dataset](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) covers 18,253 geometries and 8.6M p-vectors at $|p|_\infty\le5$ and $p_{denom}=150$. All 33,376 of its PFVs are found, none missing. Because $K_{1:}$ is no longer assumed primitive (automatic Kperp handling), 820 further PFVs are found as well; each has $\gcd(K_{1:})\ge2$ and passes `PFV.check_all`. The dataset predates that change. The run takes 3,093 CPU-seconds, about 3 minutes on 23 cores.
-
-**On a GPU.** The same pipeline on an RTX 5090 does the whole dataset run above in 9.8 s of device time (8.6M p-vectors, 1.14 µs each; 15 s for the whole call), with exactly the CPU's lattice points. Against all 22 cores of the CPU box, the GPU is ~3-6x faster at $p_{denom}\le10$ (where the per-p lattice setup dominates) and ~10-20x at $p_{denom}=200$-$400$ for $h^{1,1}\ge 9$ (where the search dominates). An RX 6700 XT runs at about 1/6, and a Radeon 8060S (integrated) about 1/9, of the RTX 5090.
-
-Behaviour changes relative to the previous version (PFV order, errors instead of skipped p-vectors, defaults) are listed in [CHANGELOG.md](CHANGELOG.md).
-
-The table below compares the *original* C kernel with dSv1, measured before these changes. It is kept for the box-vs-Fincke–Pohst comparison, which the current pipeline only improves on. Measured on the $h^{1,1}=7$ "Manwe" example (identical inputs, identical output, same cuts), on one CPU (Intel Core Ultra 7 270K, 24 cores, 30 GB), three runs each, reported as mean $\pm$ std:
-
-| dilation $p_{denom}$ | C (ms) | dSv1 (ms) | speedup | dSv1 memory | box (est.) |
-|---:|---:|---:|---:|---:|---:|
-| 1   | 0.005 $\pm$ 0.000 | 0.29 $\pm$ 0.03 | 53x      | 0.3 MB  | 1 MB    |
-| 2   | 0.006 $\pm$ 0.000 | 0.91 $\pm$ 0.02 | 150x     | 3.6 MB  | 3 MB    |
-| 5   | 0.006 $\pm$ 0.000 | 11.3 $\pm$ 5.6  | 1,921x   | 38 MB   | 30 MB   |
-| 10  | 0.007 $\pm$ 0.000 | 84 $\pm$ 4      | 12,028x  | 354 MB  | 330 MB  |
-| 15  | 0.011 $\pm$ 0.000 | 293 $\pm$ 3     | 26,699x  | 1.24 GB | 1.28 GB |
-| 20  | 0.014 $\pm$ 0.000 | 711 $\pm$ 4     | 49,282x  | 3.02 GB | 3.14 GB |
-| 25  | 0.018 $\pm$ 0.001 | 1,545 $\pm$ 46  | 86,820x  | 6.4 GB  | 6.68 GB |
-| 30  | 0.022 $\pm$ 0.002 | 6,131 $\pm$ 159 | 281,495x | 13.4 GB | 14.1 GB |
-| 40  | 0.031 $\pm$ 0.004 | out of memory   | --       | --      | 24.9 GB |
-| 60  | 0.049 $\pm$ 0.001 | out of memory   | --       | --      | 120 GB  |
-| 100 | 0.094 $\pm$ 0.001 | out of memory   | --       | --      | 659 GB  |
-
-- The new kernel's working set is just its output and the recursion stack (below RSS resolution here), so its speedup keeps growing with dilation while dSv1 follows its box.
-- "box (est.)" is $3\times$ the candidate array $(Q\cdot p_{denom})^{h^{1,1}/2}$ (the vectorized ellipsoid test holds three such arrays at once); measured memory matches it from $p_{denom}\gtrsim 5$. Past $p_{denom}=30$ (13.4 GB measured) the harness skips dSv1 rather than exhaust the 30 GB machine, hence "out of memory".
-- Memory is peak resident set above the run's baseline (Linux VmHWM, reset per measurement). dSv1 timings under ~10 ms are noisier (e.g. $p_{denom}=5$).
-- The dSv1 baseline is a faithful reimplementation: verbatim `points_in_ellipsoid` plus a reimplemented metric-LLL, giving identical output and box memory, with `maximum_box_size` set to infinity (else it truncates) and `fluxbound=2`.
-- Both methods are timed on enumeration only: the C kernel receives its factorization ($U$) precomputed, so the baseline's metric-LLL is likewise hoisted out of the timed region (reported separately as `prep_lll_s`).
-
-Reproduce (self-contained, needs only this repo):
-```bash
-python benchmarks/benchmark_dSv1_vs_coniZpM.py
-```
+Behaviour changes relative to the previous version are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Organization
 
@@ -222,14 +169,11 @@ pfvs/
 
 ## Correctness
 
-The kernel's output is specified exactly (see [`pfvs/fp_kernel/README.md`](pfvs/fp_kernel/README.md)). All accept/reject decisions are exact integer arithmetic, and floating point is only used for pruning, widened by a rigorous error bound. The test suite checks this:
-
-- **Kernel vs. an exact oracle.** [`tests/oracle.py`](tests/oracle.py) is a rational-arithmetic Fincke–Pohst with no floating point. The tests compare the kernel's output against it point for point, in order, on 219 real instances from the dataset below (some with $H$ entries beyond $2^{100}$) and on adversarial synthetic ones: non-echelon or rank-deficient $H$, boundary points, and ill-conditioned ellipsoids with huge entries.
-- **End to end vs. the published dataset.** For 71 stored geometries ($h^{1,1}=3,\dots,11$), `coniZpM` runs over every p-vector with $|p|_\infty\le B$ at dilation $D$, with no p-vector skipped. Among its output, the PFVs with primitive $K_{1:}$ must equal *exactly* those in [calabi-yau-coni-pfvs](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs); the dataset predates automatic Kperp handling. Every other PFV found must have $\gcd(K_{1:})\ge2$ and pass `PFV.check_all`. The fixtures are built by [`tests/data/build_fixtures.py`](tests/data/build_fixtures.py) from a pinned dataset revision.
-- **Regression tests for integer overflow.** Large p-vectors used to overflow int64 silently while the M-lattice was being built, and were then skipped. The tests use real large-p cases.
-- **Independent routes agree.** Non-coni `ZpM` via the numba enumerator, the C kernel, and the C kernel with the C lattice setup find identical PFVs. `coniZpM` finds identical PFVs with and without the C lattice setup, and its exact post-processing fallback matches the int64 path.
-- **The papers' examples.** Every named example of [arXiv:2406.13751](https://arxiv.org/abs/2406.13751) (coni) and [arXiv:2107.09064](https://arxiv.org/abs/2107.09064) (non-coni) is found from its p-vector. Every coni example, and the vacuum of Sec. 6.3, is also found by a scan of every p-vector in a box of the Kähler cone, with no knowledge of the paper's p. The other non-coni vacua need a cone other than the Kähler cone or too large a box. The geometries are rebuilt with CYTools by [`tests/data/build_paper_examples.py`](tests/data/build_paper_examples.py) and checked against the papers through their fluxes; `PFVS_SLOW_TESTS=1` adds the two slow scans.
-- **Exact helpers.** The singularity test keeps ill-conditioned nonsingular $N$. The int128 factorization matches GMP on 200k random matrices (a C test run in CI).
+All accept/reject decisions are exact integer arithmetic; floating point is only used for pruning, widened by a rigorous error bound. The tests check:
+- the kernel against an exact rational-arithmetic oracle ([`tests/oracle.py`](tests/oracle.py)), point for point, on 219 dataset instances and adversarial synthetic ones;
+- `coniZpM` against the [published dataset](https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs) on 71 geometries ($h^{1,1}=3$-$11$): exactly its PFVs, plus only valid PFVs with $\gcd(K_{1:})\ge2$;
+- that independent routes (numba vs C kernel, Python vs C lattice setup, CPU vs GPU) agree;
+- that every named example of [arXiv:2406.13751](https://arxiv.org/abs/2406.13751) and [arXiv:2107.09064](https://arxiv.org/abs/2107.09064) is found (`PFVS_SLOW_TESTS=1` adds full-box scans).
 
 Run `pytest tests/` (add `-n auto` with `pytest-xdist` to parallelize).
 

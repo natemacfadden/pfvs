@@ -38,18 +38,12 @@ p-vector p, builds
     mat    = -Binter^T Z Binter                            (h11-1, h11-1)
     H      = row-HNF of (Z Binter)[r0:]  (r0 = 1 coni, 0 non-coni)
 
-exactly as coniZp.coni_M_ellipsoid / coni_H_matrix (resp. Zp.M_ellipsoid /
-H_matrix) do, except that LLL-reduced bases are not unique: Binter may be a
-different (equally valid) basis of the same lattice. All results depend
-only on the lattice, so the PFVs found are the same.
+as coniZp.coni_M_ellipsoid / coni_H_matrix (Zp.M_ellipsoid / H_matrix) do,
+up to the choice of LLL-reduced basis (same lattice, same PFVs).
 
-All arithmetic is exact integer arithmetic (int64 values, int128
-intermediates) with overflow detection. Floating point is only used inside
-LLL to choose unimodular basis operations; the basis updates themselves are
-exact, so the lattice is always preserved exactly -- floating-point error
-can only make the basis less reduced (slower), never wrong. On overflow (or
-any other failure) the function returns a nonzero status and the caller
-falls back to the arbitrary-precision Python path.
+Exact integer arithmetic with overflow detection; floats only choose LLL's
+unimodular steps, which are applied exactly. On failure the caller falls
+back to the Python path.
 
 **Returns:**
      0: success
@@ -60,16 +54,11 @@ Stage codes: -1x orthogonal lattice, -2x first LLL, -3x second LLL, -15 HNF.
 On -15 (HNF intermediates exceed int128) everything except H is valid, so
 the caller only needs to compute H itself.
 
-Cut-aware basis (coni, m0_basis = 1): the kernel fixes M0 = Binter[0,:].c
-once every coordinate where Binter[0,:] is nonzero is set, and prunes on
-the ellipsoid geometry given by mat. So Binter is finally changed to
-Binter T with T = [K | w] unimodular: K an LLL basis of ker(Binter[0,:])
-reduced with respect to mat (not the Euclidean norm), w with
-Binter[0,:].w = g, size-reduced against K. Then Binter[0,:] = (0,...,0,g):
-M0 is fixed at the very first level searched, where M0 >= M0min becomes an
-interval bound. Same lattice, same PFVs; ~4.7x smaller searches on heavy
-h11 = 10 problems. Non-coni (no M0 cut): T is the LLL reduction of the whole
-basis with respect to mat, which alone shrinks searches ~1.4-1.8x.
+Cut-aware basis (coni, m0_basis = 1): Binter <- Binter T, T = [K | w]
+unimodular, K an LLL basis of ker(Binter[0,:]) reduced w.r.t. mat, w with
+Binter[0,:].w = g size-reduced against K. Then Binter[0,:] = (0,...,0,g), so
+M0 >= M0min is an interval bound at the first level searched. Non-coni: T
+LLL-reduces the whole basis w.r.t. mat.
 */
 #ifndef PFL_MAX_H11
 #define PFL_MAX_H11 64     /* the GPU build uses a smaller limit */
@@ -217,12 +206,10 @@ FPK_HD static inline pfl_i128 pfl_fdiv128(pfl_i128 a, pfl_i128 b)
 // (row-major), matching flint's fmpz_mat_hnf: upper echelon, positive pivots,
 // entries above each pivot reduced into [0, pivot), zero rows last.
 //
-// Rows are inserted one at a time into an HNF that is kept fully reduced,
-// combining equal-pivot rows with an extended gcd. Entries then stay near the
-// size of the final HNF; column-wise Euclidean elimination instead blows up
-// on these rank-deficient inputs (int128 overflowed for ~60% of h11 = 11
-// p-vectors whose final HNF entries are < 2^48). Checked int128 throughout:
-// -1 on overflow (the host then redoes it in GMP), 0 on success.
+// Rows are inserted one at a time into a fully reduced HNF (equal pivots
+// combined by xgcd), which keeps entries near the final size; column-wise
+// elimination blows up on these rank-deficient inputs. Checked int128: -1 on
+// overflow (redo in GMP), 0 on success.
 
 // r = a*b + c, checked
 // a * b, nonzero on overflow (int64 factors cannot overflow: no check)
@@ -399,13 +386,10 @@ FPK_HD static int pfl_matmul(const int64_t *A, const int64_t *B, int64_t *C,
 }
 
 
-// LLL core (delta 0.99) on the m basis vectors B (rows, length n), given
-// their exact Gram matrix GG ((m + 1) x (m + 1), row-major, stride m + 1;
-// under whatever inner product the caller chose). If `last` is given it is
-// row m of GG: after the reduction it is size-reduced (not swapped) against
-// the basis. The Gram matrix is kept exact (checked int128) under every
-// basis operation, so Gram-Schmidt needs no inner products: floating point
-// only chooses the unimodular operations, which are exact.
+// LLL core (delta 0.99) on the m rows of B given their exact Gram matrix GG
+// ((m + 1) x (m + 1), stride m + 1, any inner product). If `last` is given
+// (row m of GG), it is size-reduced against the basis afterwards. GG is kept
+// exact (checked int128); floats only choose the (exact) unimodular steps.
 FPK_HD static int pfl_lll_core(int64_t *B, int m, int n, pfl_i128 *GG, int64_t *last)
 {
     const int L = m + 1;                        // GG stride

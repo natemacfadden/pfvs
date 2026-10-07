@@ -67,8 +67,6 @@ coni_cob : ArrayLike, optional
 Returns
 -------
 CYData
-    A fully initialized CYData object populated from the given
-    CalabiYau.
 
 <a id="pfvs.cydata.CYData.vertices"></a>
 
@@ -194,22 +192,8 @@ Hodge number h^{2,1}.
 def a()
 ```
 
-**Description:**
-Returns the a-matrix, used for finding (Coni) PFVs. This matrix is
-defined componentwise as
-\begin{equation}
-\tilde{a}_{ij} = \begin{cases}
-kappa_{iij} & i\geq j\
-kappa_{ijj} & i < j.
-\end{cases}
-\end{equation}
-See, e.g., eq 2.52 from https://arxiv.org/pdf/2406.13751.
-
-**Arguments:**
-Nothing.
-
-**Returns:**
-The a-matrix.
+The a-matrix: a_ij = kappa_iij for i >= j, kappa_ijj for i < j (eq 2.52
+of arXiv:2406.13751). In the coni basis, with the coni row dropped.
 
 <a id="pfvs.cydata.CYData.b"></a>
 
@@ -223,25 +207,8 @@ The a-matrix.
 def b()
 ```
 
-**Description:**
-Returns the b-vector, used for finding (Coni-)PFVs. This vector is
-defined differently for non-Coni and Coni PFVs. For non-Coni PFVs, it
-is defined as
-\begin{equation}
-\tilde{b} = c_2.
-\end{equation}
-For Coni PFVs, it is defined as
-\begin{equation}
-\tilde{b} = c_2 + n_{cf} q_{coni}
-\end{equation}
-where $n_{cf} = 2$ and $q_{coni} = `coni_normal`$ (see below eq 3.5 of
-https://arxiv.org/pdf/2406.13751).
-
-**Arguments:**
-Nothing
-
-**Returns:**
-The b vector.
+The b-vector: c2 (non-coni), or c2 + 2 q_coni in the coni basis (below
+eq 3.5 of arXiv:2406.13751).
 
 <a id="pfvs.cydata.CYData.M_lattice"></a>
 
@@ -254,26 +221,13 @@ The b vector.
 def M_lattice(verify: bool = True) -> np.ndarray
 ```
 
-**Description:**
-Computes a basis of the sublattice of all vectors, M, such that
-(b/24).M    and    (a/2)@M    and    M
-are all integral. This is equivalent to
-[b/24; a/2; 1]@M
-being integral.
+Basis (as columns) of the lattice of integral M with (b/24).M and
+(a/2)@M integral: the dual of the rows of [b/24; a/2; 1].
 
-The set of all such M is just the dual to the lattice spanned by the
-**rows** of
-[b/24; a/2; 1].
-
-Work with column bases throughout.
-
-**Arguments:**
-- `verify`: Whether to verify the computation by checking dot products
-with a and b.
-
-**Returns:**
-A basis for M satisfying the integrality constraints. Basis vectors are
-columns.
+Parameters
+----------
+verify : bool, optional
+    Check the result against a and b. Defaults to True.
 
 <a id="pfvs.pfv"></a>
 
@@ -360,9 +314,8 @@ K' = -K_0 + (M kappa p)_0 (must be positive).
 def dilation_bound()
 ```
 
-Upper bound on the dilation of any coni PFV with this PFV's
-direction and tadpole: delta < Q/mu0 (exact; see ``pfvs.dilation``).
-A diagnostic; None if the bound's hypotheses fail.
+Exact upper bound Q/mu0 on the dilation of coni PFVs with this
+direction and tadpole (see ``pfvs.dilation``); None if it doesn't apply.
 
 <a id="pfvs.pfv.PFV.check_Kprime"></a>
 
@@ -541,10 +494,7 @@ def f() -> np.ndarray | None
 ```
 
 The F3 flux vector, f = ((b.M)/24, (a@M)/2, 0, M), of length 2*(h11+1).
-
-Recall `self.b` is 24x and `self.a` is 2x the prepotential coefficients,
-so the two divisions above are exact iff M satisfies the congruences.
-Returns None if either division is non-integral. Non-coni only.
+None if either division is non-integral. Non-coni only.
 
 <a id="pfvs.pfv.PFV.h"></a>
 
@@ -915,14 +865,9 @@ def series(N_nonzero: int = float('inf'), verbosity: int = 0) -> list[tuple[
         float, float]]
 ```
 
-Compute the superpotential series W = sum_i c_i * exp(2*pi*i*tau*e_i),
-where e_i = dot(p, q) and c_i = sum_{q at e_i} n_q * dot(M, q).
-
-See also `series_abs_vev`, `series_corrections` for downstream
-diagnostics built on this series.
-
-Returns a list of [coeff, exponent] pairs for nonzero terms only,
-sorted by exponent. Stops after N_nonzero nonzero terms.
+The superpotential series W = sum_i c_i exp(2 pi i tau e_i), with
+e_i = dot(p, q) and c_i = sum_{q at e_i} n_q dot(M, q), as [c_i, e_i]
+pairs: nonzero terms only, by exponent, at most N_nonzero of them.
 
 <a id="pfvs.pfv.PFV.valid_coeff_ratio"></a>
 
@@ -998,13 +943,8 @@ Returns nan if the series has invalid leading coefficients.
 def series_abs_vev(as_logs: bool = False) -> list[float]
 ```
 
-Evaluate |W_i| at the tau0 from the 2-term approximation.
-
-Built on `series`. See also `series_corrections`.
-
-Specifically, finds the value of exp(2*pi*i*tau) minimizing W_0 + W_1,
-plugs it into each W_i = c_i * exp(2*pi*i*tau*e_i), and returns |W_i|
-(or log10|W_i| if as_logs=True), one per series term.
+|W_i| (or log10|W_i|) for each series term, at the tau minimizing the
+2-term approximation W_0 + W_1.
 
 <a id="pfvs.pfv.PFV.series_corrections"></a>
 
@@ -1017,11 +957,8 @@ plugs it into each W_i = c_i * exp(2*pi*i*tau*e_i), and returns |W_i|
 def series_corrections(as_logs: bool = False) -> list[float]
 ```
 
-Compute |W_i| / W0 for i >= 2, as a measure of higher-order corrections
-to the 2-term approximation. Returns the ratios (or log10 if
-as_logs=True), starting from the third series term.
-
-Built on `series_abs_vev`.
+|W_i| / W0 (or its log10) for i >= 2: the size of the corrections to
+the 2-term approximation.
 
 <a id="pfvs.pfv.PFV.diagnostics"></a>
 
@@ -1092,53 +1029,33 @@ def coni_M_ellipsoid(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]
 ```
 
-Compute the matrices defining the M-ellipsoid in coni-ZpM.
+The matrices defining coniZpM's M-ellipsoid for one p-vector.
 
-In brief detail,
-    - M lives in a lattice M = Binter@c
-    - the component of K perpendicular to the conifold curve can be computed
-      as Kperp = (Z@M)[1:] for Z = kappa@p
-    - the parallel component of K (i.e., K[0]) is unconstrained, other than
-      K[0] > 0 (from the physics)
-    - one can show (see `coniZpM`) a K[0]>0 exists s.t. -dot(K,M) <= Qmax
-      iff -c^T @ Binter^T @ Z @ Binter @ c <= Qmax. Define
-      mat = -Binter^T @ Z @ Binter.
-That last constraint c^T @ mat @ c <= Qmax is the ellipsoid constraint. One
-can actually dilate the ellipsoid as long as
-GCD(Kperp) > (c^T @ mat @ c)/Qmax - see the 'cut on feasibility of finding a
-K0 giving K'>0' section of `coniZpM`.
+M lies in the lattice M = Binter c (which imposes K.p = 0), and
+K[1:] = (Z M)[1:] with Z = kappa.p. Some K[0] > 0 gives -K.M <= Qmax iff
+c^T mat c <= Qmax, mat = -Binter^T Z Binter. The ellipsoid may be dilated
+if gcd(K[1:]) > c^T mat c / Qmax (see `coni_H_matrix`).
 
 Parameters
 ----------
 p : ndarray of shape (h11,) or (h11-1,)
     The p-vector.
 data : CYData, optional
-    The relevant data from the associated CY. Mutually exclusive with kappa
-    and Mbasis.
-kappa : ndarray of shape (h11, h11, h11), optional
-    The triple intersection numbers of the CY. Mutually exclusive with data.
-    If provided, it is assumed that Mbasis is also provided.
-Mbasis : ndarray of shape (h11, h11), optional
-    The lattice basis for M-vectors. Mutually exclusive with data.
-    If provided, it is assumed that kappa is also provided.
+    The CY. Or pass kappa (h11, h11, h11) and Mbasis (h11, h11) instead.
 extra_lll_reduction : bool, optional
-    Whether to perform an extra (technically unnecessary) LLL reduction on
-    the updated M vector lattice basis, Binter. Useful since otherwise
-    there are sometimes overflows. Defaults to True.
+    LLL-reduce the intermediate basis too (avoids overflows). Defaults to
+    True.
 extra_checks : bool, optional
-    Deprecated, no effect (warns if set): mat is always computed in
-    exact integer arithmetic, so there is nothing to check.
+    Deprecated, no effect.
 
 Returns
 -------
 mat : ndarray of shape (h11-1, h11-1)
-    The matrix defining the ellipsoid. I.e., c^T @ mat @ c <= Qmax. We
-    typically dilate this ellipsoid via
-    c^T @ mat @ c <= ellipsoid_dilation * Qmax
+    The ellipsoid: c^T mat c <= Qmax (times the dilation).
 Z : ndarray of shape (h11, h11)
-    The matrix relating M and K. Specifically, K[1:] = (Z@M)[1:]
+    kappa.p, so K[1:] = (Z M)[1:].
 Binter : ndarray of shape (h11, h11-1)
-    Updated M-vector lattice basis, integrating the dot(K,p)=0 constraint.
+    The M-lattice basis with K.p = 0 imposed.
 
 <a id="pfvs.coniZp.coni_H_matrix"></a>
 
@@ -1151,59 +1068,24 @@ Binter : ndarray of shape (h11, h11-1)
 def coni_H_matrix(ZBinter: ArrayLike, proj: ArrayLike = None)
 ```
 
-Compute the H-matrix for use in coni-ZpM. This is the HNF of (Z@Binter)[1:].
+The HNF H of (Z Binter)[1:], used to prune coniZpM's search by gcd(K[1:]).
 
-This is the preferred approach for enforcing the GCD(K[1:]) cut in
-`coniZpM`. The alternative lattice-based approach is `_Kperp_gcd_lattice`
-(not recommended in practice).
-
-In coni-ZpM, one wants to ensure GCD(K[1:]) is sufficiently large. A point
-c in the M-ellipsoid has an associated valuation c^T @ mat @ c. For dilated
-ellipsoids, this can have c^T @ mat @ c > Qmax. This would give rise to a K
-and M which violates tadpole (i.e., -dot(K,M) > Qmax) unless
-    GCD(K[1:]) > (c^T @ mat @ c)/Qmax,
-in which case one can divide both p and K by GCD(K[1:]) to bring the
-solution back under tadpole. The strict inequality is correct but
-unintuitive. See the 'cut on feasibility of finding a K0 giving K'>0'
-section of `coniZpM`.
-
-Recall that
-    1 The M-vector is built incrementally via the relationship M = Binter c,
-      using a modified Fincke-Pohst algorithm.
-    2 K[1:] = (Z @ Binter @ c)[1:]
-Naively, one would have to fully set c before checking GCD(K[1:]).
-
-A trick, though:
-    FP sets c from right to left, beginning with c[-1], then c[-2], etc.
-
-    This uses the fact that FP provides a monotonically increasing lower
-    bound on  c^T @ mat @ c as further components of c are set.
-
-    Similarly, since H is upper triangular, H[-m:,-m:] @ c[-m:] is a
-    monotonically decreasing upper bound on
-        GCD(H@c) = GCD((Z@Binter)[1:,:] @ c) = GCD(K[1:]).
-    This is because (H@c)[-m:] = H[-m:,-m:]@c[-m:] and
-    GCD((H@c)[-m:]) >= GCD((H@c)[-n:]) for m<n.
-
-    Thus, during FP, one can check if the current upper bound on the GCD
-    is sufficiently large compared to the current lower bound on the
-    valuation. If not, then one can immediately prune the current branch.
+On a dilated ellipsoid, a point with c^T mat c > Qmax is only valid if
+gcd(K[1:]) > c^T mat c / Qmax. Fincke-Pohst sets c from the last entry
+down, and since H is upper triangular, gcd(H[-m:,-m:] c[-m:]) bounds
+gcd(K[1:]) from above as entries are set, so branches can be cut early.
 
 Parameters
 ----------
-ZBinter : ndarray of shape (h11,h11-1)
-    The product of matrices Z and Binter from coni_M_ellipsoid. Has
-    interpretation that K[1:] = (ZBinter c)[1:].
-proj : ndarray of shape (h11-1,h11)
-    An optional projection matrix, since we want the HNF of (Z Binter)[1:].
-    This is trivial: identity(h11)[1:,:]. If not provided, then it's
-    computed using `_get_proj`.
+ZBinter : ndarray of shape (h11, h11-1)
+    Z @ Binter from `coni_M_ellipsoid`.
+proj : ndarray of shape (h11-1, h11), optional
+    eye(h11)[1:]; computed if not given.
 
 Returns
 -------
 H : ndarray of shape (h11-1, h11-1)
-    The HNF (Z@Binter)[1:]. Has interpretation that GCD(H@c) = GCD(K[1:])
-    and that GCD(H[-m:,-m:]@c[-m:]) >= GCD(H[-n:,-n:]@c[-n:]) for m<n.
+    gcd(H c) = gcd(K[1:]).
 
 <a id="pfvs.coniZp.coniZpK"></a>
 
@@ -1224,30 +1106,24 @@ def coniZpK(data: CYData,
             verbosity: int = 0) -> tuple[ArrayLike, ArrayLike]
 ```
 
-The coni PFVs of each p-vector with dilation above D0: those with
-p = p_hat / delta, delta > D0, for the direction p_hat given. Together
-with ``coniZpM(..., ellipsoid_dilation=D0)``, which finds those with
-delta <= D0, this is every coni PFV of the direction.
+The coni PFVs of each direction p_hat with dilation delta > D0
+(p = p_hat / delta). With ``coniZpM(..., ellipsoid_dilation=D0)`` this
+gives every coni PFV of the direction.
 
-Each PFV above D0 has a short K_r: with A = kappa . p_hat,
-S = -A_rr^-1 and s the Schur complement of A_rr (see `pfvs.dilation`),
-the tadpole forces K_r^T S K_r < Q / D0 when s < 0 and S is positive
-definite on the lattice {K : p_r . K = 0}. ZpK enumerates those K_r and,
-for each, the PFVs it belongs to (exact C kernel, coni_zpk.h). A
-p-vector it cannot handle exactly is searched by ``coniZpM`` up to its
-dilation bound instead.
+Enumerates the short K_r these PFVs must have (K_r^T S K_r < Q / D0, see
+`pfvs.dilation`) with an exact C kernel. p-vectors it cannot handle
+exactly are searched by coniZpM up to their dilation bound instead.
 
 Parameters
 ----------
 data : CYData
-    The relevant data from the associated CY.
+    The CY (coni).
 ps : iterable of shape (N, h11-1)
-    The p-vectors (directions) without their coni entry, p[1:], as for
-    ``coniZpM``.
+    The directions, as for ``coniZpM``.
 D0 : int
-    Find the PFVs with dilation > D0 (a positive integer).
+    Positive integer; find the PFVs with dilation > D0.
 Q, M0min, n_jobs, max_N_pfvs, return_formal_pfvs, verbosity :
-    As for ``coniZpM`` (n_jobs: threads; the C kernel releases the GIL).
+    As for ``coniZpM`` (n_jobs: threads).
 
 Returns
 -------
@@ -1258,9 +1134,7 @@ Ks, Ms : ndarrays of shape (N, h11), or a list of PFV objects
 Raises
 ------
 IncompleteSearchError
-    For a p-vector whose PFVs above D0 cannot be enumerated: s >= 0, or
-    S is not positive definite on the lattice (then its PFVs' dilation
-    is not bounded this way), or its search is not exact.
+    For a p-vector without a dilation bound, or whose search is not exact.
 
 <a id="pfvs.coniZp.coniZpM"></a>
 
@@ -1289,112 +1163,63 @@ def coniZpM(data: CYData,
             cost_model=None) -> tuple[ArrayLike, ArrayLike]
 ```
 
-A 'Zp' implementation that computes coniPFVs from input integer p-vectors.
-
-The logic is
-    1 an integer p-vector defines a certain ellipsoid (see `coni_M_ellipsoid`)
-    2 a lattice point c in this ellipsoid defines an M-vector via Binter@c.
-      this also defines (most of) a K-vector via K[1:] = (Z@Binter@c)[1:]
-so one wants to enumerate such c-vectors. This is done via Fincke-Pohst.
-
-As discussed in `coni_M_ellipsoid` and `coni_H_matrix`, this ellipsoid can be
-dilated, but then only c vectors that give rise to K[1:] with sufficiently
-large GCD are allowed. This is integrated into the Fincke-Pohst solver via
-the H-matrix from `coni_H_matrix`. An alternative lattice-based approach is
-available via `_Kperp_gcd_lattice` (controlled by `use_gcd_lattice`), but
-is not recommended.
-
-Likewise, one can impose constraints on M[0] >= 13 early in FP by ordering
-the columns of the M-vector lattice basis such that the first row of this
-basis (that corresponding to M[0]) has a maximal number of leading 0s.
+The coni PFVs of each p-vector up to a dilation: the lattice points of
+the ellipsoid of `coni_M_ellipsoid`, enumerated by an exact Fincke-Pohst
+kernel that prunes on gcd(K[1:]) (`coni_H_matrix`) and on M0.
 
 Parameters
 ----------
 data : CYData
-    The relevant data from the associated CY.
+    The CY (coni).
 ps : iterable of shape (N, h11-1)
-    Each row of the iterable corresponds to the perpendicular component of a
-    p-vector. I.e., p[1:]
+    The p-vectors without their coni entry, p[1:].
 Q : integer, optional
-    Only return PFVs with -dot(K,M) = Q (exact equality, unlike the
-    ``Qmin``/``Qmax`` range in non-coni ``ZpM``/``ZpK``). If not
-    provided, set to h11+h21+4.
+    Only PFVs with -K.M = Q exactly. Defaults to h11+h21+4.
 M0min : integer, optional
-    Only return PFVs with M[0] >= M0min. Defaults to 13 to match physics.
+    Only PFVs with M[0] >= M0min. Defaults to 13.
 ellipsoid_dilation : float, optional
-    The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
-    Empirically, runtime scales linearly with this value. Defaults to 1.
+    The ellipsoid's dilation; runtime grows about linearly with it.
+    Defaults to 1.
 use_c_lattice : bool, optional
-    Whether to build each p-vector's lattice data (the M-lattice basis
-    Binter, the ellipsoid and the H-matrix) in C (fast, exact, with
-    automatic fallback to the Python path on overflow). Either way the
-    PFVs of each p-vector are listed in a canonical order (by M, then K),
-    independent of the lattice basis. Defaults to True.
+    Build the lattice data in C (exact, falls back to Python on
+    overflow). Defaults to True.
 use_gcd_lattice : bool, optional
-    Whether to construct explicit lattice bases for guaranteeing sufficient
-    GCD of Kperp. Not recommended - it's generally quicker to just prune FP.
-    Defaults to False.
-low_level_parallelism : bool, optional
-    Deprecated, no effect beyond forcing n_jobs = 1 (warns if set): the
-    gcd step it parallelized is now vectorized. Parallelize over
-    p-vectors with n_jobs instead.
-n_jobs : int, optional
-    How many jobs to spawn if not doing low-level parallelism. Defaults to
-    twice the CPU count.
-extra_checks : bool, optional
-    Whether to do extra sanity checks in the ellipsoid generation. Never
-    seen these fail so defaults to False.
-extra_lll_reduction : bool, optional
-    Whether to perform an extra (technically unnecessary) LLL reduction on
-    the updated M vector lattice basis, Binter. Useful since otherwise
-    there are sometimes overflows. Defaults to True.
-device : str, optional
-    Where the lattice setup and search run: "cpu", "gpu" (the GPU
-    backend, NVIDIA or AMD; raises if it is not built or no device is
-    present) or
-    "auto" (the GPU when available and worthwhile, else the CPU; the
-    environment variable PFVS_DEVICE overrides "auto"). Results are
-    identical either way. Defaults to "auto".
-max_N_pfvs : int, optional
-    The maximum number of PFVs that can be output. The C-kernel requires a
-    limit. Defaults excessively high to 1,000,000,000.
-return_formal_pfvs : bool, optional
-    Whether to return "PFV" objects as in pfv.py. Otherwise, an
-    array of K-vectors (as rows) and an array of M-vectors (as rows) are
-    returned. Defaults to False.
-verbosity : int, optional
-    The verbosity level. Higher is more verbose. Defaults to 0.
-exhaustive : bool, optional
-    Find every coni PFV of each direction, at any dilation, instead of
-    those within ``ellipsoid_dilation``. Each p-vector's dilation bound
-    b (``pfvs.dilation``: every coni PFV of the direction has
-    delta < b) decides how: ZpM up to the bound, or ZpM up to a split
-    dilation D0 plus ``coniZpK`` above it, whichever balances the GPU
-    and the CPU best (``pfvs.dilation.bound_routing``; on the CPU alone,
-    whichever is cheaper). Results are the same either way. A p-vector
-    without a bound (the bound's hypotheses fail) is searched up to
-    ``ellipsoid_dilation`` as usual and reported as incomplete. Defaults
+    Use `_Kperp_gcd_lattice` instead of pruning (slower, old). Defaults
     to False.
+low_level_parallelism : bool, optional
+    Deprecated; only forces n_jobs = 1.
+n_jobs : int, optional
+    Parallel jobs over p-vectors. Defaults to twice the CPU count.
+extra_checks : bool, optional
+    Deprecated, no effect.
+extra_lll_reduction : bool, optional
+    As in `coni_M_ellipsoid`. Defaults to True.
+device : str, optional
+    "cpu", "gpu" (raises if unavailable) or "auto" (the GPU when
+    available and worthwhile; PFVS_DEVICE overrides). Results are
+    identical. Defaults to "auto".
+max_N_pfvs : int, optional
+    Output limit per kernel call. Defaults to 1e9.
+return_formal_pfvs : bool, optional
+    Return PFV objects instead of (Ks, Ms). Defaults to False.
+verbosity : int, optional
+    Defaults to 0.
+exhaustive : bool, optional
+    Find every coni PFV of each direction at any dilation, using each
+    p-vector's dilation bound (`pfvs.dilation`): ZpM to the bound, or ZpM
+    to D0 plus `coniZpK` above, as `bound_routing` plans. p-vectors
+    without a bound are searched to ellipsoid_dilation and reported
+    incomplete. Defaults to False.
 cost_model : pfvs.dilation.CostModel, optional
-    The costs the exhaustive search plans with. Defaults to measuring
-    them on a sample of the p-vectors (from 4096 p-vectors with a
-    bound; fewer use a fixed rough model).
+    Costs for the exhaustive plan. Defaults to measuring them on a sample.
 
 Returns
 -------
-Ks : ndarray of shape (N, h11)
-  K-vectors of the PFVs, one per row. Only returned if
-  return_formal_pfvs=False.
-Ms : ndarray of shape (N, h11)
-    M-vectors of the PFVs, one per row. Only returned if
-    return_formal_pfvs=False.
-pfvs : list of length N
-     PFV objects (see ``pfv.PFV``). Only returned if
-     return_formal_pfvs=True.
+Ks, Ms : ndarrays of shape (N, h11)
+    The PFVs (or a list of PFV objects if return_formal_pfvs), grouped by
+    p-vector and sorted by (M, K) within one.
 complete : ndarray of bool, shape (len(ps),)
-    Only if exhaustive=True: whether each p-vector's search found every
-    coni PFV of its direction. The PFVs are then grouped by p-vector and
-    sorted by (M, K) within one.
+    Only if exhaustive: whether each p-vector's search is complete.
 
 <a id="pfvs.Zp"></a>
 
@@ -1422,50 +1247,28 @@ def M_ellipsoid(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]
 ```
 
-Compute the matrices defining the M-ellipsoid in nonconi-ZpM.
-
-In brief detail,
-    - M lives in a lattice M = Binter@c
-    - K can be computed as Z @ M
-    - tadpole is obeyed (-dot(K,M)<=Qmax) iff
-      -c^T @ Binter^T @ Z @ Binter @ c <= Qmax. Define
-      mat = -Binter^T @ Z @ Binter.
-That last constraint c^T @ mat @ c <= Qmax is the ellipsoid constraint. One
-can actually dilate the ellipsoid as long as
-GCD(Kperp) >= (c^T @ mat @ c)/Qmax. This is subtly different from coni
-contexts since, here, we don't typically enforce K[0] > 0
+The M-ellipsoid of non-coni ZpM: M = Binter @ c, K = Z @ M, and the
+tadpole -dot(K, M) <= Qmax becomes c^T mat c <= Qmax with
+mat = -Binter^T Z Binter. Dilating is allowed where gcd(K) >= c^T mat c / Qmax.
 
 Parameters
 ----------
-p : ndarray of shape (h11,) or (h11-1,)
+p : ndarray of shape (h11,)
     The p-vector.
 data : CYData, optional
-    The relevant data from the associated CY. Mutually exclusive with kappa
-    and Mbasis.
-kappa : ndarray of shape (h11, h11, h11), optional
-    The triple intersection numbers of the CY. Mutually exclusive with data.
-    If provided, it is assumed that Mbasis is also provided.
-Mbasis : ndarray of shape (h11, h11), optional
-    The lattice basis for M-vectors. Mutually exclusive with data.
-    If provided, it is assumed that kappa is also provided.
+    The CY. Or pass kappa and Mbasis (data.M_lattice()) instead.
 extra_lll_reduction : bool, optional
-    Whether to perform an extra (technically unnecessary) LLL reduction on
-    the updated M vector lattice basis, Binter. Useful since otherwise
-    there are sometimes overflows. Defaults to True.
+    Extra LLL reduction of Binter; avoids some overflows. Defaults to True.
 extra_checks : bool, optional
-    Deprecated, no effect (warns if set): mat is always computed in
-    exact integer arithmetic, so there is nothing to check.
+    Deprecated, no effect.
 
 Returns
 -------
 mat : ndarray of shape (h11-1, h11-1)
-    The matrix defining the ellipsoid. I.e., c^T @ mat @ c <= Qmax. We
-    typically dilate this ellipsoid via
-    c^T @ mat @ c <= ellipsoid_dilation * Qmax
 Z : ndarray of shape (h11, h11)
-    The matrix relating M and K. Specifically, K = Z @ M
+    K = Z @ M.
 Binter : ndarray of shape (h11, h11-1)
-    Updated M-vector lattice basis, integrating the dot(K,p)=0 constraint.
+    Basis of the M-lattice with dot(K, p) = 0.
 
 <a id="pfvs.Zp.K_ellipsoid"></a>
 
@@ -1483,42 +1286,26 @@ def K_ellipsoid(p: ArrayLike,
                 extra_checks: bool = False) -> tuple[np.ndarray, np.ndarray]
 ```
 
-Compute the matrices defining the K-ellipsoid in nonconi-ZpK.
-
-In brief detail,
-    - K lives in the orthog lattice to p. Call a basis for this lattice B
-    - M can be computed as (kappa p)^{-1} K
-    - tadpole is obeyed (-dot(K,M)<=Qmax) iff
-      -d^T @ B^T @ (kappa p)^{-1} @ B @ d <= Qmax. Define
-      mat = -B^T @ Ainv @ B.
-That last constraint d^T @ mat @ d <= Qmax is the ellipsoid constraint.
+The K-ellipsoid of non-coni ZpK: K = B @ d with B a basis of the lattice
+orthogonal to p, M = (kappa p)^{-1} K, and the tadpole becomes
+d^T mat d <= Qmax with mat = -B^T (kappa p)^{-1} B.
 
 Parameters
 ----------
-p : ndarray of shape (h11,) or (h11-1,)
+p : ndarray of shape (h11,)
     The p-vector.
 data : CYData, optional
-    The relevant data from the associated CY. Mutually exclusive with kappa
-    and Mbasis.
-kappa : ndarray of shape (h11, h11, h11), optional
-    The triple intersection numbers of the CY. Mutually exclusive with data.
-    If provided, it is assumed that Mbasis is also provided.
-Mbasis : ndarray of shape (h11, h11), optional
-    The lattice basis for M-vectors. Mutually exclusive with data.
-    If provided, it is assumed that kappa is also provided.
+    The CY. Or pass kappa and Mbasis (data.M_lattice()) instead.
 extra_lll_reduction : bool, optional
-    Whether to perform an extra (technically unnecessary) LLL reduction on
-    the updated M vector lattice basis, Binter. Useful since otherwise
-    there are sometimes overflows. Defaults to True.
+    Extra LLL reduction of Binter; avoids some overflows. Defaults to True.
 extra_checks : bool, optional
-    Deprecated, no effect (warns if set): it is not used here.
+    Deprecated, no effect.
 
 Returns
 -------
 mat : ndarray of shape (h11-1, h11-1)
-    The matrix defining the ellipsoid. I.e., d^T @ mat @ d <= Qmax
 B : ndarray of shape (h11, h11-1)
-    The K-vector lattice basis, integrating just the dot(K,p)=0 constraint.
+    Basis of the K-lattice orthogonal to p.
 
 <a id="pfvs.Zp.H_matrix"></a>
 
@@ -1531,35 +1318,10 @@ B : ndarray of shape (h11, h11-1)
 def H_matrix(ZBinter: ArrayLike)
 ```
 
-Compute the H-matrix for use in non-coni ZpM. This is the HNF of Z@Binter.
-
-Analogous to `coni_H_matrix` in coniZp.py, but without the projection that
-drops K[0]: in the non-coni context, K = Z @ Binter @ c directly (no free
-K[0] component), so the full matrix is used.
-
-In ZpM, one wants to ensure GCD(K) is sufficiently large. A point c in the
-M-ellipsoid has an associated valuation c^T @ mat @ c. For dilated ellipsoids,
-this can have c^T @ mat @ c > Qmax. This would give rise to a K and M which
-violates tadpole (i.e., -dot(K,M) > Qmax) unless
-    GCD(K) >= (c^T @ mat @ c)/Qmax,
-in which case one can divide K by GCD(K) to bring the solution under tadpole.
-
-Recall that K = Z @ Binter @ c. Since H is the row-HNF of Z @ Binter,
-GCD(H @ c) = GCD(K), and GCD(H[-m:,-m:] @ c[-m:]) >= GCD(H[-n:,-n:] @ c[-n:])
-for m < n. This gives a monotonically decreasing upper bound on GCD(K) as FP
-sets components of c from right to left, enabling early pruning.
-
-Parameters
-----------
-ZBinter : ndarray of shape (h11, h11-1)
-    The product of matrices Z and Binter from M_ellipsoid. Has interpretation
-    that K = ZBinter @ c.
-
-Returns
--------
-H : ndarray of shape (h11, h11-1)
-    The row-HNF of Z@Binter. Has interpretation that GCD(H@c) = GCD(K) and
-    that GCD(H[-m:,-m:]@c[-m:]) >= GCD(H[-n:,-n:]@c[-n:]) for m<n.
+Row-HNF of Z@Binter (K = ZBinter @ c), for gcd(K) pruning in ZpM: since
+gcd(H @ c) = gcd(K) and the gcd of trailing blocks only decreases as FP
+fixes c from the right, a dilated point with gcd(K) < c^T mat c / Qmax is
+pruned early. As `coni_H_matrix`, without dropping K[0].
 
 <a id="pfvs.Zp.ZpM"></a>
 
@@ -1584,81 +1346,49 @@ def ZpM(data: CYData,
         verbosity: int = 0) -> tuple[ArrayLike, ArrayLike]
 ```
 
-A 'Zp' implementation that computes non-coni PFVs from input integer
-p-vectors.
-
-The logic is
-    1 an integer p-vector defines a certain ellipsoid (see `M_ellipsoid`)
-    2 a lattice point c in this ellipsoid defines an M-vector via Binter@c.
-      this also defines a K-vector via K = Z @ Binter @ c
-so one wants to enumerate such c-vectors. This is done via Fincke-Pohst.
-GCD re-introduction is applied post-hoc via `_allow_gcds`.
+Non-coni PFVs from p-vectors: Fincke-Pohst over the M-ellipsoid of each p
+(`M_ellipsoid`), with gcd(K) pruning; GCDs are re-introduced afterwards
+(`_allow_gcds`).
 
 Parameters
 ----------
 data : CYData
-    The relevant data from the associated CY.
-ps : iterable of shape (N, h11-1)
-    Each row of the iterable corresponds to the perpendicular component of a
-    p-vector. I.e., p[1:]
-Qmax : integer, optional
-    Only return PFVs with -dot(K,M) <= Qmax. If not provided, set to
-    h11+h21+2.
-Qmin : integer, optional
-    Only return PFVs with -dot(K,M) >= Qmin. If not provided, set to 0.
+    The CY (non-coni).
+ps : ArrayLike of shape (N, h11)
+    The p-vectors, inside the Kahler cone (H @ p >= 1).
+Qmax, Qmin : integer, optional
+    Keep PFVs with Qmin <= -dot(K, M) <= Qmax. Default h11+h21+2 and 0.
 ellipsoid_dilation : float, optional
-    The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
-    Empirically, runtime scales linearly with this value. Defaults to 1.
-use_c_lattice : bool, optional
-    Whether to build each p-vector's lattice data (Binter, the ellipsoid
-    and, with use_c_kernel, the H-matrix) in C (fast, exact, with
-    automatic fallback to the Python path on overflow). The C path picks
-    a different, equally valid LLL-reduced basis, so it finds the same
-    PFVs but may list them in a different order. Set False to reproduce
-    the previous order exactly. Defaults to True.
+    Ellipsoid dilation; runtime grows about linearly. Defaults to 1.
 use_c_kernel : bool, optional
-    Enumeration backend. True (default) uses `pfv_kernel` (C: exact
-    decisions, GCD pruning; much faster for dilated ellipsoids). False
-    uses `util.fp_iterative_njit` (Numba, floating-point decisions, no
-    GCD pruning), kept for reference. They find the same PFVs.
+    True: the exact C kernel. False: the Numba reference (float, no GCD
+    pruning; same PFVs). Defaults to True.
+use_c_lattice : bool, optional
+    Build each p's lattice data in C (falls back to Python on overflow;
+    same PFVs, possibly in another order). Defaults to True.
 n_jobs : int, optional
-    How many jobs to spawn for per-p-vector parallelism. Defaults to twice
-    the CPU count.
+    Parallel jobs. Defaults to 2x the CPU count.
 extra_checks : bool, optional
-    Whether to do extra sanity checks in the ellipsoid generation. Never
-    seen these fail so defaults to False.
+    Deprecated, no effect.
 extra_lll_reduction : bool, optional
-    Whether to perform an extra (technically unnecessary) LLL reduction on
-    the updated M vector lattice basis, Binter. Useful since otherwise
-    there are sometimes overflows. Defaults to True.
+    As in `M_ellipsoid`.
 max_N_pfvs : int, optional
-    The maximum number of PFVs that can be output. The C-kernel requires a
-    limit. Defaults excessively high to 1,000,000,000.
+    Output limit (the C kernel needs one). Defaults to 1e9.
 return_formal_pfvs : bool, optional
-    Whether to return "PFV" objects as in pfv.py. Otherwise, an
-    array of K-vectors (as rows) and an array of M-vectors (as rows) are
-    returned. Defaults to False.
+    Return PFV objects instead of (Ks, Ms). Defaults to False.
 verbosity : int, optional
-    The verbosity level. Higher is more verbose. Defaults to 0.
+    Defaults to 0.
 
 Returns
 -------
-Ks : ndarray of shape (N, h11)
-  K-vectors of the PFVs, one per row. Only returned if
-  return_formal_pfvs=False.
-Ms : ndarray of shape (N, h11)
-    M-vectors of the PFVs, one per row. Only returned if
-    return_formal_pfvs=False.
-pfvs : list of length N
-     PFV objects (see ``pfv.PFV``). Only returned if
-     return_formal_pfvs=True.
+Ks, Ms : ndarrays of shape (N, h11)
+    The PFVs, one per row (or a list of PFV objects).
 
 Raises
 ------
 ValueError
-    If ``data.coni`` is True, ``ps`` is empty, ``Qmax < Qmin``,
-    ``ellipsoid_dilation <= 0``, or if ``_allow_gcds`` finds no valid
-    GCD expansions.
+    If data.coni, ps is empty or outside the cone, Qmax < Qmin,
+    ellipsoid_dilation <= 0, or no PFVs survive `_allow_gcds`.
 
 <a id="pfvs.Zp.ZpK"></a>
 
@@ -1681,70 +1411,42 @@ def ZpK(data: CYData,
         verbosity: int = 0) -> tuple[ArrayLike, ArrayLike]
 ```
 
-A 'Zp' implementation that computes non-coni PFVs from input integer
-p-vectors.
-
-The logic is
-    1 an integer p-vector defines a certain ellipsoid (see `K_ellipsoid`)
-    2 a lattice point d in this ellipsoid defines a K-vector via B @ d.
-      this also defines an M-vector via M = (kappa @ p)^{-1} @ B @ d
-so one wants to enumerate such d-vectors. This is done via Fincke-Pohst.
-GCD re-introduction is applied post-hoc via `_allow_gcds`. [WIP: GCD
-pruning is not yet integrated into the Fincke-Pohst solver here, unlike
-`coniZpM`.]
+Non-coni PFVs from p-vectors: enumerate the K-ellipsoid of each p
+(`K_ellipsoid`), without GCD pruning; GCDs are re-introduced afterwards.
 
 Parameters
 ----------
 data : CYData
-    The relevant data from the associated CY.
-ps : iterable of shape (N, h11-1)
-    Each row of the iterable corresponds to the perpendicular component of a
-    p-vector. I.e., p[1:]
-Qmax : integer, optional
-    Only return PFVs with -dot(K,M) <= Qmax. If not provided, set to
-    h11+h21+2.
-Qmin : integer, optional
-    Only return PFVs with -dot(K,M) >= Qmin. If not provided, set to 0.
+    The CY (non-coni).
+ps : ArrayLike of shape (N, h11)
+    The p-vectors, inside the Kahler cone (H @ p >= 1).
+Qmax, Qmin : integer, optional
+    Keep PFVs with Qmin <= -dot(K, M) <= Qmax. Default h11+h21+2 and 0.
 ellipsoid_dilation : float, optional
-    The dilation of the ellipsoid. Typically want >>1 to capture more PFVs.
-    Empirically, runtime scales linearly with this value. Defaults to 1.
+    Ellipsoid dilation; runtime grows about linearly. Defaults to 1.
 n_jobs : int, optional
-    How many jobs to spawn for per-p-vector parallelism. Defaults to twice
-    the CPU count.
+    Parallel jobs. Defaults to 2x the CPU count.
 extra_checks : bool, optional
-    Deprecated, no effect (warns if set): it is not used by the K-ellipsoid path.
+    Deprecated, no effect.
 extra_lll_reduction : bool, optional
-    Whether to perform an extra (technically unnecessary) LLL reduction on
-    the updated M vector lattice basis, Binter. Useful since otherwise
-    there are sometimes overflows. Defaults to True.
+    As in `K_ellipsoid`.
 max_N_pfvs : int, optional
-    The maximum number of PFVs that can be output. The C-kernel requires a
-    limit. Defaults excessively high to 1,000,000,000.
+    Output limit (the C kernel needs one). Defaults to 1e9.
 return_formal_pfvs : bool, optional
-    Whether to return "PFV" objects as in pfv.py. Otherwise, an
-    array of K-vectors (as rows) and an array of M-vectors (as rows) are
-    returned. Defaults to False.
+    Return PFV objects instead of (Ks, Ms). Defaults to False.
 verbosity : int, optional
-    The verbosity level. Higher is more verbose. Defaults to 0.
+    Defaults to 0.
 
 Returns
 -------
-Ks : ndarray of shape (N, h11)
-  K-vectors of the PFVs, one per row. Only returned if
-  return_formal_pfvs=False.
-Ms : ndarray of shape (N, h11)
-    M-vectors of the PFVs, one per row. Only returned if
-    return_formal_pfvs=False.
-pfvs : list of length N
-     PFV objects (see ``pfv.PFV``). Only returned if
-     return_formal_pfvs=True.
+Ks, Ms : ndarrays of shape (N, h11)
+    The PFVs, one per row (or a list of PFV objects).
 
 Raises
 ------
 ValueError
-    If ``data.coni`` is True, ``ps`` is empty, ``Qmax < Qmin``,
-    ``ellipsoid_dilation <= 0``, or if ``_allow_gcds`` finds no valid
-    GCD expansions.
+    If data.coni, ps is empty or outside the cone, Qmax < Qmin,
+    ellipsoid_dilation <= 0, or no PFVs survive `_allow_gcds`.
 
 <a id="pfvs.pvectors"></a>
 
@@ -1764,32 +1466,23 @@ ValueError
 def pvecs(data: CYData, min_N_pts: int, verbosity: int = 0) -> np.ndarray
 ```
 
-Generate primitive p-vectors using a branch-and-bound search (Kannan).
-
-I.e., finds integral vectors p satisfying H @ p > 0, where H are the
-hyperplanes of the associated Kahler cone (for non-coni PFVs) or the
-hyperplanes of a particular facet of this Kahler cone (for coniPFVs). Only
-primitive vectors (GCD(p) = 1) are returned.
-
-Wraps `latticepts.enum_lattice_points`, which searches within an L-inf box
-|p_i| <= B and iteratively increases B until at least `min_N_pts` p-vectors
-are found.
+Primitive integer p with H p > 0: H is data.H (non-coni) or data.H_cob
+(coni). Returns every such p in the smallest L-inf box |p_i| <= B holding
+at least min_N_pts (`latticepts.enum_lattice_points`).
 
 Parameters
 ----------
 data : CYData
-    The relevant data from the associated CY, providing the hyperplane
-    matrix H (or H_cob for coni).
+    The CY.
 min_N_pts : int
-    Minimum number of primitive p-vectors to return.
+    Minimum number of p-vectors to return.
 verbosity : int, optional
-    The verbosity level. Higher is more verbose. Defaults to 0.
+    Defaults to 0.
 
 Returns
 -------
-pts : ndarray of shape (N, h11)
-    Array of primitive p-vectors, where N >= `min_N_pts`. Each row is an
-    integer vector satisfying H @ p > 0
+pts : ndarray of shape (N, h11), or (N, h11-1) for coni
+    The p-vectors, N >= min_N_pts.
 
 <a id="pfvs.dilation"></a>
 
@@ -1876,9 +1569,7 @@ def coni_dilation_bound_ceils(ps: ArrayLike,
                               n_jobs: int = 1) -> np.ndarray
 ```
 
-ceil(`coni_dilation_bound`) for each row of `ps`, as an int64 array (0:
-no bound): ZpM at that dilation finds every coni PFV of the direction.
-Like `coni_dilation_bounds`, without building a Fraction per row.
+ceil(`coni_dilation_bound`) for each row of `ps` as int64 (0: no bound).
 
 <a id="pfvs.dilation.coni_dilation_bounds"></a>
 
@@ -1894,9 +1585,7 @@ def coni_dilation_bounds(ps: ArrayLike,
                          n_jobs: int = 1) -> list[Fraction | None]
 ```
 
-`coni_dilation_bound` for each row of `ps` (shape (n, h11-1)), in C (the
-Python path only for rows the C version cannot decide), in `n_jobs`
-threads.
+`coni_dilation_bound` for each row of `ps` (shape (n, h11-1)).
 
 <a id="pfvs.dilation.bound_routing"></a>
 
@@ -1914,37 +1603,32 @@ def bound_routing(bounds: ArrayLike,
                   shared: bool = False) -> tuple[float, float, float]
 ```
 
-How to search the p-vectors of one geometry exhaustively, given their
-dilation bounds: p goes GPU-to-bound (ZpM at dilation b(p)) if
-b(p) <= b*, else it is split at D0 (ZpM up to D0 on the GPU, ZpK above
-D0 on the CPU). Chooses D0 and b* to minimize the run time, with the GPU
-and the CPU running at the same time.
+Plan an exhaustive search of one geometry's p-vectors: p with
+b(p) <= b* run ZpM to their bound (GPU); the rest are split at D0 (ZpM up
+to D0 on the GPU, ZpK above it on the CPU). Chooses b* and D0 to minimize
+the run time, GPU and CPU running concurrently.
 
 Parameters
 ----------
 bounds : array of shape (n,)
-    b(p) = Q / mu0(p) for each p-vector (`coni_dilation_bounds`).
-    Non-finite entries (no bound: such p cannot be searched
-    exhaustively) are ignored.
+    b(p) for each p-vector (`coni_dilation_bounds`); non-finite ignored.
 G : callable
-    G(D): mean GPU wall time per p-vector of ZpM at dilation D,
-    increasing in D (vectorized).
+    G(D): GPU time per p-vector of ZpM at dilation D (vectorized,
+    increasing).
 K : callable
-    K(D0): mean CPU wall time per p-vector of ZpK above D0.
+    K(D0): CPU time per p-vector of ZpK above D0.
 D0s : array
-    Candidate split dilations (where K was measured).
+    Candidate split dilations.
 c : float, optional
     CPU wall time per p-vector to compute b(p).
 shared : bool, optional
-    ZpM and ZpK run on the same processors (no GPU), so the run takes
-    T_GPU + T_CPU instead of the max: then p goes ZpM-to-bound exactly
-    when that is cheaper than its split.
+    ZpM and ZpK share the processors (no GPU): minimize T_GPU + T_CPU
+    instead of the max.
 
 Returns
 -------
 (b_star, D0, t) : the threshold (-inf: split every p), the split
-    dilation, and the run time per p-vector, max(T_GPU, T_CPU) / n
-    (T_GPU + T_CPU if shared).
+    dilation, and the run time per p-vector.
 
 <a id="pfvs.dilation.CostModel"></a>
 
@@ -1957,23 +1641,19 @@ Returns
 class CostModel()
 ```
 
-Measured search costs for one geometry, as `bound_routing` takes them:
-the mean wall time per p-vector of ZpM at dilations D (on the device it
-runs on) and of ZpK above split dilations D0 (on the CPU), and of
-computing the bound. G between and beyond the measured dilations is
-interpolated linearly in log-log (extrapolated with the last slope).
+Measured per-p-vector search costs of one geometry, for `bound_routing`.
+G is interpolated (and extrapolated) linearly in log-log.
 
 Parameters
 ----------
 D, G : sequences
-    Dilations (increasing) and ZpM's time per p-vector at each (made
-    nondecreasing).
+    Increasing dilations and ZpM's time per p-vector at each.
 D0s, K : sequences
     Split dilations (integers) and ZpK's time per p-vector above each.
 c : float, optional
     Time per p-vector to compute the bound.
 shared : bool, optional
-    ZpM and ZpK share the same processors (no GPU): see `bound_routing`.
+    As in `bound_routing`.
 
 <a id="pfvs.dilation.CostModel.G_at"></a>
 
@@ -2025,14 +1705,10 @@ def route(bounds: ArrayLike) -> tuple[float, float, float]
 def route_at_price(bounds: ArrayLike, lam: float) -> tuple[np.ndarray, int]
 ```
 
-The routing rule at a given price lam (GPU time per CPU time; see
-`bound_routing`: when several geometries share the hardware, lam is
-common to all and set by balancing the totals). The split dilation
-D0 minimizes G(D0) + lam K(D0), the cost of a split, and p goes to
-the bound iff G(b) - G(D0) <= lam K(D0).
-
-Returns (to_bound, D0): a mask over bounds (False where a bound is
-not finite) and the split dilation.
+Routing at a price lam (GPU time per CPU time saved, shared by
+geometries on the same hardware): D0 minimizes G(D0) + lam K(D0), and
+p goes to its bound iff G(b) - G(D0) <= lam K(D0). Returns
+(to_bound mask, D0).
 
 <a id="pfvs.gpu"></a>
 
@@ -2157,11 +1833,9 @@ path (none of its points are returned). Points are grouped by p-vector
 def coni_batch(kappa, Mbasis, ps, Q, dilation, M0min, max_N_out, device=0)
 ```
 
-GPU counterpart of `fp_kernel._coni_batch` for one geometry (the default
-lattice options: extra LLL, cut-aware basis): returns (M, Kn, q, pidx,
-pstat) with the same meaning -- pstat 1 marks p-vectors for the per-p
-CPU path (including any with more than max_N_out lattice points, so that
-path reports it as the CPU kernel would).
+GPU counterpart of `fp_kernel._coni_batch` for one geometry: (M, Kn, q,
+pidx, pstat), pstat 1 marking p-vectors for the CPU path (including any
+with more than max_N_out points).
 
 <a id="pfvs.distributed"></a>
 
@@ -2194,25 +1868,21 @@ Jobs for `serve`: one per geometry.
 
 **Arguments:**
 - `datas` *(list of CYData)*: The geometries.
-- `B` *(int or list)*: p-box half-width (all primitive p in the Kahler
-cone with |p|_inf <= B, as coniZpM is usually driven).
+- `B` *(int or list)*: p-box half-width: all primitive p in the cone
+with |p|_inf <= B.
 - `D` *(float or list)*: Ellipsoid dilation.
 - `Q` *(int, list or None)*: Tadpole (default h11 + h21 + 4).
 - `M0min` *(int, optional)*: As in coniZpM.
 - `ids` *(list, optional)*: Job names (default 0, 1, ...); used for the
 output file names, so they must be unique.
-- `n_p` *(list, optional)*: Estimated p-vector counts; used to shard large
-boxes into units of about `target_p` p-vectors (see `serve`).
+- `n_p` *(list, optional)*: Estimated p-vector counts, for sharding
+large boxes (see `serve`'s target_p).
 - `exhaustive` *(bool or list, optional)*: Every coni PFV of each
-direction, at any dilation (see the module description); `D` is then
-only used for p-vectors without a dilation bound, which are reported
-as incomplete.
-- `cost_model` *(CostModel or list, optional)*: The costs GPU workers
-route exhaustive jobs with (`pfvs.dilation.CostModel`: ZpM on the
-GPU, ZpK on the CPU workers). Only their shape matters -- the price
-lam absorbs the scale. Default: costs measured for the job's h11
-on an RTX 5090 and 24 CPU cores (so lam ~ 1 when the cluster has
-about 24 CPU cores per GPU).
+direction, at any dilation; `D` is then used only for p-vectors
+without a dilation bound, reported as incomplete.
+- `cost_model` *(CostModel or list, optional)*: Routing costs for
+exhaustive jobs (`pfvs.dilation.CostModel`); only their shape
+matters. Default: measured for the job's h11.
 
 **Returns:**
 *(list of dict)* The jobs.
@@ -2230,13 +1900,10 @@ class _Coordinator()
 
 Lives in the manager's server process; its methods are the RPCs.
 
-Units are keyed (job id, path): a path is a tuple of ints -- (k,) for the
-k-th initial shard of a job, (k, i) for the i-th piece it was split into,
-and so on; path + (-1,) is the ZpK unit of an exhaustive search unit
-(its split p-vectors). A job is complete when all its leaf units are
-done; its PFVs are the leaves' in path order. Splits are logged
-(splits.pkl) so a resumed run rebuilds the same leaves; ZpK units are
-rebuilt from their search units' results.
+Units are keyed (job id, path): (k,) is a job's k-th shard, (k, i) the
+i-th piece it was split into, path + (-1,) the ZpK unit of an exhaustive
+search unit. A job is done when all its leaves are. Splits are logged
+(splits.pkl) so a resumed run rebuilds the same leaves.
 
 <a id="pfvs.distributed._Coordinator.get_work"></a>
 
@@ -2249,11 +1916,9 @@ rebuilt from their search units' results.
 def get_work(worker, max_p, kinds=("search", ), gpu=False)
 ```
 
-Units totalling about max_p p-vectors (estimated) of the given
-kinds ("zpk": ZpK units; "search"), in that order of preference, or
-[] if none is available now; None when everything is done. While a
-GPU worker (gpu=True) is active, CPU workers get no exhaustive search
-units (their ZpM would be far slower than the GPU's).
+Units totalling about max_p p-vectors of the given kinds, in order
+of preference; [] if none now, None when all is done. CPU workers get
+no exhaustive search units while a GPU worker is active.
 
 <a id="pfvs.distributed._Coordinator.split"></a>
 
@@ -2304,11 +1969,9 @@ an n_p estimate.
 - `lease_s` *(float, optional)*: Reissue a unit not returned in this long.
 - `max_tries` *(int, optional)*: Attempts per unit before it is recorded
 in <out>/failed.txt.
-- `backup_s` *(float, optional)*: Once no unit is pending, a unit leased
-for longer than this is also given to an idle worker (the first
-result wins), so slow workers do not hold up the end.
-- `lam0` *(float, optional)*: The initial price of exhaustive jobs'
-routing (GPU time per CPU time; see the module description).
+- `backup_s` *(float, optional)*: Once nothing is pending, also give a
+unit leased longer than this to an idle worker (first result wins).
+- `lam0` *(float, optional)*: Initial routing price of exhaustive jobs.
 
 **Returns:**
 *(dict)* The final progress counters.
@@ -2328,10 +1991,9 @@ def load_results(out)
 The finished jobs of an output directory.
 
 **Returns:**
-*(dict)* job id -> dict(K, M, P, n_p, B, D, Q): the PFVs (K, M) and each
-one's p-vector P = p[1:]. Exhaustive jobs also have `incomplete`: the
-p-vectors without a dilation bound (searched at dilation D only); their
-PFVs are each listed once, by p-vector, then (M, K).
+*(dict)* job id -> dict(K, M, P, n_p, B, D, Q): the PFVs (K, M) and
+their p-vectors P = p[1:]. Exhaustive jobs also have `incomplete`: the
+p-vectors without a dilation bound (searched at dilation D only).
 
 <a id="pfvs.distributed.work"></a>
 
@@ -2362,11 +2024,8 @@ device of this machine, one worker each).
 - `procs` *(int, optional)*: CPU worker processes (default: all cores).
 - `batch_p` *(int, optional)*: p-vectors per request (GPU default 2^20,
 CPU default 2^14).
-- `max_unit_p` *(int, optional)*: A unit with more p-vectors than this is
-sent back to be split (GPU default 2^23, CPU default 2^17), so that no
-worker holds a unit for long.
-- `bound_threads` *(int, optional)*: Host threads a GPU worker computes
-exhaustive jobs' dilation bounds with (default: half the cores). The
-bounds are CPU work that feeds the GPU: with CPU workers on the same
-machine, split its cores between the two.
+- `max_unit_p` *(int, optional)*: Larger units are sent back to be split
+(GPU default 2^23, CPU default 2^17).
+- `bound_threads` *(int, optional)*: GPU worker's host threads for
+exhaustive jobs' dilation bounds (default: half the cores).
 

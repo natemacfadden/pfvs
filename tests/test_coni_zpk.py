@@ -16,11 +16,9 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  coniZpK (the coni PFVs above a dilation D0) and the exhaustive
-#               search of coniZpM (each direction up to its dilation bound,
-#               planned as ZpM to the bound or ZpM to D0 plus ZpK above it).
-#               The reference is ZpM at each direction's dilation bound,
-#               which finds every coni PFV of the direction.
+# Description:  coniZpK (coni PFVs above a dilation D0) and coniZpM's
+#               exhaustive search, against ZpM at each direction's dilation
+#               bound.
 # -----------------------------------------------------------------------------
 
 import math

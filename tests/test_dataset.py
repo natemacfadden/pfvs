@@ -16,14 +16,10 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  End-to-end regression against the public coni-PFV dataset
-#               (https://huggingface.co/datasets/natemacfadden/calabi-yau-coni-pfvs).
-#               For each stored geometry, coniZpM over every primitive p-vector
-#               with |p|_inf <= B at dilation D must reproduce exactly the
-#               dataset's PFVs with p-infnorm <= B and required dilation <= D.
-#               (The dataset predates automatic Kperp handling, so it holds the
-#               PFVs with primitive K[1:]; additional PFVs with gcd(K[1:]) >= 2
-#               must be valid.)
+# Description:  Regression against the public coni-PFV dataset: coniZpM over
+#               every primitive p with |p|_inf <= B at dilation D reproduces
+#               the dataset's PFVs in that range (plus valid PFVs with
+#               gcd(K[1:]) >= 2, which the dataset omits).
 #               Fixtures: tests/data/build_fixtures.py.
 # -----------------------------------------------------------------------------
 

@@ -21,26 +21,18 @@
 // Many geometries can share one call (each p names its geometry), which is
 // what keeps the device busy when each geometry has few p-vectors.
 //
-// Kernels, per batch of p-vectors (all data stays on the device):
-//   k_pre     thread per p: Z = kappa.p, orthogonal lattice
-//   k_build   16-lane tile per p: both LLLs and the products (pfv_gpu.cuh);
-//             p's whose int64 Gram overflows are redone with an int128 Gram
-//   k_fin     thread per p: HNF, H rows, exact factorization, search prep
-//   k_top     thread per p: the search down to depth `sd`, emitting prefixes
-//   k_search  thread per prefix: the rest of that subtree, emitting points
-// The search is fpk_common.h's fpk_search, in float when qmax < 2^22 (the
-// GPU's FP64 rate is 1/64 of FP32; see fpk_search_impl.h for why that is
-// exact) and double otherwise.
+// Kernels, per batch (data stays on the device):
+//   k_pre              thread per p: Z = kappa.p, orthogonal lattice
+//   k_build            16-lane tile per p: LLLs and products (pfv_gpu.cuh)
+//   k_fin              thread per p: HNF, factorization, search prep
+//   k_top / k_expand /
+//   k_leaf             the search, split into subtrees in stages (below)
+// The search is fpk_search, in float when qmax < 2^22, else double.
 //
-// Exactness is the CPU's: every decision is exact integer arithmetic. A p the
-// device cannot finish exactly (an int128/int64 overflow, a factorization
-// that needs GMP, an int32 coordinate range, an exact q beyond int128) is
-// reported in pstat for the host to redo on the CPU path; none of its points
-// are returned. Buffers that fill are grown and the batch is rerun.
-//
-// Points are returned grouped by p (ascending) and, within a p, sorted by
-// (M, Kn) -- a canonical order, since the device's basis (hence the search
-// order) can differ from the CPU's.
+// Every decision is exact. A p the device cannot finish exactly (overflow,
+// GMP needed, ...) is flagged in pstat for the host to redo; none of its
+// points are returned. Points come grouped by p, sorted by (M, Kn) within a
+// p (canonical, since the device's basis can differ from the CPU's).
 
 #include <cstdio>
 #include <cstdlib>
@@ -229,11 +221,9 @@ __global__ void k_pre(Glob G, int n, int64_t *Og)
     D->status = st ? ST_CPU : ST_PRE;
 }
 
-// Lattice setup, stage by stage over retry lists: <int64 Gram, float GS>
-// for every p; failures are redone with a double Gram-Schmidt (retryA), and
-// int64 Gram overflows with an int128 Gram (retryB). A float LLL only ever
-// fails to converge or loses a pivot's sign -- it cannot produce a wrong
-// basis (all basis operations are exact) -- so the retries cost time only.
+// Lattice setup over retry lists: <int64 Gram, float GS> for every p, then
+// failures with a double Gram-Schmidt (retryA) and int64 Gram overflows with
+// int128 (retryB). A float LLL can fail but never gives a wrong basis.
 #ifndef PFG_TPB
 #define PFG_TPB 2
 #endif
@@ -352,12 +342,10 @@ __global__ void __launch_bounds__(PFG_EXP_BOUNDS) k_leaf(Glob G, const int32_t *
     if (st == -8 || st == -11) D->status = ST_CPU;   // int32 range; float precision
 }
 
-// k_expand is warp-cooperative: each thread sets up its prefix's level node
-// (fpk_search with node_out), then the warp's lanes share the union of their
-// nodes' candidates, one candidate per lane per round (a thread per prefix
-// leaves most lanes idle: the candidate counts and gcd lengths vary). Nodes
-// with several H rows at the level and double geometries keep the
-// thread-per-prefix search.
+// k_expand is warp-cooperative: each thread sets up its prefix's node, then
+// the warp's lanes take the union of the nodes' candidates, one per lane per
+// round. Nodes with several H rows at the level, and double geometries, use
+// a thread per prefix.
 struct CoopSlot { fpk_node_f nd; unsigned long long k; int ip, geo, cnt, end; };
 
 __global__ void __launch_bounds__(PFG_EXP_BOUNDS) k_expand(Glob G, const int32_t *src, const int *src_p, unsigned long long n, int s)
@@ -436,9 +424,8 @@ __global__ void __launch_bounds__(PFG_EXP_BOUNDS) k_expand(Glob G, const int32_t
     snprintf(out->err, sizeof out->err, "%s (%s:%d)", cudaGetErrorString(e_), __FILE__, __LINE__); \
     goto fail; } } while (0)
 
-// Per-device workspace: device buffers are kept between calls (allocating
-// and freeing gigabytes per call costs more than the work) and regrown only
-// when a call needs more; pfg_release frees them.
+// Per-device workspace, kept between calls and regrown as needed;
+// pfg_release frees it.
 enum { WS_GEO, WS_K, WS_M, WS_PS, WS_PGEO, WS_PD, WS_OG, WS_XG, WS_RA, WS_RB, WS_CNT, WS_NPRE,
        WS_NPTS, WS_PRE0, WS_PREP0, WS_PRE1, WS_PREP1, WS_PTS, WS_QS, WS_PTSP, WS_STAT, WS_N };
 struct Workspace { void *p[WS_N] = {}; size_t cap[WS_N] = {}; std::mutex mu; };
@@ -621,10 +608,8 @@ restart:                                         // (after an out-of-memory: sma
         unsigned long long npts = 0, nstage[sd + 1] = {0};
         for (;;) {
             CK(cudaMemset(G.npts, 0, 8));
-            // search, split into subtrees in stages (ping-pong prefix buffers). A
-            // stage whose prefixes overflow its output buffer is rerun alone with
-            // a larger one: its input is intact, and the points it emitted are
-            // dropped by resetting the point count (status changes are idempotent).
+            // search in stages (ping-pong prefix buffers); a stage that overflows
+            // its output is rerun with a larger buffer, dropping its points
             unsigned long long nsrc = 0, npts0 = 0;
             for (int q = 0; q <= sd; ++q) nstage[q] = 0;
             int cur = 0;

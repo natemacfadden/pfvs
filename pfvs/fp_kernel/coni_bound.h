@@ -26,13 +26,9 @@ mu0 of pfvs.dilation (the coni dilation bound is delta < Q / mu0) in C:
     Lambda = {K in Z^(h11-1) : p_r . K = 0}
     mu0    = min_{0 != K in Lambda} K^T S K
 
-Exact: integer arithmetic (int64 values, checked int128 intermediates). The
-form S on Lambda is G / L with G an integer Gram matrix (fraction-free
-solve). G is LLL-reduced (floating-point decisions, exact integer
-transform) and its minimum found by Fincke-Pohst (cb_min below): floats only
-prune, widened by a rigorous rounding-error bound, and every candidate is
-evaluated exactly. Requires pfv_lattice.h (with its implementation) in the
-same translation unit.
+Exact: S on Lambda is G / L with G an integer Gram matrix, LLL-reduced and
+minimized by Fincke-Pohst (cb_min); floats only prune, with a rigorous
+error bound. Requires pfv_lattice.h (with its implementation).
 
 **Returns:**
      0: mu0 = *mu_num / *mu_den (reduced), K a minimizer (length h11-1)
@@ -85,12 +81,9 @@ static inline fpk_i128 cb_divexact(fpk_i128 x, cb_divisor D)
     return D.neg ? -q : q;
 }
 
-// LLL (delta = 0.99) of the rows of V (n x n, int64; the identity on entry)
-// with respect to the form G: the Gram matrix of V is kept in double and
-// only steers the reduction; V itself is updated exactly, so it stays
-// unimodular whatever the rounding (the caller recomputes V G V^T exactly).
-// 0, -1 on int64 overflow, -2 if a Gram-Schmidt norm is not positive, -3
-// if it does not converge.
+// LLL (delta 0.99) of the rows of V (identity on entry) w.r.t. the form G.
+// Floats steer; V is updated exactly, so it stays unimodular. Returns 0, -1
+// int64 overflow, -2 nonpositive Gram-Schmidt norm, -3 no convergence.
 static int cb_lll(int64_t *V, int n, const int64_t *G)
 {
     enum { MX = CB_MAX_H11 };
@@ -167,15 +160,11 @@ static int cb_quad(const int64_t *G, const int64_t *y, int n, fpk_i128 *q)
 // LLL-reduced): *best enters as the value of the basis vector y (the
 // candidate to beat) and is lowered to the minimum, y to a minimizer.
 //
-// Floating point only prunes. The double Cholesky factor R is backward
-// stable: R^T R = G + E with |E| <= g1 |R|^T |R| entrywise, g1 = gamma_{n+1}.
-// So for any y, y^T G y >= |R y|^2 - g1 |(|R| |y|)|^2 >= (1 - g1 C) |R y|^2,
-// with C >= (|| |R| ||_2 ||R^-1||_2)^2 (Frobenius norms, doubled). Every y
-// with y^T G y < best thus has |R y|^2 < best / (1 - g1 C) = rad, and the
-// search finds all y with |R y|^2 <= rad: each float t_i = (R y)_i is within
-// g2 a_i of the exact one (g2 = gamma_n, a_i = sum_j |R_ij y_j|), so a level
-// is pruned only if sum (|t_i| - g2 a_i)_+^2 > rad, and the coordinate
-// ranges are widened by one (their rounding error is checked to be < 1/2).
+// Floats only prune. The double Cholesky R has R^T R = G + E, |E| <= g1
+// |R|^T |R| (g1 = gamma_{n+1}), so y^T G y < best implies |R y|^2 < rad =
+// best / (1 - g1 C), C >= (|| |R| || ||R^-1||)^2. Each float (R y)_i is within
+// g2 a_i of exact (g2 = gamma_n, a_i = sum_j |R_ij y_j|); levels are pruned
+// only if sum (|t_i| - g2 a_i)_+^2 > rad, and ranges are widened by one.
 // Returns 0, 1 if G is not positive definite (exactly: a nonzero y with
 // y^T G y <= 0 was found), or < 0: undecided here (ill-conditioned for the
 // float bounds; an exact value overflowed int128).

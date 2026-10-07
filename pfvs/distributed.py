@@ -18,43 +18,22 @@
 # -----------------------------------------------------------------------------
 # Description:  Coni-PFV searches spread over many machines and devices.
 #
-#   A coordinator holds jobs -- one per geometry: every primitive p-vector in
-#   its box |p|_inf <= B (the coniZpM setting), at dilation D -- split into
-#   units: disjoint shards of the p-box (p restricted to value ranges of one
-#   or two coordinates). Workers on any machine connect over TCP, lease
-#   units, search them and send back the PFVs:
-#     - GPU workers (NVIDIA or AMD, one per device) batch many units into one
-#       device call and overlap the host work (p enumeration, post-processing)
-#       with the device;
-#     - CPU workers run the CPU pipeline in N processes.
-#   Every unit's result is checkpointed on the coordinator's disk as it
-#   arrives (a restarted coordinator resumes); units whose worker vanished are
-#   reissued after a lease timeout; a failing unit is retried, then recorded.
-#   When all units of a job are in, its PFVs are written to <out>/jobs/.
-#
-#   Results equal coniZpM's over the job's whole p-box (as a set; the order
-#   is by unit, then p).
+#   A coordinator splits each job (one geometry: all primitive p with
+#   |p|_inf <= B, at dilation D) into units, shards of the p-box. GPU and CPU
+#   workers connect over TCP, lease units and send back PFVs. Results are
+#   checkpointed as they arrive, so a restarted coordinator resumes; lost
+#   units are reissued. Output equals coniZpM's over the whole box (as a set).
 #
 #   Exhaustive jobs (make_jobs(..., exhaustive=True)) find every coni PFV of
-#   each direction, as coniZpM(..., exhaustive=True): a worker computes each
-#   p-vector's dilation bound and routes it, at the coordinator's current
-#   price lam (pfvs.dilation.CostModel.route_at_price), either to ZpM up to
-#   its bound or to ZpM up to a split dilation D0 plus ZpK above D0. The ZpK
-#   halves come back to the coordinator as ZpK units, which only CPU workers
-#   take while search units remain. The coordinator raises lam (fewer
-#   splits) while ZpK work piles up and lowers it while the CPU workers run
-#   short of it, so the GPU and CPU workers finish together. Without GPU
-#   workers, CPU workers do whole exhaustive search units themselves (ZpM and
-#   ZpK on the CPU); GPU workers without search units do ZpK units on host
-#   threads.
+#   each direction, as coniZpM(..., exhaustive=True). Workers route each p
+#   between ZpM and ZpM + ZpK at a price lam that the coordinator adjusts so
+#   GPU (ZpM) and CPU (ZpK) workers finish together.
 #
-#   Usage (see README):
-#     coordinator:  python -m pfvs.distributed serve jobs.pkl OUT --address 0.0.0.0:5055
-#     workers:      python -m pfvs.distributed work HOST:5055 --device gpu:0
-#                   python -m pfvs.distributed work HOST:5055 --device cpu --procs 16
-#   with the same PFVS_AUTHKEY in the environment of both (the connection
-#   is authenticated; run it on a trusted network only -- it exchanges
-#   pickles).
+#   Usage (same PFVS_AUTHKEY on both ends; trusted networks only, since it
+#   exchanges pickles):
+#     python -m pfvs.distributed serve jobs.pkl OUT --address 0.0.0.0:5055
+#     python -m pfvs.distributed work HOST:5055 --device gpu:0
+#     python -m pfvs.distributed work HOST:5055 --device cpu --procs 16
 # -----------------------------------------------------------------------------
 
 import argparse
@@ -85,25 +64,21 @@ def make_jobs(datas, B, D, Q=None, M0min=13, ids=None, n_p=None, exhaustive=Fals
 
     **Arguments:**
     - `datas` *(list of CYData)*: The geometries.
-    - `B` *(int or list)*: p-box half-width (all primitive p in the Kahler
-        cone with |p|_inf <= B, as coniZpM is usually driven).
+    - `B` *(int or list)*: p-box half-width: all primitive p in the cone
+        with |p|_inf <= B.
     - `D` *(float or list)*: Ellipsoid dilation.
     - `Q` *(int, list or None)*: Tadpole (default h11 + h21 + 4).
     - `M0min` *(int, optional)*: As in coniZpM.
     - `ids` *(list, optional)*: Job names (default 0, 1, ...); used for the
         output file names, so they must be unique.
-    - `n_p` *(list, optional)*: Estimated p-vector counts; used to shard large
-        boxes into units of about `target_p` p-vectors (see `serve`).
+    - `n_p` *(list, optional)*: Estimated p-vector counts, for sharding
+        large boxes (see `serve`'s target_p).
     - `exhaustive` *(bool or list, optional)*: Every coni PFV of each
-        direction, at any dilation (see the module description); `D` is then
-        only used for p-vectors without a dilation bound, which are reported
-        as incomplete.
-    - `cost_model` *(CostModel or list, optional)*: The costs GPU workers
-        route exhaustive jobs with (`pfvs.dilation.CostModel`: ZpM on the
-        GPU, ZpK on the CPU workers). Only their shape matters -- the price
-        lam absorbs the scale. Default: costs measured for the job's h11
-        on an RTX 5090 and 24 CPU cores (so lam ~ 1 when the cluster has
-        about 24 CPU cores per GPU).
+        direction, at any dilation; `D` is then used only for p-vectors
+        without a dilation bound, reported as incomplete.
+    - `cost_model` *(CostModel or list, optional)*: Routing costs for
+        exhaustive jobs (`pfvs.dilation.CostModel`); only their shape
+        matters. Default: measured for the job's h11.
 
     **Returns:**
     *(list of dict)* The jobs.
@@ -190,13 +165,10 @@ def _split_shard(shard, B, dim, n_found, want):
 class _Coordinator:
     """Lives in the manager's server process; its methods are the RPCs.
 
-    Units are keyed (job id, path): a path is a tuple of ints -- (k,) for the
-    k-th initial shard of a job, (k, i) for the i-th piece it was split into,
-    and so on; path + (-1,) is the ZpK unit of an exhaustive search unit
-    (its split p-vectors). A job is complete when all its leaf units are
-    done; its PFVs are the leaves' in path order. Splits are logged
-    (splits.pkl) so a resumed run rebuilds the same leaves; ZpK units are
-    rebuilt from their search units' results."""
+    Units are keyed (job id, path): (k,) is a job's k-th shard, (k, i) the
+    i-th piece it was split into, path + (-1,) the ZpK unit of an exhaustive
+    search unit. A job is done when all its leaves are. Splits are logged
+    (splits.pkl) so a resumed run rebuilds the same leaves."""
 
     # the price controller: lam is raised (fewer splits) while the pending
     # ZpK work exceeds LAM_HI seconds of the CPU workers' recent throughput,
@@ -353,11 +325,9 @@ class _Coordinator:
 
     # --- RPCs ---
     def get_work(self, worker, max_p, kinds=("search",), gpu=False):
-        """Units totalling about max_p p-vectors (estimated) of the given
-        kinds ("zpk": ZpK units; "search"), in that order of preference, or
-        [] if none is available now; None when everything is done. While a
-        GPU worker (gpu=True) is active, CPU workers get no exhaustive search
-        units (their ZpM would be far slower than the GPU's)."""
+        """Units totalling about max_p p-vectors of the given kinds, in order
+        of preference; [] if none now, None when all is done. CPU workers get
+        no exhaustive search units while a GPU worker is active."""
         with self.lock:
             now = time.time()
             self.workers[worker] = now
@@ -377,9 +347,7 @@ class _Coordinator:
                 if not (self.pending or self.pending_zpk) and \
                         self._n_done() + len(self.failed) >= self._n_leaves():
                     return None
-                # backup copies of long-leased units, for a worker much faster
-                # than the holder (a slow worker must not hold up the end;
-                # the first result wins)
+                # backup copies of long-leased units (first result wins)
                 mine = self.rate.get(worker, 0.0)
                 slow = sorted((st[1], key) for key, st in self.state.items()
                               if isinstance(st, tuple) and st[0] != worker
@@ -526,11 +494,9 @@ def serve(jobs, out, address="0.0.0.0:5055", authkey=None, target_p=1 << 20,
     - `lease_s` *(float, optional)*: Reissue a unit not returned in this long.
     - `max_tries` *(int, optional)*: Attempts per unit before it is recorded
         in <out>/failed.txt.
-    - `backup_s` *(float, optional)*: Once no unit is pending, a unit leased
-        for longer than this is also given to an idle worker (the first
-        result wins), so slow workers do not hold up the end.
-    - `lam0` *(float, optional)*: The initial price of exhaustive jobs'
-        routing (GPU time per CPU time; see the module description).
+    - `backup_s` *(float, optional)*: Once nothing is pending, also give a
+        unit leased longer than this to an idle worker (first result wins).
+    - `lam0` *(float, optional)*: Initial routing price of exhaustive jobs.
 
     **Returns:**
     *(dict)* The final progress counters.
@@ -580,10 +546,9 @@ def load_results(out):
     The finished jobs of an output directory.
 
     **Returns:**
-    *(dict)* job id -> dict(K, M, P, n_p, B, D, Q): the PFVs (K, M) and each
-    one's p-vector P = p[1:]. Exhaustive jobs also have `incomplete`: the
-    p-vectors without a dilation bound (searched at dilation D only); their
-    PFVs are each listed once, by p-vector, then (M, K).
+    *(dict)* job id -> dict(K, M, P, n_p, B, D, Q): the PFVs (K, M) and
+    their p-vectors P = p[1:]. Exhaustive jobs also have `incomplete`: the
+    p-vectors without a dilation bound (searched at dilation D only).
     """
     res = {}
     d = os.path.join(out, "jobs")
@@ -897,13 +862,10 @@ def work(address, authkey=None, device="cpu", procs=None, batch_p=None, verbose=
     - `procs` *(int, optional)*: CPU worker processes (default: all cores).
     - `batch_p` *(int, optional)*: p-vectors per request (GPU default 2^20,
         CPU default 2^14).
-    - `max_unit_p` *(int, optional)*: A unit with more p-vectors than this is
-        sent back to be split (GPU default 2^23, CPU default 2^17), so that no
-        worker holds a unit for long.
-    - `bound_threads` *(int, optional)*: Host threads a GPU worker computes
-        exhaustive jobs' dilation bounds with (default: half the cores). The
-        bounds are CPU work that feeds the GPU: with CPU workers on the same
-        machine, split its cores between the two.
+    - `max_unit_p` *(int, optional)*: Larger units are sent back to be split
+        (GPU default 2^23, CPU default 2^17).
+    - `bound_threads` *(int, optional)*: GPU worker's host threads for
+        exhaustive jobs' dilation bounds (default: half the cores).
     """
     import multiprocessing as mp
     host = socket.gethostname()
