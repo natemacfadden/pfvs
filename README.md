@@ -112,6 +112,15 @@ python -m pfvs.distributed work HOST:5055 --device cpu --procs 16
 ```
 `distributed.load_results("out/")` then gives each job's PFVs (K, M) and their p-vectors. The connection is authenticated, but it exchanges pickles: use it on a trusted network only.
 
+## Scoring conifolds
+
+To pick which conifolds to search in depth:
+```python
+from pfvs.scoring import score_coni_geometries
+scores = score_coni_geometries(datas, N=2_000_000, ellipsoid_dilation=150)
+```
+`scores[i]` is the number of coni PFVs `coniZpM` finds on the first N p-vectors of `datas[i]`. Use a GPU; without one, `method="estimate"` predicts the count instead (ranks worse).
+
 ## Examples
 
 Scripts in `examples/` (run in CI):

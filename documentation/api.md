@@ -1780,6 +1780,147 @@ Returns
 Fraction or None
     Q / mu0 (exact; the bound is strict), or None if the hypotheses fail.
 
+<a id="pfvs.scoring"></a>
+
+---
+
+
+# pfvs.scoring
+
+<a id="pfvs.scoring.expected_pfvs_per_p"></a>
+
+---
+
+
+#### expected\_pfvs\_per\_p
+
+```python
+def expected_pfvs_per_p(p: ArrayLike,
+                        data: CYData = None,
+                        kappa: ArrayLike = None,
+                        Mbasis: ArrayLike = None,
+                        Q: int | None = None,
+                        ellipsoid_dilation: float = 1,
+                        M0min: int = 13,
+                        return_cumulative: bool = False) -> float | np.ndarray
+```
+
+Gaussian-heuristic expected number of coniPFVs coniZpM finds from one p
+(formula in the module description).
+
+Parameters
+----------
+p : ArrayLike of shape (h11,) or (h11-1,)
+    The p-vector, as passed to coniZpM, or full.
+data : CYData, optional
+    The CY. Or pass kappa (data.kappa_cob), Mbasis (data.M_lattice()) and
+    Q instead, to avoid recomputing them per p.
+Q, ellipsoid_dilation, M0min : optional
+    As in coniZpM.
+return_cumulative : bool, optional
+    Return E_p for each integer dilation 1..ellipsoid_dilation. Defaults
+    to False.
+
+Returns
+-------
+float or ndarray
+    The expected count (0 if the ellipsoid is not positive definite).
+
+<a id="pfvs.scoring.estimate_coni_pfvs"></a>
+
+---
+
+
+#### estimate\_coni\_pfvs
+
+```python
+def estimate_coni_pfvs(data: CYData,
+                       ps: ArrayLike | None = None,
+                       N: int | None = None,
+                       ellipsoid_dilation: float = 1,
+                       Q: int | None = None,
+                       M0min: int = 13,
+                       n_samp: int = 512,
+                       N0: int = 100_000,
+                       seed: int = 0) -> float
+```
+
+Predicted number of coniPFVs coniZpM finds on a set of p-vectors: the
+mean of `expected_pfvs_per_p` over n_samp of them, times their number.
+Overcounts 3-5x; compare estimates with each other, not with counts.
+
+Parameters
+----------
+data : CYData
+    The CY (coni).
+ps : ArrayLike of shape (n, h11-1), optional
+    The p-vectors. Or pass N instead.
+N : integer, optional
+    Use the same N p-vectors as `score_coni_geometries`. Above 10^7 they
+    are sampled without enumerating them (absolute level then depends on
+    N0; keep it fixed).
+Q, ellipsoid_dilation, M0min : optional
+    As in coniZpM.
+n_samp : integer, optional
+    Number of p-vectors evaluated. Defaults to 512.
+N0 : integer, optional
+    Base size for sampling above 10^7. Defaults to 100,000.
+seed : integer, optional
+    Seed for the subsample. Defaults to 0.
+
+Returns
+-------
+float
+    The predicted count.
+
+<a id="pfvs.scoring.score_coni_geometries"></a>
+
+---
+
+
+#### score\_coni\_geometries
+
+```python
+def score_coni_geometries(datas: list[CYData],
+                          N: int,
+                          ellipsoid_dilation: float = 1,
+                          method: str = "search",
+                          n_prefetch: int = 4,
+                          seed: int = 0,
+                          verbosity: int = 0,
+                          **kwargs) -> np.ndarray
+```
+
+Score each conifold by the number of coniPFVs coniZpM finds on its first
+N p-vectors (`pvecs(data, N)`, trimmed to exactly N). On a GPU: seconds
+per conifold for N = 2M at dilation 150.
+
+Parameters
+----------
+datas : list of CYData
+    The conifolds.
+N : integer
+    p-vectors per conifold.
+ellipsoid_dilation : float, optional
+    As in coniZpM. Defaults to 1.
+method : str, optional
+    "search" (default) counts; "estimate" uses `estimate_coni_pfvs`
+    instead (no GPU needed, ranks worse).
+n_prefetch : integer, optional
+    Worker processes generating the next conifolds' p-vectors during the
+    search; each holds N x h11 int64. Defaults to 4.
+seed : integer, optional
+    Seed for the trimming. Defaults to 0.
+verbosity : integer, optional
+    1 prints a line per conifold. Defaults to 0.
+**kwargs :
+    Passed to coniZpM (Q, M0min, device, n_jobs) or `estimate_coni_pfvs`.
+
+Returns
+-------
+ndarray of shape (len(datas),)
+    scores[i] for datas[i].
+
 <a id="pfvs.gpu"></a>
 
 ---
