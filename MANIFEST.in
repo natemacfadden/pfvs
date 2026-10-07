@@ -7,9 +7,6 @@ recursive-include tests *.py *.json *.json.gz *.csv *.c Makefile
 # examples and benchmarks
 recursive-include examples *.py
 recursive-include benchmarks *.py
-# the API reference and how it is generated
-recursive-include documentation *.md *.py
-include pydoc-markdown.yml
-include README.md CHANGELOG.md CITATION.cff LICENSE environment.yml
+include README.md CITATION.cff LICENSE environment.yml
 # never ship build products
 global-exclude *.so *.o *.pyd __pycache__ *.pyc

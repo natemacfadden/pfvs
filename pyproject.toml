@@ -48,7 +48,6 @@ test = [
 
 [project.urls]
 Repository = "https://github.com/natemacfadden/pfvs"
-Changelog = "https://github.com/natemacfadden/pfvs/blob/main/CHANGELOG.md"
 
 [tool.setuptools]
 packages = ["pfvs", "pfvs.fp_kernel", "pfvs.conipfv_kernel", "pfvs.pfv_kernel"]
