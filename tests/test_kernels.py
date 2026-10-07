@@ -16,11 +16,9 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  Exactness tests for the Fincke-Pohst kernel (fp_kernel.h) via
-#               both entry points, `conipfv_kernel` and `pfv_kernel`. The
-#               kernel's output is specified exactly (see tests/oracle.py), so
-#               every test compares full output lists -- points, order and
-#               values -- not just counts.
+# Description:  Exactness of the Fincke-Pohst kernel (fp_kernel.h) through
+#               `conipfv_kernel` and `pfv_kernel`: full output lists (points,
+#               order, values) against tests/oracle.py.
 # -----------------------------------------------------------------------------
 
 import gzip

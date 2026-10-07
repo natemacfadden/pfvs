@@ -19,20 +19,13 @@
 // FPK_R; included by fpk_common.h once per type (no include guard). Names go
 // through FPK_N (double: as is; float: suffix _f).
 //
-// Every floating-point test is widened by rigorous bounds written in terms of
-// the type's unit roundoff (see "Error bound" in fp_kernel.h):
-//     FPK_U     unit roundoff (2^-53, 2^-24): Kerr = 2 (dim + 8) FPK_U
-//     FPK_G     relative guard on the few rounded divisions/products whose
-//               error is not in Kerr (1e-9 for double; 64 FPK_U for float)
-//     FPK_TINY  keeps widened radii strictly positive
-// and slack >= FPK_G (qmax + 1) absorbs absolute rounding of O(qmax) terms.
-// The float instantiation additionally needs qmax < 2^22. Then a product
-// Q g < 2^24 is exact in float, and a larger one only ever gives a GCD
-// radius beyond the ellipsoid's (sqrt(Q g - qmax) > sqrt(qmax)), so its
-// rounding cannot tighten anything; likewise the GCD tests compare exact
-// integers (as double does below 2^53). Leaf decisions are exact integers
-// either way, so the type only affects how much is pruned, never the output.
-// Callers get Kerr and slack from FPK_N(fpk_search_consts).
+// Floating-point tests are widened by rigorous bounds (see "Error bound" in
+// fp_kernel.h): FPK_U the unit roundoff (Kerr = 2 (dim + 8) FPK_U), FPK_G a
+// relative guard on the few rounded operations outside Kerr, FPK_TINY keeps
+// radii positive, slack >= FPK_G (qmax + 1).
+// Float needs qmax < 2^22: then Q g < 2^24 is exact, and a larger Q g gives a
+// GCD radius beyond the ellipsoid's, so its rounding prunes nothing extra.
+// Leaves are exact either way: the type changes the pruning, not the output.
 
 FPK_HD static inline void FPK_N(fpk_search_consts)(int dim, int64_t qmax, double eps,
                                                    FPK_R *slack, FPK_R *Kerr, FPK_R *max_err)
@@ -40,9 +33,8 @@ FPK_HD static inline void FPK_N(fpk_search_consts)(int dim, int64_t qmax, double
     FPK_R qd = (FPK_R)qmax;
     *slack = FPK_FMAX((FPK_R)eps, FPK_G * (qd + FPK_L(1.0)));
     *Kerr  = FPK_L(2.0) * (FPK_R)(dim + 8) * FPK_U;
-    // error budget: a heavily cancelling (ill-conditioned) problem can have
-    // a rounding bound so large that nothing is pruned; past this the search
-    // stops with -11 and the caller uses a wider type (double does not stop)
+    // past this error bound pruning is useless: stop with -11 so the caller
+    // uses a wider type (double never stops)
     *max_err = sizeof(FPK_R) < sizeof(double) ? FPK_L(1.0) + FPK_L(0.05) * qd : (FPK_R)INFINITY;
 }
 
@@ -162,6 +154,17 @@ FPK_HD static inline int FPK_N(fpk_sparse_candidates)(
     return cnt;
 }
 
+// A level-i node handed out instead of searched (fpk_search with node_out set
+// and stop_depth = dim - i; at most one H row at level i): the candidates are
+// v in [lo, hi], each tested by fpk_node_test exactly as the search loop does.
+typedef struct {
+    fpk_i128 m0p, pre;
+    fpk_u128 g;                                 // gcd of the rows above
+    int64_t lo, hi, h, linv;
+    FPK_R Uii, off, aoff, rem, err;
+    int nrow, is_m0;
+} FPK_N(fpk_node);
+
 typedef struct {
     int dim, strict, use_gcd, m0_level;
     int64_t Q, qmax, linmin;
@@ -171,11 +174,46 @@ typedef struct {
     const int64_t *linvec, *mat;               // mat: exact, for the leaf
     const int64_t *Hs;                         // (nrows, dim), all rows int64
     const int     *level_start, *order;        // rows grouped by first nonzero
+    FPK_N(fpk_node) *node_out;                 // (see fpk_node; NULL: search it)
 } FPK_N(fpk_prep);
 
+// 1: v passes all cuts at the node's level; 0: cut; -11: float precision
+FPK_HD static inline int FPK_N(fpk_node_test)(const FPK_N(fpk_prep) *S, const FPK_N(fpk_node) *nd, int32_t v)
+{
+    const FPK_R slack = S->slack, Kerr = S->Kerr;
+    FPK_R x  = nd->Uii * v + nd->off;
+    FPK_R nr = nd->rem - x * x;
+    FPK_R ai = FPK_FABS(nd->Uii * v) + nd->aoff;
+    FPK_R en = nd->err + Kerr * (ai * ai + nd->rem);
+    if (en > S->max_err) return -11;
+    if (nr < -(slack + en)) return 0;
+    if (nd->is_m0 && nd->m0p + (fpk_i128)nd->linv * v < S->linmin) return 0;
+    if (S->use_gcd) {
+        fpk_gval gn;
+        gn.big = 0;
+        gn.s = nd->g;
+        FPK_R q_lb = (S->qmax_d - nr) - (slack + en);
+        if (nd->nrow) {
+            if (FPK_N(fpk_gcd_fails)(&gn, S->Q, q_lb, S->strict)) return 0;
+            fpk_u128 a = fpk_abs128(nd->pre + (fpk_i128)nd->h * v);
+            if ((gn.s >> 64) == 0 && (a >> 64) == 0 && (gn.s | a) != 0) {
+                uint64_t need = FPK_N(fpk_need)(q_lb, S->Q, S->strict);
+                uint64_t gg = fpk_gcd64_ge((uint64_t)gn.s, (uint64_t)a, need);
+                if (!gg) return 0;
+                gn.s = gg;
+            } else {
+                gn.s = fpk_gcd128(gn.s, a);
+            }
+        }
+        if (FPK_N(fpk_gcd_fails)(&gn, S->Q, q_lb, S->strict)) return 0;
+    }
+    return 1;
+}
 
-// Status: 0 done; -2 emit asked to stop; -8 a coordinate range exceeds int32;
-// -11 the error bound exceeded max_err (use a wider floating-point type).
+
+// Status: 0 done; 1 a node handed out to S->node_out; -2 emit asked to stop;
+// -8 a coordinate range exceeds int32; -11 the error bound exceeded max_err
+// (use a wider floating-point type).
 FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32_t *prefix,
                                     int n_prefix, int stop_depth, int32_t *clist,
                                     fpk_emit_fn emit, void *ctx, fpk_counts *cnt)
@@ -192,11 +230,9 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
     fpk_u128 g[MD + 1];                         // gcd of the rows determined above
     int      lmode[MD], lcnt[MD], lidx[MD];
     fpk_i128 pre_s[MD + 1];
-    // Residue mode (dense levels whose parent gcd G = g[i+1] is in [1, 2^63)):
-    // only gcd(g, x) matters for a row value x = pre + h v, with g | G, and
-    // gcd(g, x) = gcd(g, x mod G). As v steps by 1, x mod G steps by h mod G,
-    // so it is tracked with one add and compare per candidate instead of an
-    // int128 multiply-add, and the gcd runs on values < G.
+    // Residue mode (parent gcd G = g[i+1] in [1, 2^63)): gcd(g, x) =
+    // gcd(g, x mod G) for g | G, and x mod G steps by h mod G as v steps by 1,
+    // so each candidate costs an add and compare, not an int128 multiply-add.
     uint64_t rres[MD + 1], rstep[MD + 1], rcur[MD + 1], gpar[MD];
     int      lres[MD];
     for (int j = 0; j < dim; ++j) c[j] = 0;
@@ -381,6 +417,22 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
             err[i - 1] = en;
             i--;
             FPK_ENTER(i);
+            if (S->node_out && i == dim - stop_depth
+                    && S->level_start[i + 1] - S->level_start[i] <= 1) {
+                FPK_N(fpk_node) *nd = S->node_out;   // hand the node out (status 1)
+                nd->lo = cur[i]; nd->hi = hi[i];
+                nd->Uii = U[i * dim + i]; nd->off = off[i]; nd->aoff = aoff[i];
+                nd->rem = rem[i]; nd->err = err[i];
+                nd->m0p = m0p[i]; nd->linv = linvec ? linvec[i] : 0;
+                nd->is_m0 = i == S->m0_level;
+                nd->g = g[i + 1];
+                nd->nrow = S->use_gcd ? S->level_start[i + 1] - S->level_start[i] : 0;
+                if (nd->nrow) {
+                    int r = S->order[S->level_start[i]];
+                    nd->pre = pre_s[r]; nd->h = S->Hs[r * dim + i];
+                }
+                return 1;
+            }
             continue;
         }
 

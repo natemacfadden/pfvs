@@ -14,25 +14,16 @@
 //    You should have received a copy of the GNU General Public License
 //    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 // =============================================================================
-// GPU lattice setup (the counterpart of pfl_build in pfv_lattice.h).
-//
-// pfl_build is split where its work changes character:
-//   pre_build   one thread per p: Z = kappa.p and the orthogonal lattice
-//               (short serial xgcd chains);
-//   tile_build  one 16-lane tile per p, state in shared memory: both LLLs
-//               (93% of the setup) and the matrix products. Lanes own
-//               columns of the basis and Gram updates; Gram-Schmidt is a
-//               lane-parallel forward substitution. A thread-per-p LLL keeps
-//               ~30 KB of state per thread in local memory, which does not
-//               fit on chip at the parallelism needed, and diverges;
-//   the HNF, factorization and search prep then run one thread per p again
-//   (see pfvs_gpu.cu).
-// Every integer operation is exact and checked, as in pfv_lattice.h; floating
-// point only chooses the LLL's unimodular steps, so the basis can differ from
-// the CPU's in rare ties -- any basis is valid, and the outputs (M, Kn, q)
-// are basis independent. The Gram matrix is int64 (half the shared memory,
-// far cheaper arithmetic); a p whose Gram entries exceed it reports
-// ST_OVF64 and is redone with the int128 instantiation.
+// GPU lattice setup (pfl_build of pfv_lattice.h), in two kernels:
+//   pre_build   thread per p: Z = kappa.p and the orthogonal lattice;
+//   tile_build  16-lane tile per p, state in shared memory: both LLLs and the
+//               matrix products (a thread-per-p LLL's state does not fit on
+//               chip). Lanes own basis columns; Gram-Schmidt is a lane-parallel
+//               forward substitution.
+// The HNF, factorization and search prep follow in pfvs_gpu.cu.
+// Exact and checked as in pfv_lattice.h; the basis may differ from the CPU's
+// in ties, but (M, Kn, q) do not depend on it. The Gram matrix is int64; a p
+// that overflows it reports ST_OVF64 and is redone in int128.
 //
 // Requires pfv_lattice.h (PFV_LATTICE_IMPLEMENTATION) to be included first.
 #pragma once
@@ -48,9 +39,8 @@ enum {
 
 template <int MH, typename GGT, typename R>
 struct Work {
-    // matrices used only by the products around the LLLs: global scratch
-    // (per p, MH x MH each, set by the caller), keeping shared memory -- which
-    // bounds how many tiles an SM holds -- for the LLL's working set
+    // used only by the products around the LLLs: global scratch (MH x MH per
+    // p), leaving shared memory to the LLL
     int64_t *Binter, *ZB;                     // (h, d)
     int64_t *mat;                             // (d, d)
     int64_t *tmp, *T;                         // scratch; (d, d) basis change

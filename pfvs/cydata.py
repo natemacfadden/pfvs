@@ -16,8 +16,7 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  This module contains a class to store/compute certain CY data
-#               needed for PFV computations.
+# Description:  CYData: the CY data needed for PFV computations.
 # -----------------------------------------------------------------------------
 
 # external imports
@@ -97,10 +96,7 @@ class CYData:
         # change of basis matrix to basis where coni_curve = (1,0,...,0)
         # --------------------------------------------------------------
         if coni_cob is None:
-            # Use the HNF transform to find a unimodular integer matrix U
-            # such that U @ coni_curve = (gcd, 0, ..., 0). Since coni_curve
-            # is primitive (gcd = 1), this gives U @ coni_curve = (1, 0,...,0),
-            # i.e. U is the desired change-of-basis matrix.
+            # HNF transform U: U @ coni_curve = (1, 0, ..., 0) (curve primitive)
             q = np.array(self._coni_curve).reshape(-1,1)
             q = flint.fmpz_mat(q.tolist())
             self._cob = q.hnf(transform=True)[1]
@@ -150,8 +146,6 @@ class CYData:
         Returns
         -------
         CYData
-            A fully initialized CYData object populated from the given
-            CalabiYau.
         """
         try:
             import cytools  # noqa: F401 (only checks that it is installed)
@@ -196,9 +190,7 @@ class CYData:
 
     # getters
     # -------
-    # coni-basis data (coni contexts only). Plain class properties -- setting
-    # them on the class from __init__, as before, left objects unpickled in a
-    # fresh process (e.g. a worker) without them.
+    # coni-basis data (coni contexts only); class-level so they survive pickling
     def _coni_attr(name, doc):
         def get(self):
             if not self._coni:
@@ -260,22 +252,8 @@ class CYData:
     @property
     def a(self):
         """
-        **Description:**
-        Returns the a-matrix, used for finding (Coni) PFVs. This matrix is
-        defined componentwise as
-        \\begin{equation}
-            \\tilde{a}_{ij} = \\begin{cases}
-                kappa_{iij} & i\\geq j\\
-                kappa_{ijj} & i < j.
-            \\end{cases}
-        \\end{equation}
-        See, e.g., eq 2.52 from https://arxiv.org/pdf/2406.13751.
-
-        **Arguments:**
-        Nothing.
-
-        **Returns:**
-        The a-matrix.
+        The a-matrix: a_ij = kappa_iij for i >= j, kappa_ijj for i < j (eq 2.52
+        of arXiv:2406.13751). In the coni basis, with the coni row dropped.
         """
         if self._a is not None:
             return self._a
@@ -307,25 +285,8 @@ class CYData:
     @property
     def b(self):
         """
-        **Description:**
-        Returns the b-vector, used for finding (Coni-)PFVs. This vector is
-        defined differently for non-Coni and Coni PFVs. For non-Coni PFVs, it
-        is defined as
-        \\begin{equation}
-            \\tilde{b} = c_2.
-        \\end{equation}
-        For Coni PFVs, it is defined as
-        \\begin{equation}
-            \\tilde{b} = c_2 + n_{cf} q_{coni}
-        \\end{equation}
-        where $n_{cf} = 2$ and $q_{coni} = `coni_normal`$ (see below eq 3.5 of
-        https://arxiv.org/pdf/2406.13751).
-
-        **Arguments:**
-        Nothing
-
-        **Returns:**
-        The b vector.
+        The b-vector: c2 (non-coni), or c2 + 2 q_coni in the coni basis (below
+        eq 3.5 of arXiv:2406.13751).
         """
         if self._b is not None:
             return self._b
@@ -345,26 +306,13 @@ class CYData:
     # -------------------
     def M_lattice(self, verify: bool = True) -> np.ndarray:
         """
-        **Description:**
-        Computes a basis of the sublattice of all vectors, M, such that
-            (b/24).M    and    (a/2)@M    and    M
-        are all integral. This is equivalent to
-            [b/24; a/2; 1]@M
-        being integral.
+        Basis (as columns) of the lattice of integral M with (b/24).M and
+        (a/2)@M integral: the dual of the rows of [b/24; a/2; 1].
 
-        The set of all such M is just the dual to the lattice spanned by the
-        **rows** of
-            [b/24; a/2; 1].
-
-        Work with column bases throughout.
-
-        **Arguments:**
-        - `verify`: Whether to verify the computation by checking dot products
-                    with a and b.
-
-        **Returns:**
-        A basis for M satisfying the integrality constraints. Basis vectors are
-        columns.
+        Parameters
+        ----------
+        verify : bool, optional
+            Check the result against a and b. Defaults to True.
         """
         # already known
         if self._M_lattice is not None:

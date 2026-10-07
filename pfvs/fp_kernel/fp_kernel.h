@@ -32,33 +32,20 @@ and non-coni pipelines. Returns exactly the vectors c in Z^dim with
     (M0 cut)     dot(linvec, c) >= linmin               [only if linvec]
     (GCD cut)    g == 0  or  Q*g >= q(c)                [Q*g > q(c) if strict]
 
-where g = gcd(H @ c). Every accept/reject decision at the leaves is made in
-exact integer arithmetic. Floating point (a Cholesky factor U of mat,
-computed here) only prunes the search, and every floating-point test is
-widened by a rigorous bound on its rounding error (see "Error bound" below),
-so pruning never discards a valid vector.
+where g = gcd(H @ c). Leaf decisions are exact integer arithmetic; floating
+point (a Cholesky factor U of mat) only prunes, with every test widened by a
+rigorous rounding-error bound, so no valid vector is discarded.
 
-Why the GCD cut: a vector with q(c) > Q can still give a PFV under tadpole
-Q once K is divided by g = gcd(K) (see `coni_H_matrix` in coniZp.py). The
-search sets c from its last component to its first. A row of H whose first
-nonzero entry is in column i is fully determined once c[i:] is set, so the
-gcd of the determined rows is a nonincreasing upper bound on g, and q of
-c[i:] alone is a nondecreasing lower bound on q(c). A branch is pruned as
-soon as these bounds prove the cut must fail. The bound is sharpest when H is
-in row-echelon form (e.g. an HNF), but any H is valid.
+GCD cut: c is set from its last component to its first. A row of H whose
+first nonzero is in column i is determined once c[i:] is set, so the gcd of
+the determined rows bounds g from above and q(c[i:]) bounds q(c) from below;
+a branch is pruned once these prove the cut fails. Sharpest for row-echelon H.
 
-Error bound: the factor U (mat = U^T U) is computed exactly (fraction-free
-LDL^T in GMP, i.e. Bareiss elimination) and only then rounded to double, so
-each entry of U is within a few ulps of its true value however
-ill-conditioned mat is. Writing t_i = sum_{j>=i} U_ij c_j and
-a_i = sum_{j>=i} |U_ij c_j|, each float t_i is then within K*a_i of the true
-one, K ~ (dim+8) * 2^-53, and so every float partial norm is within
-K * sum_i (a_i^2 + rem_i) of the exact partial norm. The kernel carries this
-bound down the search (with a 2x safety factor) and widens every float test
-by it. For well-scaled problems the bound is negligible; it matters when mat
-has huge entries but small q(c) (heavy cancellation).
-
-Most of the work is in writing to `out`.
+Error bound: U is computed exactly (Bareiss LDL^T in GMP), then rounded, so
+its entries are within a few ulps however ill-conditioned mat is. With
+a_i = sum_{j>=i} |U_ij c_j|, each float t_i = (U c)_i is within K*a_i of the
+true one, K ~ (dim+8) * 2^-53; the kernel carries the resulting bound on the
+partial norms down the search (2x safety) and widens every test by it.
 
 **Arguments:**
 - `P`:   The problem (see `fpk_problem`). Not modified.
@@ -319,11 +306,10 @@ static int fpk_factor_exact(const int64_t *mat, int dim, double *U,
 }
 
 #ifndef FPK_STATS   /* (statistics builds use the general loop only) */
-// Fast path (the common case: every H row fits int64): the shared search of
-// fpk_common.h, in float when qmax < 2^22 (exact; see fpk_search_impl.h) --
-// same visiting order and output as the general loop in fpk_enumerate, ~25%
-// faster with float plus residue-mode gcds. Returns a kernel status, or 1 if
-// a leaf's exact q needs GMP (the caller then reruns the general loop).
+// Fast path (every H row fits int64): the shared search of fpk_common.h, in
+// float when qmax < 2^22; same order and output as the general loop below.
+// Returns a kernel status, or 1 if a leaf's exact q needs GMP (the caller
+// then reruns the general loop).
 typedef struct { fpk_output *out; long max_N_out; int rc, need_gmp; } fpk_fast_ctx;
 
 static int fpk_fast_emit(void *vc, int kind, const int32_t *c, int n, int64_t q)
@@ -361,7 +347,7 @@ static int fpk_enumerate_fast(const fpk_problem *P, fpk_output *out, const doubl
         }
         fpk_prep_f S = {dim, P->strict, P->nrows > 0, m0_level, P->Q, P->qmax, P->linmin,
                         (float)P->qmax, 0.0f, 0.0f, 0.0f, Uf, Uinvf, Nf, Vf, Vaf,
-                        P->linvec, P->mat, Hs, level_start, order};
+                        P->linvec, P->mat, Hs, level_start, order, NULL};
         fpk_search_consts_f(dim, P->qmax, P->eps, &S.slack, &S.Kerr, &S.max_err);
         st = fpk_search_f(&S, NULL, 0, 0, clist, fpk_fast_emit, &X, &cnt);
         free(f);
@@ -374,7 +360,7 @@ static int fpk_enumerate_fast(const fpk_problem *P, fpk_output *out, const doubl
     if (P->qmax >= (1LL << 22) || st == -11) {
         fpk_prep S = {dim, P->strict, P->nrows > 0, m0_level, P->Q, P->qmax, P->linmin,
                       (double)P->qmax, 0.0, 0.0, 0.0, U, Uinv, m0N, m0V, m0Va,
-                      P->linvec, P->mat, Hs, level_start, order};
+                      P->linvec, P->mat, Hs, level_start, order, NULL};
         fpk_search_consts(dim, P->qmax, P->eps, &S.slack, &S.Kerr, &S.max_err);
         st = fpk_search(&S, NULL, 0, 0, clist, fpk_fast_emit, &X, &cnt);
     }

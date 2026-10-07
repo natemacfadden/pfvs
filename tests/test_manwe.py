@@ -418,7 +418,7 @@ def test_postprocessing_exact_path_matches(coni_data, monkeypatch):
     The post-processing's exact (Python-int) fallback, used when an int64
     bound fails, gives exactly the int64 path's output.
     """
-    import pfvs.coniZp as cz
+    import pfvs.coni as cz
     ps = pvecs(coni_data, min_N_pts=2_000)
     kw = {"M0min": 13, "ellipsoid_dilation": 30, "max_N_pfvs": 10_000_000, "n_jobs": 1}
     Ks, Ms = coniZpM(data=coni_data, ps=ps, **kw)

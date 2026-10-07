@@ -16,18 +16,10 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  The named examples of the two papers are found by the search:
-#               - arXiv:2406.13751 (coniZpM): Examples 1-5 (Manwe, Lorien,
-#                 Tulkas, Aule, Orome; the 25 extra dS examples of App. C share
-#                 their flux sector with Examples 4 and 5) and the three
-#                 non-supersymmetric AdS examples of App. C.3;
-#               - arXiv:2107.09064 (ZpM): the vacua of Secs. 6.1-6.4.
-#               Each example's geometry (tests/data/paper_examples.json, built
-#               by tests/data/build_paper_examples.py) is checked against the
-#               paper through its fluxes; then the search must return the
-#               paper's (K, M) from the paper's p-vector, and -- for the coni
-#               examples -- from a scan of every primitive p in the box
-#               |p|_inf <= max|p_i| of the Kahler cone.
+# Description:  The named examples of arXiv:2406.13751 (coniZpM) and
+#               arXiv:2107.09064 (ZpM) are found by the search, from the
+#               paper's p-vector and, for coni, from a box scan.
+#               Geometries: tests/data/paper_examples.json.
 #               PFVS_SLOW_TESTS=1 also runs the slow scans (~1 min / ~11 min).
 # -----------------------------------------------------------------------------
 

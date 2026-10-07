@@ -16,11 +16,9 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  The optional CUDA backend (pfvs.gpu). Its results must be
-#               identical to the CPU path's -- the same arrays, in the same
-#               order. Skipped unless the backend is built and a device found.
-#               The device tests share one GPU: run them serially
-#               (pytest -n 0 tests/test_gpu.py) or with few workers.
+# Description:  The optional GPU backend (pfvs.gpu) returns the CPU path's
+#               arrays exactly. Skipped without a built backend and device.
+#               Run serially (pytest -n 0 tests/test_gpu.py): one GPU.
 # -----------------------------------------------------------------------------
 
 import numpy as np
@@ -63,6 +61,24 @@ def test_gpu_matches_cpu(g, dil):
     Kg, Mg = coniZpM(data, ps, ellipsoid_dilation=dil, n_jobs=1, device="gpu")
     np.testing.assert_array_equal(Kg, Kc)
     np.testing.assert_array_equal(Mg, Mc)
+
+
+@needs_gpu
+def test_gpu_matches_cpu_large_dilation():
+    """h11 >= 7 at dilation 800: most candidates go through the warp-cooperative
+    expand stages (k_expand)."""
+    npts = 0
+    for g in [g for g in GEOMS if 7 <= g["h11"] <= 11]:
+        data = cydata(g)
+        ps = _ps(data, g["B"])[:300]
+        if len(ps) == 0:
+            continue
+        Kc, Mc = coniZpM(data, ps, ellipsoid_dilation=800, n_jobs=1, device="cpu")
+        Kg, Mg = coniZpM(data, ps, ellipsoid_dilation=800, n_jobs=1, device="gpu")
+        np.testing.assert_array_equal(Kg, Kc)
+        np.testing.assert_array_equal(Mg, Mc)
+        npts += len(Kc)
+    assert npts > 0
 
 
 @needs_gpu

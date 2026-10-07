@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     import cytools
 
 # local imports
-from . import util, cydata, coniZp, dilation
+from . import util, cydata, coni, dilation
 from .cydata import CYData
 
 class PFV():
@@ -89,17 +89,12 @@ class PFV():
         self._all_charges = []
         self._all_coeffs  = []
 
-        # coni-specific variables (the coni-only properties are defined on
-        # the class below and raise AttributeError for non-coni PFVs)
+        # coni-specific variables
         if self.coni:
             self.ncf = 2
 
-    # coni-only attributes
+    # coni-only attributes (raise AttributeError for non-coni PFVs)
     # --------------------
-    # Plain class properties that raise AttributeError for non-coni PFVs.
-    # (They used to be attached to the class from __init__, so after the first
-    # coni PFV every PFV had them -- and check_all ran check_Kprime on
-    # non-coni PFVs, where it does not apply.)
     def _coni_only(f):
         def get(self):
             if not self.coni:
@@ -124,9 +119,8 @@ class PFV():
 
     @_coni_only
     def dilation_bound(self):
-        """Upper bound on the dilation of any coni PFV with this PFV's
-        direction and tadpole: delta < Q/mu0 (exact; see ``pfvs.dilation``).
-        A diagnostic; None if the bound's hypotheses fail."""
+        """Exact upper bound Q/mu0 on the dilation of coni PFVs with this
+        direction and tadpole (see ``pfvs.dilation``); None if it doesn't apply."""
         return dilation.coni_dilation_bound(self.pgrading[1:], self.kappa,
                                             -int(np.dot(self.K, self.M)))
 
@@ -342,10 +336,7 @@ class PFV():
     def f(self) -> np.ndarray | None:
         """
         The F3 flux vector, f = ((b.M)/24, (a@M)/2, 0, M), of length 2*(h11+1).
-
-        Recall `self.b` is 24x and `self.a` is 2x the prepotential coefficients,
-        so the two divisions above are exact iff M satisfies the congruences.
-        Returns None if either division is non-integral. Non-coni only.
+        None if either division is non-integral. Non-coni only.
         """
         if self.coni:
             raise NotImplementedError("f is only implemented for non-coni PFVs")
@@ -376,7 +367,7 @@ class PFV():
         if not self.coni:
             raise NotImplementedError
 
-        mat, Z, Binter = coniZp.coni_M_ellipsoid(self.pgrading, self._cydata)
+        mat, Z, Binter = coni.coni_M_ellipsoid(self.pgrading, self._cydata)
         return mat
 
     @property
@@ -388,7 +379,7 @@ class PFV():
         if not self.coni:
             raise NotImplementedError
 
-        mat, Z, Binter = coniZp.coni_M_ellipsoid(self.pgrading, self._cydata)
+        mat, Z, Binter = coni.coni_M_ellipsoid(self.pgrading, self._cydata)
         c = np.rint(np.linalg.lstsq(Binter, self.M)[0]).astype(int)
         if not np.all(self.M == Binter@c):
             raise RuntimeError(
@@ -505,18 +496,9 @@ class PFV():
     # ====================
     def _calc_p(self) -> None:
         """
-        Compute and cache ``self._p`` and ``self._pgrading``.
-
-        Uses the relation N @ p = K (i.e., p = N^{-1} @ K) via the exact
-        integer inverse ``self.Ninv``. The result is an integer grading vector
-        ``pgrading`` (a scaled version of p with GCD 1) and a float ``p``
-        obtained by dividing out the denominator.
-
-        In the coni case the first component of p is constrained to be 0, so
-        only K[1:] and the lower-right block of N are used.
-
-        If N is singular (``check_Ninvertible`` returns False), both
-        ``_p`` and ``_pgrading`` are filled with NaN.
+        Compute and cache p = N^{-1} K (exactly) and its primitive integer
+        multiple pgrading. Coni: p[0] = 0 and only K[1:] is used. NaN if N is
+        singular.
         """
         # this computation only makes sense if N is invertible
         if not self.check_Ninvertible():
@@ -784,14 +766,9 @@ class PFV():
 
     def series(self, N_nonzero: int = float('inf'), verbosity: int = 0) -> list[tuple[float, float]]:
         """
-        Compute the superpotential series W = sum_i c_i * exp(2*pi*i*tau*e_i),
-        where e_i = dot(p, q) and c_i = sum_{q at e_i} n_q * dot(M, q).
-
-        See also `series_abs_vev`, `series_corrections` for downstream
-        diagnostics built on this series.
-
-        Returns a list of [coeff, exponent] pairs for nonzero terms only,
-        sorted by exponent. Stops after N_nonzero nonzero terms.
+        The superpotential series W = sum_i c_i exp(2 pi i tau e_i), with
+        e_i = dot(p, q) and c_i = sum_{q at e_i} n_q dot(M, q), as [c_i, e_i]
+        pairs: nonzero terms only, by exponent, at most N_nonzero of them.
         """
         if N_nonzero <= 0:
             raise ValueError(f"N_nonzero must be > 0, got {N_nonzero}.")
@@ -929,13 +906,8 @@ class PFV():
     # ===========
     def series_abs_vev(self, as_logs: bool = False) -> list[float]:
         """
-        Evaluate |W_i| at the tau0 from the 2-term approximation.
-
-        Built on `series`. See also `series_corrections`.
-
-        Specifically, finds the value of exp(2*pi*i*tau) minimizing W_0 + W_1,
-        plugs it into each W_i = c_i * exp(2*pi*i*tau*e_i), and returns |W_i|
-        (or log10|W_i| if as_logs=True), one per series term.
+        |W_i| (or log10|W_i|) for each series term, at the tau minimizing the
+        2-term approximation W_0 + W_1.
         """
         terms = self.series()
         coeffs, exps = zip(*terms)
@@ -964,11 +936,8 @@ class PFV():
 
     def series_corrections(self, as_logs: bool = False) -> list[float]:
         """
-        Compute |W_i| / W0 for i >= 2, as a measure of higher-order corrections
-        to the 2-term approximation. Returns the ratios (or log10 if
-        as_logs=True), starting from the third series term.
-
-        Built on `series_abs_vev`.
+        |W_i| / W0 (or its log10) for i >= 2: the size of the corrections to
+        the 2-term approximation.
         """
         if not self.silent:
             print("THIS USES self.tau0 FROM THE 2-TERM APPROXIMATION")

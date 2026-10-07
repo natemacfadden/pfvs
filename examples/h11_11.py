@@ -4,10 +4,8 @@ Coni PFVs of an (h11, h21) = (11, 347) geometry, built with CYTools.
     python examples/h11_11.py                 # 100k p-vectors, dilation 80
     python examples/h11_11.py --n-p 1000000   # a larger scan
 
-Needs CYTools (https://cy.tools). The conifold curve q is given in CYTools'
-divisor basis, which has changed between CYTools versions; so the script
-first checks that q is still a conifold curve there (GV invariant 2) and
-stops if it is not.
+Needs CYTools (https://cy.tools). Stops if q is no longer a conifold curve in
+the installed CYTools' divisor basis (it has changed between versions).
 """
 
 import argparse

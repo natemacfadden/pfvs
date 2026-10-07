@@ -16,30 +16,18 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  An upper bound on the dilation of a coni PFV with a given
-#               direction, from the Schur complement of kappa . p_hat.
+# Description:  An exact upper bound on the dilation of a coni PFV with a
+#               given direction p_hat (p = p_hat / delta, coni basis).
 #
-#               In the coni basis (conifold direction 0, the rest r), write
-#               p = p_hat / delta with p_hat integral, p_hat_0 = 0, and
-#               A = kappa . p_hat. Constraint 7 gives K_r = (A M)_r / delta,
-#               so M_r = A_rr^-1 (delta K_r - a_r0 M0), and K' > 0 fixes
-#               K0 = (A M)_0 / delta - eps with eps > 0. The tadpole becomes
-#
-#                 Q = M0 eps + (M0^2 / delta) (-s) + delta K_r^T S K_r,
-#                 s = a00 - a0r^T A_rr^-1 a_r0,     S = -A_rr^-1.
-#
-#               If s <= 0 and S is positive definite on
-#               Lambda = {K in Z^(h11-1) : p_hat_r . K = 0} (where every
-#               solution's K_r lies, by K.p = 0, and K_r != 0 since N_rr is
-#               invertible), all three terms are >= 0 and the first is > 0, so
+#               With A = kappa . p_hat, s = a00 - a0r^T A_rr^-1 a_r0 and
+#               S = -A_rr^-1: if s <= 0 and S is positive definite on
+#               Lambda = {K in Z^(h11-1) : p_hat_r . K = 0}, the tadpole forces
 #
 #                 delta < Q / mu0,   mu0 = min_{0 != K in Lambda} K^T S K.
 #
-#               Everything here is exact (python-flint rationals). Both
-#               hypotheses are checked; if either fails, no bound is returned.
-#               A diagnostic (PFV.dilation_bound), not a search parameter:
-#               the bound is attained at low h11 but is typically ~10^3 at
-#               h11 >= 8, far above the dilations one searches.
+#               Otherwise there is no bound. Computed in C (coni_bound.h), with
+#               python-flint as fallback. Used by coniZp, via
+#               bound_routing, and as a diagnostic (PFV.dilation_bound).
 # -----------------------------------------------------------------------------
 
 from __future__ import annotations
@@ -102,9 +90,7 @@ def _positive_definite(G: flint.fmpz_mat) -> bool:
 
 def _shortest_vector(G: flint.fmpz_mat) -> tuple[int, list[int]]:
     """Exact min of y^T G y over nonzero integer y, and a minimizer, for a
-    positive-definite integer Gram matrix G (Fincke-Pohst on the LLL-reduced
-    form; exact rational LDL^T, floats only to bound coordinate ranges, which
-    are widened by one so no candidate is lost)."""
+    positive-definite integer Gram matrix G (exact Fincke-Pohst)."""
     n = G.nrows()
     R, T = G.lll(transform=True, rep="gram", gram="exact")   # R = T G T^T
     Gr = [[Fraction(int(R[i, j])) for j in range(n)] for i in range(n)]
@@ -115,8 +101,7 @@ def _shortest_vector(G: flint.fmpz_mat) -> tuple[int, list[int]]:
         d[i] = Gr[i][i] - sum(m[i][k] ** 2 * d[k] for k in range(i))
         for j in range(i + 1, n):
             m[j][i] = (Gr[j][i] - sum(m[j][k] * m[i][k] * d[k] for k in range(i))) / d[i]
-    # start from the best basis vector (a valid candidate), then look for
-    # anything strictly shorter; the bound tightens as better vectors appear
+    # start from the best basis vector; the bound tightens as better ones appear
     k0 = min(range(n), key=lambda k: Gr[k][k])
     best_val, best_y = Gr[k0][k0], [int(i == k0) for i in range(n)]
     y = [0] * n
@@ -146,7 +131,18 @@ def _shortest_vector(G: flint.fmpz_mat) -> tuple[int, list[int]]:
     return val, y_orig
 
 
-def coni_mu0(p: ArrayLike, kappa: ArrayLike) -> tuple[Fraction, list[int]] | None:
+def _coni_mu0_c(ps, kappa):
+    """The C version on the rows of ps: (status, mu_num, mu_den, K), or None
+    if the extension is unavailable. status 0: decided; 1: no bound; < 0:
+    use the Python path."""
+    try:
+        from .fp_kernel.fp_kernel import _coni_mu0_batch
+    except ImportError:
+        return None
+    return _coni_mu0_batch(np.asarray(kappa, dtype=np.int64), np.asarray(ps, dtype=np.int64))
+
+
+def coni_mu0(p: ArrayLike, kappa: ArrayLike, use_c: bool = True) -> tuple[Fraction, list[int]] | None:
     """
     The minimum of K^T S K over nonzero K in Lambda, S = -A_rr^-1.
 
@@ -162,7 +158,17 @@ def coni_mu0(p: ArrayLike, kappa: ArrayLike) -> tuple[Fraction, list[int]] | Non
     (mu0, K) : the exact minimum and a minimizing K (length h11-1), or None
         if the bound's hypotheses fail (A_rr singular, s > 0, or S not
         positive definite on Lambda).
+    use_c : bool, optional
+        Use the C version (falling back to Python where it cannot decide).
+        False: the exact python-flint version only.
     """
+    if use_c:
+        r = _coni_mu0_c(np.atleast_2d(np.asarray(p, dtype=np.int64)), kappa)
+        if r is not None and r[0][0] >= 0:
+            st, num, den, K = r
+            if st[0] == 1:
+                return None
+            return Fraction(int(num[0]), int(den[0])), [int(k) for k in K[0]]
     f = _schur_form(p, kappa)
     if f is None:
         return None
@@ -204,3 +210,170 @@ def coni_dilation_bound(p: ArrayLike, kappa: ArrayLike, Q: int) -> Fraction | No
     if r is None:
         return None
     return Fraction(int(Q)) / r[0]
+
+
+def coni_dilation_bound_ceils(ps: ArrayLike, kappa: ArrayLike, Q: int, n_jobs: int = 1) -> np.ndarray:
+    """ceil(`coni_dilation_bound`) for each row of `ps` as int64 (0: no bound)."""
+    ps = np.atleast_2d(np.asarray(ps, dtype=np.int64))
+    if n_jobs > 1 and len(ps) >= 2 * n_jobs:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(n_jobs) as ex:      # (the C call releases the GIL)
+            parts = list(ex.map(lambda c: _coni_mu0_c(c, kappa), np.array_split(ps, 4 * n_jobs)))
+        r = None if parts[0] is None else tuple(np.concatenate(x) for x in zip(*parts))
+    else:
+        r = _coni_mu0_c(ps, kappa)
+    out = np.zeros(len(ps), dtype=np.int64)
+    if r is None:
+        todo = np.arange(len(ps))
+    else:
+        st, num, den = r[0], r[1], r[2]
+        ok = st == 0
+        small = ok & (den < 2**62 // max(int(Q), 1))
+        out[small] = -((-int(Q) * den[small]) // num[small])          # ceil(Q den / num)
+        for i in np.flatnonzero(ok & ~small):
+            out[i] = -((-int(Q) * int(den[i])) // int(num[i]))
+        todo = np.flatnonzero(st < 0)
+    for i in todo:                                                   # the Python path
+        m = coni_mu0(ps[i], kappa, use_c=False)
+        if m is not None:
+            out[i] = math.ceil(Fraction(int(Q)) / m[0])
+    return out
+
+
+def coni_dilation_bounds(ps: ArrayLike, kappa: ArrayLike, Q: int,
+                         n_jobs: int = 1) -> list[Fraction | None]:
+    """`coni_dilation_bound` for each row of `ps` (shape (n, h11-1))."""
+    ps = np.atleast_2d(np.asarray(ps, dtype=np.int64))
+    if n_jobs > 1 and len(ps) >= 2 * n_jobs:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(n_jobs) as ex:      # (the C call releases the GIL)
+            parts = list(ex.map(lambda c: _coni_mu0_c(c, kappa), np.array_split(ps, 4 * n_jobs)))
+        r = None if parts[0] is None else tuple(np.concatenate(x) for x in zip(*parts))
+    else:
+        r = _coni_mu0_c(ps, kappa)
+    out = []
+    for i, p in enumerate(ps):
+        if r is not None and r[0][i] == 0:
+            out.append(Fraction(int(Q)) / Fraction(int(r[1][i]), int(r[2][i])))
+        elif r is not None and r[0][i] == 1:
+            out.append(None)
+        else:
+            m = coni_mu0(p, kappa, use_c=False)
+            out.append(None if m is None else Fraction(int(Q)) / m[0])
+    return out
+
+
+def bound_routing(bounds: ArrayLike, G, K, D0s: ArrayLike,
+                  c: float = 0.0, shared: bool = False) -> tuple[float, float, float]:
+    """
+    Plan an exhaustive search of one geometry's p-vectors: p with
+    b(p) <= b* run ZpM to their bound (GPU); the rest are split at D0 (ZpM up
+    to D0 on the GPU, ZpK above it on the CPU). Chooses b* and D0 to minimize
+    the run time, GPU and CPU running concurrently.
+
+    Parameters
+    ----------
+    bounds : array of shape (n,)
+        b(p) for each p-vector (`coni_dilation_bounds`); non-finite ignored.
+    G : callable
+        G(D): GPU time per p-vector of ZpM at dilation D (vectorized,
+        increasing).
+    K : callable
+        K(D0): CPU time per p-vector of ZpK above D0.
+    D0s : array
+        Candidate split dilations.
+    c : float, optional
+        CPU wall time per p-vector to compute b(p).
+    shared : bool, optional
+        ZpM and ZpK share the processors (no GPU): minimize T_GPU + T_CPU
+        instead of the max.
+
+    Returns
+    -------
+    (b_star, D0, t) : the threshold (-inf: split every p), the split
+        dilation, and the run time per p-vector.
+    """
+    # For fixed D0, sending p to its bound saves K(D0) of CPU time and costs
+    # G(b(p)) - G(D0) of GPU time, which grows with b(p); so the best set is
+    # {b(p) <= b*}, and b* is where T_GPU and T_CPU cross. (shared: where
+    # sending one more p stops paying.)
+    b = np.sort(np.asarray(bounds, dtype=float))
+    b = b[np.isfinite(b)]
+    n = len(b)
+    best = (-math.inf, math.nan, math.inf)
+    for D0 in np.atleast_1d(D0s):
+        gD0, kD0 = float(G(D0)), float(K(D0))
+        # T_GPU / n and T_CPU / n after sending the k smallest bounds
+        t_gpu = gD0 + np.r_[0.0, np.cumsum(np.asarray(G(b), dtype=float) - gD0)] / max(n, 1)
+        t_cpu = (n - np.arange(len(b) + 1)) / max(n, 1) * kD0 + c
+        t = t_gpu + t_cpu if shared else np.maximum(t_gpu, t_cpu)
+        k = int(np.argmin(t))
+        if t[k] < best[2]:
+            best = (b[k - 1] if k else -math.inf, float(D0), float(t[k]))
+    return best
+
+
+class CostModel:
+    """
+    Measured per-p-vector search costs of one geometry, for `bound_routing`.
+    G is interpolated (and extrapolated) linearly in log-log.
+
+    Parameters
+    ----------
+    D, G : sequences
+        Increasing dilations and ZpM's time per p-vector at each.
+    D0s, K : sequences
+        Split dilations (integers) and ZpK's time per p-vector above each.
+    c : float, optional
+        Time per p-vector to compute the bound.
+    shared : bool, optional
+        As in `bound_routing`.
+    """
+
+    def __init__(self, D, G, D0s, K, c: float = 0.0, shared: bool = False):
+        self.D = np.asarray(D, dtype=float)
+        # (bound_routing assumes G increasing: noisy measurements are made so)
+        self.G = np.maximum.accumulate(np.maximum(np.asarray(G, dtype=float), 1e-12))
+        self.D0s = [int(d) for d in D0s]
+        self.K = dict(zip(self.D0s, (float(k) for k in K)))
+        self.c, self.shared = float(c), bool(shared)
+        if len(self.D) < 1 or np.any(np.diff(self.D) <= 0) or len(self.D0s) != len(self.K):
+            raise ValueError("CostModel: D must be increasing, one K per D0")
+
+    def __repr__(self):
+        return (f"CostModel(D={self.D.tolist()}, G={self.G.tolist()}, D0s={self.D0s}, "
+                f"K={list(self.K.values())}, c={self.c}, shared={self.shared})")
+
+    def G_at(self, D):
+        """ZpM's time per p-vector at dilation(s) D."""
+        lD, lG = np.log(self.D), np.log(self.G)
+        x = np.log(np.maximum(np.asarray(D, dtype=float), 1.0))
+        if len(lD) == 1:
+            return np.exp(lG[0] + (x - lD[0]))                   # (linear in D)
+        y = np.interp(x, lD, lG)
+        lo, hi = x < lD[0], x > lD[-1]
+        y = np.where(lo, lG[0] + (lG[1] - lG[0]) / (lD[1] - lD[0]) * (x - lD[0]), y)
+        y = np.where(hi, lG[-1] + (lG[-1] - lG[-2]) / (lD[-1] - lD[-2]) * (x - lD[-1]), y)
+        return np.exp(y)
+
+    def K_at(self, D0):
+        """ZpK's time per p-vector above D0 (one of D0s)."""
+        return self.K[int(D0)]
+
+    def route(self, bounds: ArrayLike) -> tuple[float, float, float]:
+        """`bound_routing` with these costs: (b_star, D0, t)."""
+        return bound_routing(bounds, self.G_at, self.K_at, self.D0s, self.c, self.shared)
+
+    def route_at_price(self, bounds: ArrayLike, lam: float) -> tuple[np.ndarray, int]:
+        """
+        Routing at a price lam (GPU time per CPU time saved, shared by
+        geometries on the same hardware): D0 minimizes G(D0) + lam K(D0), and
+        p goes to its bound iff G(b) - G(D0) <= lam K(D0). Returns
+        (to_bound mask, D0).
+        """
+        b = np.asarray(bounds, dtype=float)
+        D0 = min(self.D0s, key=lambda d: float(self.G_at(d)) + lam * self.K[d])
+        fin = np.isfinite(b)
+        cost = self.G_at(np.where(fin, b, 1.0))
+        return fin & (cost <= float(self.G_at(D0)) + lam * self.K[D0]), int(D0)
+

@@ -1,33 +1,12 @@
 """
-Benchmark: two implementations of the same ellipsoid (Zp-style) lattice-point
-enumeration --
+Benchmark: the C `conipfv_kernel` (Fincke-Pohst, pruning on every cut) vs the
+old dSv1 `points_in_ellipsoid` from arXiv:2406.13751 (bounding box filtered to
+the ellipsoid, then the M0 and gcd cuts by rejection). Both enumerate
 
-    * the current `conipfv_kernel` (C): a Fincke-Pohst search that prunes on
-      every cut during enumeration, and
-    * the old "dSv1" `points_in_ellipsoid` (from arXiv:2406.13751): enumerates
-      the ellipsoid by materializing a temporary bounding box, filtering it to
-      the ellipsoid, then rejection-sampling the cuts.
+    0 <= x^T Z x <= dilation * Q,   linvec . x >= M0min,
+    floor(x^T Z x / Q) <= gcd(H @ x),
 
-Both are the ellipsoid/Zp approach and differ only in how they enumerate the
-points inside the ellipsoid. This is unrelated to the README's "box-style
-algorithm" (which directly enumerates K and M); the bounding box used by
-`points_in_ellipsoid` is just an internal enumeration scaffold.
-
-This script is self-contained: the dSv1 method (a verbatim copy of
-`points_in_ellipsoid`, driven by a small metric-LLL reduction) needs only this
-repo and its dependencies (numpy).
-
-Both methods enumerate integer vectors in the (dilated) ellipsoid
-
-    0 <= x^T Z x <= dilation * Q                      (ellipsoid)
-
-subject to the same two cuts the kernel applies internally:
-
-    linvec . x   >= M0min                             (M0 cut)
-    floor(x^T Z x / Q) <= gcd(H @ x)                  (tadpole / gcd cut)
-
-The dSv1 method gets the ellipsoid for free and applies the M0 and gcd cuts by
-rejection sampling. The two methods are checked to return identical vector sets.
+and are checked to return identical sets. Self-contained (numpy only).
 
 Usage:
     python benchmarks/benchmark_dSv1_vs_coniZpM.py            # full sweep + tables
@@ -81,11 +60,8 @@ BUDGET_GB = 18.0
 
 
 # ---------------------------------------------------------------------------
-# self-contained metric-LLL: reduce the identity basis of Z^n with respect to
-# the inner product <u,v> = u^T Z v. This is the same reduction the dSv1
-# `LLL_reduction_wrt_metric` performs, reimplemented here (numpy only) so the
-# benchmark needs no external research tree. Returns a unimodular integer basis
-# B (rows are reduced vectors) such that B @ Z @ B.T is nearly diagonal.
+# metric-LLL w.r.t. <u,v> = u^T Z v, as dSv1's `LLL_reduction_wrt_metric`
+# (reimplemented, numpy only). Returns unimodular B with B @ Z @ B.T near diagonal.
 # ---------------------------------------------------------------------------
 def lll_reduce_wrt_metric(Z, delta=0.75):
     n = len(Z)
@@ -121,10 +97,8 @@ def lll_reduce_wrt_metric(Z, delta=0.75):
 
 
 # ---------------------------------------------------------------------------
-# dSv1 kernel: `points_in_ellipsoid` (verbatim from PFV_search.py of
-# arXiv:2406.13751), driven by the metric-LLL above. maximum_box_size is left at
-# inf so the box is not truncated (its original default of 1e3 makes it silently
-# inexact by shrinking the search box).
+# dSv1 kernel: `points_in_ellipsoid`, verbatim from arXiv:2406.13751, with
+# maximum_box_size = inf (its default 1e3 silently truncates the box).
 # ---------------------------------------------------------------------------
 def points_in_ellipsoid(Zin, Qbound, fluxbound=2, maximum_box_size=np.inf):
     dimension = len(Zin)
@@ -176,11 +150,8 @@ def run_c(dilation):
     out, _, _ = conipfv_kernel(U, Q, dilation, LINVEC, LINMIN, H, MAX_N_OUT)
     return out
 
-# fairness: the C kernel receives its factorization (U) precomputed, so the
-# baseline gets the same treatment -- the metric-LLL is hoisted out of the
-# timed region and its one-time cost is reported separately as prep_lll_s.
-# `points_in_ellipsoid` above stays verbatim; the prepped path below is
-# identical except the reduction is done once, outside the timing loop.
+# fairness: the C kernel gets U precomputed, so the dSv1 metric-LLL is also
+# done once outside the timed region (reported as prep_lll_s).
 _OLD_PREP = None
 
 def prepare_old():
@@ -389,11 +360,8 @@ def main():
         print(f"{d:>9} {mem('c',d):>9} {mem('old',d):>9}")
 
     def mem_reduction(d):
-        # both methods store the same output; the new kernel adds only an O(h11)
-        # recursion stack, while dSv1 additionally materializes the whole box.
-        # here the output is tiny (<=2 vectors), so the new kernel's footprint is
-        # below measurement resolution -- report a conservative lower bound
-        # rather than dividing by ~0.
+        # the new kernel's footprint is below measurement resolution here:
+        # report a conservative lower bound rather than dividing by ~0
         ro, rc = results.get(("old", d), {}), results.get(("c", d), {})
         if ro.get("status") != "ok":
             return "oom" if ro.get("status") == "skipped_oom" else "n/a"

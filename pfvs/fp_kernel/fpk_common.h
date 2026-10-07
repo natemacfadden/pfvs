@@ -17,10 +17,9 @@
 #ifndef FPK_COMMON_H
 #define FPK_COMMON_H
 
-// Exact-arithmetic building blocks shared by the CPU kernel (fp_kernel.h), the
-// lattice setup (pfv_lattice.h) and the GPU pipeline: header-only, valid C and
-// C++, and usable in CUDA device code (FPK_HD). Nothing here uses GMP or the
-// heap; paths that need either live in the CPU-only code.
+// Exact-arithmetic building blocks shared by fp_kernel.h, pfv_lattice.h and
+// the GPU pipeline: header-only C/C++, usable in device code (FPK_HD), no GMP
+// or heap.
 
 #include <math.h>
 #include <stdint.h>
@@ -65,9 +64,8 @@ FPK_HD static inline fpk_u128 fpk_abs128(fpk_i128 x)
     return x < 0 ? (fpk_u128)0 - (fpk_u128)x : (fpk_u128)x;
 }
 
-// r = a * b with overflow detection (returns 1 on overflow). Written out
-// rather than __builtin_mul_overflow on __int128, which older clang lowers
-// to a __muloti4 call that libgcc does not provide (link failure on Linux).
+// r = a * b, returns 1 on overflow. Not __builtin_mul_overflow: older clang
+// lowers it on __int128 to __muloti4, which libgcc lacks.
 FPK_HD static inline int fpk_mul_ovf(fpk_i128 a, fpk_i128 b, fpk_i128 *r)
 {
     fpk_u128 ua = fpk_abs128(a), ub = fpk_abs128(b);
@@ -83,7 +81,7 @@ FPK_HD static inline int fpk_mul_ovf(fpk_i128 a, fpk_i128 b, fpk_i128 *r)
 FPK_HD static inline int fpk_ctz64(uint64_t x)
 {
 #ifdef __CUDA_ARCH__
-    return __ffsll((long long)x) - 1;
+    return __clzll(__brevll(x));
 #else
     return __builtin_ctzll(x);
 #endif
@@ -110,10 +108,8 @@ FPK_HD static inline uint64_t fpk_gcd64(uint64_t u, uint64_t v)
     return u << shift;
 }
 
-// gcd(u, v) if it is >= need, else 0 (u, v not both 0). Stein's algorithm
-// with an early exit: with u, v odd multiples of the odd part of the gcd,
-// gcd <= min(u, v) << shift, so once that bound drops below `need` the
-// answer is known without finishing.
+// gcd(u, v) if it is >= need, else 0 (u, v not both 0). Stein's algorithm,
+// exiting early once gcd <= min(u, v) << shift drops below `need`.
 FPK_HD static inline uint64_t fpk_gcd64_ge(uint64_t u, uint64_t v, uint64_t need)
 {
     if (u == 0) return v >= need ? v : 0;
@@ -185,17 +181,13 @@ FPK_HD static inline int fpk_exact_q128(const int64_t *mat, const int32_t *c, in
 
 // Sparse candidates for a level whose GCD cut dominates
 // ----------------------------------------------------
-// At a level with a single H row, the gcd after this level is
-// d(v) = gcd(G, pre + h v) for the parent gcd G. A candidate v can only pass
-// the GCD cut if Q d(v) >= q_lb(v) >= base + t(v)^2 - margin, where t(v) is
-// the float level term. d(v) is a divisor of G, and for a fixed divisor d
-// the v with d | pre + h v form one residue class mod d / gcd(d, h). So all
-// possible survivors are generated directly: for each divisor d of G with
-// d >= need_min, the residue class within the radius where Q d >= q_lb,
-// keeping v only if d(v) == d exactly (each v once). Everything else would
-// fail the GCD test, so this only skips candidates, never survivors.
-// Writes the candidates, ascending (the same visiting order as the full
-// range), to `list`; returns their number, or -1 if not worthwhile/possible.
+// At a level with a single H row the gcd is d(v) = gcd(G, pre + h v), a
+// divisor of the parent gcd G, and v survives only if Q d(v) >= q_lb(v). For
+// each divisor d >= need_min, the v with d | pre + h v are one residue class
+// mod d / gcd(d, h); generate those within the radius where Q d >= q_lb and
+// keep v if d(v) == d. Skips only candidates the GCD test would reject.
+// Writes them ascending to `list`; returns their number, or -1 if not
+// worthwhile.
 #define FPK_SPARSE_MAX_G   (1u << 20)
 #define FPK_SPARSE_CAP     256
 #define FPK_SPARSE_MIN_W   16
@@ -226,17 +218,13 @@ FPK_HD static inline void fpk_isort_i32(int32_t *x, int n)
 
 // Fast exact factorization (int128)
 // ---------------------------------
-// The same fraction-free elimination as fpk_factor_exact, in int128. The
-// minors fit int128 for the matrices that occur, but the products in a
-// Bareiss step, p_k A_ij - A_ik A_kj, do not; the step divides them exactly
-// by p_{k-1}, though. So the numerator is formed mod 2^128 (wrapping), and
-// the exact quotient recovered as (N >> s) * odd(p_{k-1})^{-1} mod 2^(128-s),
-// where 2^s || p_{k-1} -- valid whenever |quotient| < 2^(127-s), which a
-// double estimate with a rigorous error bound checks first. Anything that
-// fails this falls back to the GMP routine. Also returns, for the M0 bound,
-// |V|-sums (sum_k |R_kj z_k|) so the bound stays rigorous under
-// cancellation, since here V is accumulated in floating point from exact
-// integer ratios.
+// fpk_factor_exact's elimination in int128. The Bareiss numerator
+// p_k A_ij - A_ik A_kj may overflow but is divisible by p_{k-1}: form it mod
+// 2^128 and recover the quotient as (N >> s) * odd(p_{k-1})^{-1} mod 2^(128-s),
+// 2^s || p_{k-1}, valid if |quotient| < 2^(127-s) (checked first by a
+// rigorous double estimate; else fall back to GMP). Also returns |V|-sums
+// (sum_k |R_kj z_k|), keeping the M0 bound rigorous since V is accumulated
+// in floating point.
 #ifndef FPK_FAST_FACTOR_MAX_DIM
 #define FPK_FAST_FACTOR_MAX_DIM 32
 #endif
@@ -323,26 +311,18 @@ FPK_HD static inline int fpk_factor_fast(const int64_t *mat, int dim, double *U,
 
 // Shared search (CPU and GPU)
 // ---------------------------
-// The Fincke-Pohst search of fp_kernel.h for the common case -- every H row
-// fits int64 (then no GMP is ever needed) and dim <= FPK_SEARCH_MAXD --
-// written once for host and device. fpk_enumerate uses it on the CPU; the GPU
-// pipeline runs the same code per thread. Visiting order, all tests and the
-// output are identical to fp_kernel.h's loop (see its comments for the maths).
-//
-// Two additions serve work splitting: the top n_prefix coordinates can be
-// forced to given values (c[dim-n_prefix:] = prefix); and with stop_depth > 0
-// the search stops after setting the top stop_depth coordinates and emits that
-// prefix (kind 1, same layout) instead of descending. Points are emitted with
-// kind 0; a leaf whose exact q(c) needs more than int128 is emitted with kind 2
-// (q unset) and the caller decides it exactly (GMP on the CPU).
+// fp_kernel.h's search for the common case (every H row fits int64, dim <=
+// FPK_SEARCH_MAXD), for host and device; same order, tests and output.
+// For work splitting, c[dim-n_prefix:] can be fixed to `prefix`, and with
+// stop_depth > 0 the search emits the top stop_depth coordinates (kind 1)
+// instead of descending. Points are kind 0; a leaf whose exact q needs more
+// than int128 is kind 2, for the caller to decide.
 #ifndef FPK_SEARCH_MAXD
 #define FPK_SEARCH_MAXD 256
 #endif
-// residue mode (see fpk_search_impl.h) is set up per node at an int128
-// modulo per row: only worth it with at least this many candidates (1 on
-// CPUs; the GPU build turns it off -- there the search is latency-bound)
-// sparse candidate lists (fpk_sparse_candidates) in fpk_search: 0 compiles
-// them out (the GPU build, which passes no list buffer)
+// residue mode (fpk_search_impl.h) costs an int128 modulo per row per node:
+// use it from this many candidates (GPU build: off)
+// sparse candidate lists in fpk_search: 0 compiles them out (GPU build)
 #ifndef FPK_SEARCH_SPARSE
 #define FPK_SEARCH_SPARSE 1
 #endif
@@ -360,10 +340,8 @@ typedef struct {
     int64_t n_nodes, n_cand, n_leaf;
 } fpk_counts;
 
-// The float-dependent parts (pruning helpers and the search) are written once,
-// generic in the floating-point type, and instantiated in double (names as
-// is; used everywhere) and, for the GPU, in float (suffix _f; see
-// fpk_search_impl.h for when that is valid).
+// The float-dependent parts, instantiated in double (names as is) and, for
+// the GPU, float (suffix _f; see fpk_search_impl.h).
 #define FPK_R            double
 #define FPK_N(name)      name
 #define FPK_L(x)         (x)
