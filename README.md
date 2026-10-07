@@ -120,6 +120,15 @@ python -m pfvs.distributed work HOST:5055 --device cpu --procs 16
 ```
 `distributed.load_results("out/")` returns each job's PFVs. It exchanges pickles: use it on a trusted network only.
 
+## Scoring geometries
+
+To pick which geometries to search in depth:
+```python
+from pfvs.scoring import score_geometries
+scores = score_geometries(datas, N=2_000_000, ellipsoid_dilation=150)
+```
+`scores[i]` is the number of PFVs `coniZpM` (coni) or `ZpM` (non-coni) finds on the first N p-vectors of `datas[i]`. For coni, use a GPU; without one, `method="estimate"` predicts the count instead (ranks worse). Non-coni finds ~10 PFVs per p-vector, so N ~ 10^4-10^5 suffices.
+
 ## Examples
 
 Scripts in `examples/` (run in CI):
@@ -145,12 +154,14 @@ pfvs/
 │   │   └── cuda/          # GPU backend (CUDA/HIP): pipeline + C API (pfvs_gpu.cu)
 │   ├── conipfv_kernel/    # re-exports fp_kernel.conipfv_kernel (coni-PFV enumeration)
 │   ├── pfv_kernel/        # re-exports fp_kernel.pfv_kernel (non-coni PFV enumeration)
-│   ├── coniZp.py          # coniZpM: coni-PFV generation pipeline
+│   ├── coniZp.py          # coniZpM / coniZpK: coni-PFV generation pipeline
 │   ├── Zp.py              # ZpM / ZpK: PFV generation pipeline
 │   ├── cydata.py          # CYData: CY-data holder
 │   ├── pfv.py             # PFV class + diagnostics
 │   ├── gpu.py             # GPU backend loader (ctypes)
 │   ├── distributed.py     # multi-machine coordinator/workers
+│   ├── dilation.py        # dilation bound + ZpM/ZpK routing
+│   ├── scoring.py         # scoring geometries by PFV count
 │   ├── pvectors.py        # p-vector generation
 │   └── util.py            # shared helpers (+ njit kernels)
 ├── tests/                 # pytest suite, exact oracle (oracle.py), fixtures (data/)
