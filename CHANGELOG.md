@@ -18,6 +18,15 @@ First packaged release. Relative to the code used for arXiv:2406.13751 ("dSv1"):
   PFVs of the published dataset). A diagnostic, shown by `PFV.diagnostics()`;
   not a search parameter, since at h11 >= 8 it is typically ~10^3.
 
+### Ranking conifolds
+- `pfvs.prediction`: `count_coni_pfvs` counts the coni PFVs a search finds on
+  given p-vectors or on exactly the first N of `pvecs`;
+  `rank_coni_geometries` ranks conifolds by that count, generating the next
+  geometries' p-vectors in worker processes while the GPU searches.
+  `expected_pfvs_per_p` / `estimate_coni_pfvs` estimate the same count without
+  searching (Gaussian heuristic on coniZpM's ellipsoids; ranks worse, and
+  overcounts 3-5x, mostly because it does not model det N != 0).
+
 ### Behaviour changes
 - PFV order: within each p-vector, PFVs are listed in a canonical order (by M,
   then K), independent of the lattice basis, so the CPU and GPU paths return
