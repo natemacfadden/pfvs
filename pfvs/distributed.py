@@ -35,6 +35,19 @@
 #   Results equal coniZpM's over the job's whole p-box (as a set; the order
 #   is by unit, then p).
 #
+#   Exhaustive jobs (make_jobs(..., exhaustive=True)) find every coni PFV of
+#   each direction, as coniZpM(..., exhaustive=True): a worker computes each
+#   p-vector's dilation bound and routes it, at the coordinator's current
+#   price lam (pfvs.dilation.CostModel.route_at_price), either to ZpM up to
+#   its bound or to ZpM up to a split dilation D0 plus ZpK above D0. The ZpK
+#   halves come back to the coordinator as ZpK units, which only CPU workers
+#   take while search units remain. The coordinator raises lam (fewer
+#   splits) while ZpK work piles up and lowers it while the CPU workers run
+#   short of it, so the GPU and CPU workers finish together. Without GPU
+#   workers, CPU workers do whole exhaustive search units themselves (ZpM and
+#   ZpK on the CPU); GPU workers without search units do ZpK units on host
+#   threads.
+#
 #   Usage (see README):
 #     coordinator:  python -m pfvs.distributed serve jobs.pkl OUT --address 0.0.0.0:5055
 #     workers:      python -m pfvs.distributed work HOST:5055 --device gpu:0
@@ -64,7 +77,8 @@ __all__ = ["make_jobs", "serve", "work", "load_results"]
 
 # jobs and units
 # --------------
-def make_jobs(datas, B, D, Q=None, M0min=13, ids=None, n_p=None):
+def make_jobs(datas, B, D, Q=None, M0min=13, ids=None, n_p=None, exhaustive=False,
+              cost_model=None):
     """
     **Description:**
     Jobs for `serve`: one per geometry.
@@ -80,6 +94,16 @@ def make_jobs(datas, B, D, Q=None, M0min=13, ids=None, n_p=None):
         output file names, so they must be unique.
     - `n_p` *(list, optional)*: Estimated p-vector counts; used to shard large
         boxes into units of about `target_p` p-vectors (see `serve`).
+    - `exhaustive` *(bool or list, optional)*: Every coni PFV of each
+        direction, at any dilation (see the module description); `D` is then
+        only used for p-vectors without a dilation bound, which are reported
+        as incomplete.
+    - `cost_model` *(CostModel or list, optional)*: The costs GPU workers
+        route exhaustive jobs with (`pfvs.dilation.CostModel`: ZpM on the
+        GPU, ZpK on the CPU workers). Only their shape matters -- the price
+        lam absorbs the scale. Default: costs measured for the job's h11
+        on an RTX 5090 and 24 CPU cores (so lam ~ 1 when the cluster has
+        about 24 CPU cores per GPU).
 
     **Returns:**
     *(list of dict)* The jobs.
@@ -89,11 +113,12 @@ def make_jobs(datas, B, D, Q=None, M0min=13, ids=None, n_p=None):
         return list(x) if isinstance(x, (list, tuple, np.ndarray)) else [x] * n
     B, D, Q, M0min = per(B), per(D), per(Q), per(M0min)
     ids = list(ids) if ids is not None else list(range(n))
-    n_p = per(n_p)
+    n_p, exhaustive, cost_model = per(n_p), per(exhaustive), per(cost_model)
     if len(set(map(str, ids))) != n:
         raise ValueError("job ids must be unique")
     return [dict(id=str(ids[i]), data=datas[i], B=int(B[i]), D=float(D[i]),
-                 Q=None if Q[i] is None else int(Q[i]), M0min=M0min[i], n_p=n_p[i])
+                 Q=None if Q[i] is None else int(Q[i]), M0min=M0min[i], n_p=n_p[i],
+                 exhaustive=bool(exhaustive[i]), cost_model=cost_model[i])
             for i in range(n)]
 
 
@@ -167,11 +192,18 @@ class _Coordinator:
 
     Units are keyed (job id, path): a path is a tuple of ints -- (k,) for the
     k-th initial shard of a job, (k, i) for the i-th piece it was split into,
-    and so on. A job is complete when all its leaf units are done; its PFVs
-    are the leaves' in path order. Splits are logged (splits.pkl) so a
-    resumed run rebuilds the same leaves."""
+    and so on; path + (-1,) is the ZpK unit of an exhaustive search unit
+    (its split p-vectors). A job is complete when all its leaf units are
+    done; its PFVs are the leaves' in path order. Splits are logged
+    (splits.pkl) so a resumed run rebuilds the same leaves; ZpK units are
+    rebuilt from their search units' results."""
 
-    def __init__(self, jobs, out, target_p, lease_s, max_tries, backup_s=30.0):
+    # the price controller: lam is raised (fewer splits) while the pending
+    # ZpK work exceeds LAM_HI seconds of the CPU workers' recent throughput,
+    # lowered below LAM_LO, at most every LAM_DT seconds
+    LAM_HI, LAM_LO, LAM_DT, LAM_STEP, RATE_WINDOW = 600.0, 60.0, 30.0, 1.5, 300.0
+
+    def __init__(self, jobs, out, target_p, lease_s, max_tries, backup_s=30.0, lam0=1.0):
         self.out = out
         self.lease_s = lease_s
         self.backup_s = backup_s
@@ -181,6 +213,7 @@ class _Coordinator:
         os.makedirs(os.path.join(out, "jobs"), exist_ok=True)
         self.jobs = {j["id"]: j for j in jobs}
         self.shard, self.est, self.leaves = {}, {}, {}
+        self.zpk = {}                                   # ZpK unit key -> (ps, D0)
         for j in jobs:
             shards = _units_of(j, target_p)
             j["_n_units"] = len(shards)
@@ -202,18 +235,44 @@ class _Coordinator:
         self.backups, self.workers, self.rate = {}, {}, {}
         self.t0 = time.time()
         self.n_p_done = 0
+        self.lam, self.lam_t = float(lam0), 0.0
+        self.zpk_log = []                               # (time, p-vectors) of finished ZpK units
+        self.pending_zpk = []
+        self.zpk_hungry = False                         # a CPU worker found no ZpK work
+        self.zpk_seen = False                           # some search unit made ZpK work
+        self.gpu_t = -math.inf                          # when a GPU worker last asked for work
         for jid in self.jobs:                           # resume: finished units
-            for key in self.leaves[jid]:
+            for key in list(self.leaves[jid]):
                 if os.path.exists(self._unit_path(key)):
                     self.state[key] = "done"
+                    if self.jobs[jid].get("exhaustive") and not _is_zpk(key):
+                        with open(self._unit_path(key), "rb") as f:
+                            r = pickle.load(f)
+                        self._add_zpk(key, r)
         self.pending = [key for jid in self.jobs for key in sorted(self.leaves[jid], key=lambda k: k[1])
-                        if key not in self.state]
+                        if key not in self.state and not _is_zpk(key)]
         for jid in self.jobs:
             self._maybe_finish(jid)
 
     def _unit_path(self, key):
         jid, path = key
         return os.path.join(self.out, "units", f"{jid}__{'.'.join(map(str, path))}.pkl")
+
+    def _add_zpk(self, key, result):
+        """The ZpK unit of a finished exhaustive search unit, if it has one."""
+        ps = result.get("zpk")
+        if ps is None or len(ps) == 0:
+            return
+        jid, path = key
+        zk = (jid, tuple(path) + (-1,))
+        self.zpk_seen = True
+        self.zpk[zk] = (ps, int(result["D0"]))
+        self.est[zk] = len(ps)
+        self.leaves[jid].add(zk)
+        if os.path.exists(self._unit_path(zk)):
+            self.state[zk] = "done"
+        elif zk not in self.pending_zpk:
+            self.pending_zpk.append(zk)
 
     def _apply_split(self, key, children, n_found):
         jid, path = key
@@ -240,35 +299,83 @@ class _Coordinator:
         path = os.path.join(self.out, "jobs", f"{jid}.pkl")
         if os.path.exists(path):
             return
-        Ks, Ms, Ps, n_p = [], [], [], 0
+        job = self.jobs[jid]
+        h = job["data"].h11
+        Ks, Ms, Ps, inc, n_p = [], [], [], [], 0
         for key in leaves:
             with open(self._unit_path(key), "rb") as f:
                 r = pickle.load(f)
             Ks.append(r["K"]); Ms.append(r["M"]); Ps.append(r["P"]); n_p += r["n_p"]
-        h = self.jobs[jid]["data"].h11
-        res = dict(id=jid, K=np.vstack(Ks) if Ks else np.zeros((0, h), np.int64),
-                   M=np.vstack(Ms) if Ms else np.zeros((0, h), np.int64),
-                   P=np.vstack(Ps) if Ps else np.zeros((0, h - 1), np.int64), n_p=n_p,
-                   B=self.jobs[jid]["B"], D=self.jobs[jid]["D"], Q=_job_Q(self.jobs[jid]))
+            if r.get("incomplete") is not None:
+                inc.append(r["incomplete"])
+        K = np.vstack(Ks) if Ks else np.zeros((0, h), np.int64)
+        M = np.vstack(Ms) if Ms else np.zeros((0, h), np.int64)
+        P = np.vstack(Ps) if Ps else np.zeros((0, h - 1), np.int64)
+        res = dict(id=jid, K=K, M=M, P=P, n_p=n_p, B=job["B"], D=job["D"], Q=_job_Q(job))
+        if job.get("exhaustive"):
+            # (ZpK's PFVs can repeat ZpM's): each once, by p, then (M, K)
+            if len(K):
+                A = np.hstack([P, M, K])
+                if A.dtype == object:
+                    A = np.array(sorted({tuple(int(x) for x in r) for r in A}), dtype=object)
+                else:
+                    A = np.unique(A, axis=0)
+                res.update(P=A[:, :h - 1], M=A[:, h - 1:2 * h - 1], K=A[:, 2 * h - 1:])
+            res.update(exhaustive=True,
+                       incomplete=np.vstack(inc) if inc else np.zeros((0, h - 1), np.int64))
         _atomic_pickle(path, res)
 
     def _unit(self, key):
-        return dict(job=self.jobs[key[0]], path=key[1], shard=self.shard[key])
+        if _is_zpk(key):
+            ps, D0 = self.zpk[key]
+            return dict(job=self.jobs[key[0]], path=key[1], kind="zpk", ps=ps, D0=D0)
+        return dict(job=self.jobs[key[0]], path=key[1], kind="search", shard=self.shard[key],
+                    lam=self.lam)
+
+    def _update_lam(self, now):
+        """The price controller (see LAM_HI): only while search units remain."""
+        if now - self.lam_t < self.LAM_DT or not self.pending:
+            return
+        self.lam_t = now
+        self.zpk_log = [(t, n) for t, n in self.zpk_log if now - t < self.RATE_WINDOW]
+        backlog = sum(len(self.zpk[k][0]) for k in self.pending_zpk)
+        hungry, self.zpk_hungry = self.zpk_hungry, False
+        if not backlog:
+            if hungry and self.zpk_seen:                # CPU workers idle: more splits
+                self.lam = max(self.lam / self.LAM_STEP, 1e-6)
+            return
+        rate = sum(n for _, n in self.zpk_log) / min(self.RATE_WINDOW, max(now - self.t0, 1.0))
+        secs = backlog / rate if rate > 0 else math.inf
+        if secs > self.LAM_HI:
+            self.lam = min(self.lam * self.LAM_STEP, 1e6)
+        elif secs < self.LAM_LO:
+            self.lam = max(self.lam / self.LAM_STEP, 1e-6)
 
     # --- RPCs ---
-    def get_work(self, worker, max_p):
-        """Units totalling about max_p p-vectors (estimated), or [] if none
-        is available now; None when everything is done."""
+    def get_work(self, worker, max_p, kinds=("search",), gpu=False):
+        """Units totalling about max_p p-vectors (estimated) of the given
+        kinds ("zpk": ZpK units; "search"), in that order of preference, or
+        [] if none is available now; None when everything is done. While a
+        GPU worker (gpu=True) is active, CPU workers get no exhaustive search
+        units (their ZpM would be far slower than the GPU's)."""
         with self.lock:
             now = time.time()
             self.workers[worker] = now
-            if not self.pending:                        # reissue expired leases
+            if gpu:
+                self.gpu_t = now
+            skip_ex = not gpu and now - self.gpu_t < 60.0
+            self._update_lam(now)
+            if not (self.pending or self.pending_zpk):  # reissue expired leases
                 for key, st in list(self.state.items()):
                     if isinstance(st, tuple) and now - st[1] > self.lease_s:
-                        self.pending.append(key)
+                        (self.pending_zpk if _is_zpk(key) else self.pending).append(key)
                         del self.state[key]
-            if not self.pending:
-                if self._n_done() + len(self.failed) >= self._n_leaves():
+            if "zpk" in kinds and not self.pending_zpk:
+                self.zpk_hungry = True
+            queues = [self.pending_zpk if k == "zpk" else self.pending for k in kinds]
+            if not any(queues):
+                if not (self.pending or self.pending_zpk) and \
+                        self._n_done() + len(self.failed) >= self._n_leaves():
                     return None
                 # backup copies of long-leased units, for a worker much faster
                 # than the holder (a slow worker must not hold up the end;
@@ -276,6 +383,8 @@ class _Coordinator:
                 mine = self.rate.get(worker, 0.0)
                 slow = sorted((st[1], key) for key, st in self.state.items()
                               if isinstance(st, tuple) and st[0] != worker
+                              and ("zpk" if _is_zpk(key) else "search") in kinds
+                              and not (skip_ex and not _is_zpk(key) and self.jobs[key[0]].get("exhaustive"))
                               and now - st[1] > self.backup_s and self.backups.get(key, 0) < 2
                               and mine >= 4 * self.rate.get(st[0], 0.0) and mine > 0)
                 out = []
@@ -284,13 +393,21 @@ class _Coordinator:
                     out.append(self._unit(key))
                 return out
             out, tot = [], 0.0
-            while self.pending and (not out or tot < max_p):
-                key = self.pending.pop(0)
-                if self.state.get(key) == "done" or key not in self.shard:
-                    continue
-                self.state[key] = (worker, now)
-                out.append(self._unit(key))
-                tot += self.est[key]
+            for q in queues:
+                i = 0
+                while i < len(q) and (not out or tot < max_p):
+                    key = q[i]
+                    if skip_ex and q is self.pending and self.jobs[key[0]].get("exhaustive"):
+                        i += 1
+                        continue
+                    q.pop(i)
+                    if self.state.get(key) == "done" or (key not in self.shard and key not in self.zpk):
+                        continue
+                    self.state[key] = (worker, now)
+                    out.append(self._unit(key))
+                    tot += self.est[key]
+                if out:
+                    break
             return out
 
     def split(self, worker, jid, path, n_found, want):
@@ -298,7 +415,7 @@ class _Coordinator:
         (the worker drops it). Returns False if it cannot be split."""
         with self.lock:
             key = (jid, tuple(path))
-            if key not in self.leaves[jid] or self.state.get(key) == "done":
+            if key not in self.leaves[jid] or self.state.get(key) == "done" or _is_zpk(key):
                 return False
             job = self.jobs[jid]
             children = _split_shard(self.shard[key], job["B"], job["data"].H_cob.shape[1],
@@ -319,14 +436,19 @@ class _Coordinator:
             key = (jid, tuple(path))
             self.workers[worker] = now
             st = self.state.get(key)
-            if st == "done" or key not in self.shard:
+            if st == "done" or (key not in self.shard and key not in self.zpk):
                 return                                  # a backup copy, done twice
-            if isinstance(st, tuple) and st[0] == worker and now > st[1]:
+            if isinstance(st, tuple) and st[0] == worker and now > st[1] and not _is_zpk(key):
                 r = result["n_p"] / (now - st[1])
                 self.rate[worker] = r if worker not in self.rate else 0.7 * self.rate[worker] + 0.3 * r
             _atomic_pickle(self._unit_path(key), result)
             self.state[key] = "done"
             self.n_p_done += result["n_p"]
+            if _is_zpk(key):
+                self.zpk_log.append((now, len(self.zpk[key][0])))
+            elif self.jobs[jid].get("exhaustive"):
+                self._add_zpk(key, result)              # (before the job can finish)
+            self._update_lam(now)
             self._maybe_finish(jid)
 
     def put_error(self, worker, jid, path, msg):
@@ -337,7 +459,7 @@ class _Coordinator:
             self.tries[key] = self.tries.get(key, 0) + 1
             self.state.pop(key, None)
             if self.tries[key] < self.max_tries:
-                self.pending.append(key)
+                (self.pending_zpk if _is_zpk(key) else self.pending).append(key)
             else:
                 self.failed[key] = msg
                 with open(os.path.join(self.out, "failed.txt"), "a") as f:
@@ -349,7 +471,12 @@ class _Coordinator:
             active = sum(1 for t in self.workers.values() if now - t < 120)
             return dict(units=self._n_leaves(), done=self._n_done(), failed=len(self.failed),
                         leased=sum(1 for v in self.state.values() if isinstance(v, tuple)),
-                        p_done=self.n_p_done, seconds=now - self.t0, workers=active)
+                        p_done=self.n_p_done, seconds=now - self.t0, workers=active,
+                        lam=self.lam, zpk_pending=sum(len(self.zpk[k][0]) for k in self.pending_zpk))
+
+
+def _is_zpk(key):
+    return key[1][-1] == -1
 
 
 def _atomic_pickle(path, obj):
@@ -383,7 +510,7 @@ def _parse_address(address):
 
 
 def serve(jobs, out, address="0.0.0.0:5055", authkey=None, target_p=1 << 20,
-          lease_s=3600.0, max_tries=3, poll_s=10.0, verbose=True, backup_s=30.0):
+          lease_s=3600.0, max_tries=3, poll_s=10.0, verbose=True, backup_s=30.0, lam0=1.0):
     """
     **Description:**
     Run the coordinator until every unit is done (or has failed `max_tries`
@@ -402,11 +529,13 @@ def serve(jobs, out, address="0.0.0.0:5055", authkey=None, target_p=1 << 20,
     - `backup_s` *(float, optional)*: Once no unit is pending, a unit leased
         for longer than this is also given to an idle worker (the first
         result wins), so slow workers do not hold up the end.
+    - `lam0` *(float, optional)*: The initial price of exhaustive jobs'
+        routing (GPU time per CPU time; see the module description).
 
     **Returns:**
     *(dict)* The final progress counters.
     """
-    coord = _Coordinator(jobs, out, target_p, lease_s, max_tries, backup_s)
+    coord = _Coordinator(jobs, out, target_p, lease_s, max_tries, backup_s, lam0)
     _ServerManager.register("coordinator", callable=lambda: coord)
     mgr = _ServerManager(address=_parse_address(address), authkey=_authkey(authkey))
     server = mgr.get_server()
@@ -429,9 +558,11 @@ def serve(jobs, out, address="0.0.0.0:5055", authkey=None, target_p=1 << 20,
             break
         if verbose and (last is None or time.time() - last >= poll_s):
             rate = pr["p_done"] / max(pr["seconds"], 1e-9)
+            ex = f", lam {pr['lam']:.3g}, ZpK pending {pr['zpk_pending']:,} p" \
+                if any(j.get("exhaustive") for j in jobs) else ""
             print(f"  {pr['done']}/{pr['units']} units, {pr['failed']} failed, "
                   f"{pr['leased']} in progress, {pr['workers']} workers, "
-                  f"{pr['p_done']:,} p ({rate:,.0f} p/s)", flush=True)
+                  f"{pr['p_done']:,} p ({rate:,.0f} p/s){ex}", flush=True)
             last = time.time()
         time.sleep(0.5)
     time.sleep(1.0)                 # let workers see "done"
@@ -450,7 +581,9 @@ def load_results(out):
 
     **Returns:**
     *(dict)* job id -> dict(K, M, P, n_p, B, D, Q): the PFVs (K, M) and each
-    one's p-vector P = p[1:].
+    one's p-vector P = p[1:]. Exhaustive jobs also have `incomplete`: the
+    p-vectors without a dilation bound (searched at dilation D only); their
+    PFVs are each listed once, by p-vector, then (M, K).
     """
     res = {}
     d = os.path.join(out, "jobs")
@@ -464,9 +597,10 @@ def load_results(out):
 
 # workers
 # -------
-def _post_process(job, ps, M, Kn, q, pidx, pstat):
+def _post_process(job, ps, M, Kn, q, pidx, pstat, dil=None):
     """PFVs of one unit from its lattice points (the coniZpM post-processing);
-    p-vectors the batched path could not finish go through coniZpM."""
+    p-vectors the batched path could not finish go through coniZpM (at
+    dil[i], each p-vector's dilation, if given; else the job's)."""
     from .coniZp import _pfvs_from_points, coniZpM
     from .fp_kernel.fp_kernel import _coni_batch  # noqa: F401  (import check)
     data = job["data"]
@@ -481,7 +615,8 @@ def _post_process(job, ps, M, Kn, q, pidx, pstat):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             K1, M1 = coniZpM(data, ps[ip:ip + 1], Q=Q, M0min=job["M0min"],
-                             ellipsoid_dilation=job["D"], n_jobs=1, device="cpu")
+                             ellipsoid_dilation=job["D"] if dil is None else float(dil[ip]),
+                             n_jobs=1, device="cpu")
         Ks.append(np.asarray(K1).reshape(-1, h)); Ms.append(np.asarray(M1).reshape(-1, h))
         keys.append(np.full(len(K1), ip, dtype=np.int64))
     K, Mo, key = np.vstack(Ks), np.vstack(Ms), np.concatenate(keys)
@@ -504,6 +639,70 @@ def _cpu_unit(job, ps):
     return _post_process(job, ps, M, Kn, q, pidx, pstat)
 
 
+def _route(job, ps, lam, n_threads):
+    """
+    An exhaustive search unit's plan at price lam: each p-vector's ZpM
+    dilation (its bound rounded up, the split dilation D0, or the job's D
+    without a bound), the p-vectors split at D0 (their ZpK half becomes a
+    ZpK unit), D0, and the p-vectors without a bound.
+    """
+    from .coniZp import _default_cost_model, _grid_up
+    from .dilation import coni_dilation_bound_ceils
+    data = job["data"]
+    bceil = coni_dilation_bound_ceils(ps, data.kappa_cob, _job_Q(job), n_jobs=n_threads)
+    has = bceil > 0
+    model = job.get("cost_model") or _default_cost_model(True, data.h11, n_cpu=24)
+    to_bound, D0 = model.route_at_price(np.where(has, bceil, np.inf), lam)
+    to_bound |= has & (bceil <= D0)
+    split = has & ~to_bound
+    dil = np.where(to_bound, _grid_up(bceil), np.where(split, D0, 0)).astype(float)
+    dil[~has] = job["D"]
+    return dil, ps[split], D0, ps[~has]
+
+
+def _zpk_unit(job, ps, D0, n_threads=1):
+    """A ZpK unit: the PFVs above D0 of its p-vectors (all with a bound);
+    those ZpK cannot do exactly are searched by ZpM up to their bound."""
+    from .coniZp import _batch_points, _grid_up, _pfvs_from_points, coniZpM
+    from .dilation import coni_dilation_bounds
+    from .fp_kernel.fp_kernel import _coni_zpk_batch
+    data = job["data"]
+    h, Q, M0min, kap = data.h11, _job_Q(job), job["M0min"], data.kappa_cob
+    p_full = np.hstack([np.zeros((len(ps), 1), np.int64), ps])
+    M, Kn, q, pidx, st = _batch_points(_coni_zpk_batch, kap, data.M_lattice(), p_full,
+                                       np.arange(len(ps)), n_threads, Q, M0min, D0, 10**9)
+    Ks, Ms, keys = _pfvs_from_points(M.T, Kn.T, q, pidx, kap, h, Q, M0min)
+    Ks, Ms, keys = [Ks], [Ms], [keys]
+    bad = np.flatnonzero(st != 0)
+    for i, b in zip(bad, coni_dilation_bounds(ps[bad], kap, Q)):
+        if b is None:
+            raise RuntimeError(f"p={ps[i].tolist()}: split, but without a dilation bound")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            K1, M1 = coniZpM(data, ps[i:i + 1], Q=Q, M0min=M0min,
+                             ellipsoid_dilation=float(_grid_up(math.ceil(b))), n_jobs=1, device="cpu")
+        Ks.append(np.asarray(K1).reshape(-1, h)); Ms.append(np.asarray(M1).reshape(-1, h))
+        keys.append(np.full(len(K1), i, dtype=np.int64))
+    key = np.concatenate(keys)
+    return dict(K=np.vstack(Ks), M=np.vstack(Ms), P=ps[key] if len(key) else np.zeros((0, h - 1), np.int64),
+                n_p=0)
+
+
+def _cpu_exhaustive_unit(job, ps):
+    """An exhaustive search unit wholly on the CPU (ZpM and ZpK)."""
+    from .coniZp import _coni_exhaustive, _default_cost_model
+    data = job["data"]
+    h = data.h11
+    if len(ps) == 0:
+        return dict(K=np.zeros((0, h), np.int64), M=np.zeros((0, h), np.int64),
+                    P=np.zeros((0, h - 1), np.int64), n_p=0, incomplete=np.zeros((0, h - 1), np.int64))
+    p_full = np.hstack([np.zeros((len(ps), 1), np.int64), ps])
+    Ks, Ms, keys, has = _coni_exhaustive(data, ps, p_full, _job_Q(job), job["M0min"], job["D"],
+                                         False, False, 1, 10**9, _default_cost_model(False, h), 0)
+    return dict(K=Ks, M=Ms, P=ps[keys] if len(keys) else np.zeros((0, h - 1), np.int64),
+                n_p=len(ps), incomplete=ps[~has])
+
+
 def _connect(address, authkey, retries=30):
     for i in range(retries):
         try:
@@ -520,7 +719,7 @@ def _cpu_worker(address, authkey, name, batch_p, max_unit_p=1 << 17):
     coord = _connect(address, authkey)
     while True:
         try:
-            units = coord.get_work(name, batch_p)
+            units = coord.get_work(name, batch_p, ("zpk", "search"))
         except (EOFError, ConnectionError, OSError):
             return                                     # the coordinator is gone
         if units is None:
@@ -531,18 +730,25 @@ def _cpu_worker(address, authkey, name, batch_p, max_unit_p=1 << 17):
         for u in units:
             job = u["job"]
             try:
+                if u.get("kind") == "zpk":
+                    coord.put_result(name, job["id"], u["path"], _zpk_unit(job, u["ps"], u["D0"]))
+                    continue
                 ps = _enumerate_unit(job, u["shard"])
                 if len(ps) > max_unit_p and coord.split(name, job["id"], u["path"], len(ps), max_unit_p):
                     continue                           # too big for a CPU worker: split
-                res = _cpu_unit(job, ps)
+                res = _cpu_exhaustive_unit(job, ps) if job.get("exhaustive") else _cpu_unit(job, ps)
                 coord.put_result(name, job["id"], u["path"], res)
             except Exception:
                 coord.put_error(name, job["id"], u["path"], traceback.format_exc(limit=3)[-900:])
 
 
-def _gpu_worker(address, authkey, name, device, batch_p, verbose, max_unit_p=1 << 23):
-    """GPU worker: fetch+enumerate -> device -> post-process, as three
-    overlapping stages (the ctypes device call releases the GIL)."""
+def _gpu_worker(address, authkey, name, device, batch_p, verbose, max_unit_p=1 << 23,
+                bound_threads=None):
+    """GPU worker: fetch+enumerate(+route) -> device -> post-process, as
+    three overlapping stages (the ctypes device call releases the GIL).
+    Exhaustive units' bounds are computed in bound_threads threads (default:
+    half the cores)."""
+    bound_threads = bound_threads or max(1, (os.cpu_count() or 2) // 2)
     # the enumeration of the next units uses a few OpenMP threads (set before
     # the OpenMP runtime starts), leaving the rest of the machine to others
     os.environ.setdefault("OMP_NUM_THREADS", str(max(2, (os.cpu_count() or 8) // 6)))
@@ -558,7 +764,8 @@ def _gpu_worker(address, authkey, name, device, batch_p, verbose, max_unit_p=1 <
         while True:
             t = time.perf_counter()
             try:
-                units = coord.get_work(name, batch_p)
+                # (ZpK units only when no search unit is left: on host threads)
+                units = coord.get_work(name, batch_p, ("search", "zpk"), True)
             except (EOFError, ConnectionError, OSError):
                 units = None                           # the coordinator is gone
             if units is None:
@@ -572,11 +779,19 @@ def _gpu_worker(address, authkey, name, device, batch_p, verbose, max_unit_p=1 <
             t = time.perf_counter()
             for u in units:
                 try:
+                    if u.get("kind") == "zpk":
+                        coord.put_result(name, u["job"]["id"], u["path"],
+                                         _zpk_unit(u["job"], u["ps"], u["D0"], bound_threads))
+                        continue
                     ps = _enumerate_unit(u["job"], u["shard"], parallel=True)
                     if len(ps) > max_unit_p and coord.split(name, u["job"]["id"], u["path"],
                                                            len(ps), max_unit_p):
                         continue
-                    batch.append((u, ps))
+                    dil = extra = None
+                    if u["job"].get("exhaustive") and len(ps):
+                        dil, zps, D0, inc = _route(u["job"], ps, u["lam"], bound_threads)
+                        extra = dict(zpk=zps, D0=D0, incomplete=inc)
+                    batch.append((u, ps, dil, extra))
                 except Exception:
                     coord.put_error(name, u["job"]["id"], u["path"], traceback.format_exc(limit=3)[-900:])
             tm["enum"] += time.perf_counter() - t
@@ -592,18 +807,22 @@ def _gpu_worker(address, authkey, name, device, batch_p, verbose, max_unit_p=1 <
             if err and verbose:
                 print(f"[{name}] device call failed; doing its {len(batch)} units on the CPU:\n{err}",
                       flush=True)
-            for bi, (u, ps) in enumerate(batch):
+            for bi, (u, ps, dil, extra) in enumerate(batch):
                 job = u["job"]
                 try:
                     if err:                             # the device failed: CPU instead
-                        coord.put_result(name, job["id"], u["path"], _cpu_unit(job, ps))
+                        coord.put_result(name, job["id"], u["path"],
+                                         _cpu_exhaustive_unit(job, ps) if job.get("exhaustive")
+                                         else _cpu_unit(job, ps))
                         continue
                     h = job["data"].h11
                     M, Kn, q, pidx, pstat, lo, hi = res[bi]
                     t = time.perf_counter()
-                    r = _post_process(job, ps, M[:, :h], Kn[:, :h], q, pidx - lo, pstat[lo:hi]) \
+                    r = _post_process(job, ps, M[:, :h], Kn[:, :h], q, pidx - lo, pstat[lo:hi], dil) \
                         if len(ps) else dict(K=np.zeros((0, h), np.int64), M=np.zeros((0, h), np.int64),
                                              P=np.zeros((0, h - 1), np.int64), n_p=0)
+                    if extra is not None:
+                        r.update(extra)
                     t2 = time.perf_counter(); tm["post"] += t2 - t
                     coord.put_result(name, job["id"], u["path"], r)
                     tm["rpc_put"] += time.perf_counter() - t2
@@ -620,23 +839,29 @@ def _gpu_worker(address, authkey, name, device, batch_p, verbose, max_unit_p=1 <
         if batch is STOP:
             q_out.put(STOP)
             break
-        # one device call for the whole batch (geometries deduplicated)
+        # one device call for the whole batch (one "geometry" per job and
+        # dilation: exhaustive units have a dilation per p-vector)
         geo_idx, geoms, ranges = {}, [], []
-        n_all = sum(len(ps) for _, ps in batch)
+        n_all = sum(len(ps) for _, ps, _, _ in batch)
         MH = gpu.max_h11()
         ps_all = np.zeros((n_all, MH), np.int64)          # p with its leading 0, padded
         pgeo = np.zeros(n_all, np.int32)
         lo = 0
-        for u, ps in batch:
+        for u, ps, dil, _ in batch:
             job = u["job"]
-            if job["id"] not in geo_idx:
-                d = job["data"]
-                geo_idx[job["id"]] = len(geoms)
-                geoms.append(dict(kappa=d.kappa_cob, Mbasis=d.M_lattice(), Q=_job_Q(job),
-                                  dilation=job["D"], M0min=job["M0min"]))
+            Ds, inv = np.unique(np.full(len(ps), job["D"]) if dil is None else dil, return_inverse=True)
+            gi = np.zeros(len(Ds), np.int32)
+            for k, D in enumerate(Ds):
+                gk = (job["id"], float(D))
+                if gk not in geo_idx:
+                    d = job["data"]
+                    geo_idx[gk] = len(geoms)
+                    geoms.append(dict(kappa=d.kappa_cob, Mbasis=d.M_lattice(), Q=_job_Q(job),
+                                      dilation=float(D), M0min=job["M0min"]))
+                gi[k] = geo_idx[gk]
             hi = lo + len(ps)
             ps_all[lo:hi, 1:1 + ps.shape[1]] = ps
-            pgeo[lo:hi] = geo_idx[job["id"]]
+            pgeo[lo:hi] = gi[inv] if len(ps) else 0
             ranges.append((lo, hi))
             lo = hi
         res, err = [], None
@@ -659,7 +884,7 @@ def _gpu_worker(address, authkey, name, device, batch_p, verbose, max_unit_p=1 <
 
 
 def work(address, authkey=None, device="cpu", procs=None, batch_p=None, verbose=False,
-         max_unit_p=None):
+         max_unit_p=None, bound_threads=None):
     """
     **Description:**
     Run workers against a coordinator until it has no more work. Blocks.
@@ -675,6 +900,10 @@ def work(address, authkey=None, device="cpu", procs=None, batch_p=None, verbose=
     - `max_unit_p` *(int, optional)*: A unit with more p-vectors than this is
         sent back to be split (GPU default 2^23, CPU default 2^17), so that no
         worker holds a unit for long.
+    - `bound_threads` *(int, optional)*: Host threads a GPU worker computes
+        exhaustive jobs' dilation bounds with (default: half the cores). The
+        bounds are CPU work that feeds the GPU: with CPU workers on the same
+        machine, split its cores between the two.
     """
     import multiprocessing as mp
     host = socket.gethostname()
@@ -699,10 +928,12 @@ def work(address, authkey=None, device="cpu", procs=None, batch_p=None, verbose=
         bp = batch_p or (1 << 20)
         mu = max_unit_p or (1 << 23)
         if len(devs) == 1:
-            _gpu_worker(address, authkey, f"{host}/gpu{devs[0]}", devs[0], bp, verbose, mu)
+            _gpu_worker(address, authkey, f"{host}/gpu{devs[0]}", devs[0], bp, verbose, mu,
+                        bound_threads)
             return
         ctx = mp.get_context("spawn")
-        ps = [ctx.Process(target=_gpu_worker, args=(address, authkey, f"{host}/gpu{d}", d, bp, verbose, mu))
+        ps = [ctx.Process(target=_gpu_worker, args=(address, authkey, f"{host}/gpu{d}", d, bp, verbose, mu,
+                                                    bound_threads))
               for d in devs]
         for p in ps:
             p.start()
@@ -724,6 +955,7 @@ def main(argv=None):
     s.add_argument("--address", default="0.0.0.0:5055")
     s.add_argument("--target-p", type=int, default=1 << 20)
     s.add_argument("--lease", type=float, default=3600.0, help="seconds before a unit is reissued")
+    s.add_argument("--lam", type=float, default=1.0, help="initial price of exhaustive routing")
     w = sub.add_parser("work", help="run workers")
     w.add_argument("address", help="coordinator host:port")
     w.add_argument("--device", default="cpu", help='"cpu", "gpu" (all devices) or "gpu:N"')
@@ -731,15 +963,17 @@ def main(argv=None):
     w.add_argument("--batch-p", type=int, default=None)
     w.add_argument("--max-unit-p", type=int, default=None,
                    help="split units larger than this (default: 2^23 GPU, 2^17 CPU)")
+    w.add_argument("--bound-threads", type=int, default=None,
+                   help="GPU workers: host threads for exhaustive jobs' bounds (default: half the cores)")
     w.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "serve":
         with open(a.jobs, "rb") as f:
             jobs = pickle.load(f)
-        pr = serve(jobs, a.out, a.address, target_p=a.target_p, lease_s=a.lease)
+        pr = serve(jobs, a.out, a.address, target_p=a.target_p, lease_s=a.lease, lam0=a.lam)
         return 0 if pr["failed"] == 0 else 1
     work(a.address, device=a.device, procs=a.procs, batch_p=a.batch_p, verbose=a.verbose,
-         max_unit_p=a.max_unit_p)
+         max_unit_p=a.max_unit_p, bound_threads=a.bound_threads)
     return 0
 
 

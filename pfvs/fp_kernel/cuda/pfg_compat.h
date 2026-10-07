@@ -87,6 +87,25 @@ struct Tile {
 #endif
 };
 
+// Whole-warp operations: all lanes of the warp/wavefront must take part.
+// wave_size(): 32 (CUDA), 32 or 64 (HIP, per target and build flags).
+#if PFG_HIP
+__device__ inline int wave_size() { return warpSize; }
+__device__ inline void wave_sync()
+{
+    __builtin_amdgcn_fence(__ATOMIC_RELEASE, "wavefront");
+    __builtin_amdgcn_wave_barrier();
+    __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "wavefront");
+}
+__device__ inline int wave_shfl_up(int v, int o) { return __shfl_up(v, o); }
+__device__ inline int wave_shfl(int v, int src) { return __shfl(v, src); }
+#else
+__device__ inline int wave_size() { return 32; }
+__device__ inline void wave_sync() { __syncwarp(); }
+__device__ inline int wave_shfl_up(int v, int o) { return __shfl_up_sync(0xffffffffu, v, o); }
+__device__ inline int wave_shfl(int v, int src) { return __shfl_sync(0xffffffffu, v, src); }
+#endif
+
 // warp-aggregated slot reservation on a global counter (divergence-safe):
 // one atomic per warp instead of per thread
 __device__ inline unsigned long long agg_inc(unsigned long long *ctr)

@@ -66,6 +66,24 @@ def test_gpu_matches_cpu(g, dil):
 
 
 @needs_gpu
+def test_gpu_matches_cpu_large_dilation():
+    """h11 >= 7 at dilation 800: most candidates go through the warp-cooperative
+    expand stages (k_expand)."""
+    npts = 0
+    for g in [g for g in GEOMS if 7 <= g["h11"] <= 11]:
+        data = cydata(g)
+        ps = _ps(data, g["B"])[:300]
+        if len(ps) == 0:
+            continue
+        Kc, Mc = coniZpM(data, ps, ellipsoid_dilation=800, n_jobs=1, device="cpu")
+        Kg, Mg = coniZpM(data, ps, ellipsoid_dilation=800, n_jobs=1, device="gpu")
+        np.testing.assert_array_equal(Kg, Kc)
+        np.testing.assert_array_equal(Mg, Mc)
+        npts += len(Kc)
+    assert npts > 0
+
+
+@needs_gpu
 def test_multi_geometry_batch_matches_single():
     """One call over several geometries equals one call per geometry."""
     geoms, ps_all, pgeo, singles = [], [], [], []

@@ -83,7 +83,7 @@ FPK_HD static inline int fpk_mul_ovf(fpk_i128 a, fpk_i128 b, fpk_i128 *r)
 FPK_HD static inline int fpk_ctz64(uint64_t x)
 {
 #ifdef __CUDA_ARCH__
-    return __ffsll((long long)x) - 1;
+    return __clzll(__brevll(x));
 #else
     return __builtin_ctzll(x);
 #endif

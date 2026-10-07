@@ -97,6 +97,27 @@ cdef extern from *:
     pfl_i128_t INT64_MAX_128
 
 
+cdef extern from "coni_bound.h":
+    int CB_MAX_H11
+    int cb_coni_mu0(int h, const int64_t *kappa, const int64_t *p_r,
+                    int64_t *mu_num, int64_t *mu_den, int64_t *K) nogil
+
+
+cdef extern from "coni_zpk.h":
+    ctypedef struct czk_points:
+        int64_t *M
+        int64_t *Kn
+        int64_t *q
+        int64_t *pidx
+        long n
+        long cap
+    int CZK_MAX_H11
+    void czk_points_free(czk_points *P) nogil
+    void czk_batch(int h, const int64_t *kappa, const int64_t *Mbasis, const int64_t *ps,
+                   long n_p, int64_t Q, int64_t M0min, int64_t D0, long max_out,
+                   czk_points *out, int *status) nogil
+
+
 # helpers
 # -------
 def _exact_mat(U, mat):
@@ -386,6 +407,80 @@ def _lattice_build(kappa, Mbasis, p, bint coni, bint extra_lll=True, bint m0_bas
         return 0, Z, B, ZB, mat, H
     finally:
         free(R)
+
+
+# coni dilation bound (see coni_bound.h and pfvs.dilation)
+# --------------------------------------------------------
+def _coni_mu0_batch(kappa, ps):
+    """
+    mu0 for each direction p_r (rows of ps, length h11-1). Returns
+    (status, mu_num, mu_den, K): status 0, mu0 = mu_num / mu_den and K a
+    minimizer; status 1, no bound (the hypotheses fail); status < 0, not
+    decided in C (use the exact Python path). K is (len(ps), h11-1).
+    """
+    cdef int64_t[::1] k_c = np.ascontiguousarray(kappa, dtype=np.int64).reshape(-1)
+    cdef int64_t[:, ::1] p_c = np.ascontiguousarray(np.atleast_2d(ps), dtype=np.int64)
+    cdef int n = p_c.shape[0], m = p_c.shape[1], h = m + 1, i
+    if k_c.shape[0] != h * h * h:
+        raise ValueError("ps must have h11-1 columns")
+    st = np.full(n, -20, dtype=np.int32)
+    num = np.zeros(n, dtype=np.int64)
+    den = np.ones(n, dtype=np.int64)
+    K = np.zeros((n, m), dtype=np.int64)
+    cdef int32_t[::1] st_c = st
+    cdef int64_t[::1] num_c = num, den_c = den
+    cdef int64_t[:, ::1] K_c = K
+    if h <= CB_MAX_H11 and n > 0:
+        with nogil:
+            for i in range(n):
+                st_c[i] = cb_coni_mu0(h, &k_c[0], &p_c[i, 0], &num_c[i], &den_c[i], &K_c[i, 0])
+    return st, num, den, K
+
+
+# coni ZpK above D0 (see coni_zpk.h)
+# ----------------------------------
+def _coni_zpk_batch(kappa, Mbasis, ps, long long Q, long long M0min, long long D0,
+                    long max_N_out):
+    """
+    For each coni p-vector (rows of ps, full length h11 with p[0] = 0): the
+    lattice points c of its coni PFVs with dilation > D0, as
+
+        M = Binter c,   Kn = (Z Binter) c,   q = c^T mat c,   pidx
+
+    (the format of _coni_batch), plus a per-p status: 0 done; 1 no ZpK for
+    this direction (s >= 0, A_rr singular or S not positive definite on
+    Lambda); < 0 not decided here (overflow, ill-conditioning, more than
+    max_N_out points). Points of a p with nonzero status are not returned.
+    """
+    cdef int64_t[::1] k_c = np.ascontiguousarray(kappa, dtype=np.int64).reshape(-1)
+    cdef int64_t[:, ::1] M_c = np.ascontiguousarray(Mbasis, dtype=np.int64)
+    cdef int h = M_c.shape[0]
+    cdef int64_t[:, ::1] p_c = np.ascontiguousarray(ps, dtype=np.int64).reshape(-1, h)
+    cdef long n = p_c.shape[0]
+    if k_c.shape[0] != h * h * h:
+        raise ValueError("inconsistent shapes")
+    status_np = np.full(n, -20, dtype=np.int32)
+    cdef int[::1] status = status_np
+    cdef czk_points out
+    memset(&out, 0, sizeof(out))
+    try:
+        if n and 3 <= h <= CZK_MAX_H11:
+            with nogil:
+                czk_batch(h, &k_c[0], &M_c[0, 0], &p_c[0, 0], n, Q, M0min, D0, max_N_out,
+                          &out, &status[0])
+        cnt = out.n
+        Mv = np.empty((cnt, h), dtype=np.int64)
+        Kv = np.empty((cnt, h), dtype=np.int64)
+        qv = np.empty(cnt, dtype=np.int64)
+        pv = np.empty(cnt, dtype=np.int64)
+        if cnt:
+            _copy_i64(Mv.reshape(-1), out.M, cnt * h)
+            _copy_i64(Kv.reshape(-1), out.Kn, cnt * h)
+            _copy_i64(qv, out.q, cnt)
+            _copy_i64(pv, out.pidx, cnt)
+        return Mv, Kv, qv, pv, status_np
+    finally:
+        czk_points_free(&out)
 
 
 # batched coni pipeline: lattice setup + kernel, no Python per p-vector

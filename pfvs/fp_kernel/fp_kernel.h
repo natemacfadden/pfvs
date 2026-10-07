@@ -361,7 +361,7 @@ static int fpk_enumerate_fast(const fpk_problem *P, fpk_output *out, const doubl
         }
         fpk_prep_f S = {dim, P->strict, P->nrows > 0, m0_level, P->Q, P->qmax, P->linmin,
                         (float)P->qmax, 0.0f, 0.0f, 0.0f, Uf, Uinvf, Nf, Vf, Vaf,
-                        P->linvec, P->mat, Hs, level_start, order};
+                        P->linvec, P->mat, Hs, level_start, order, NULL};
         fpk_search_consts_f(dim, P->qmax, P->eps, &S.slack, &S.Kerr, &S.max_err);
         st = fpk_search_f(&S, NULL, 0, 0, clist, fpk_fast_emit, &X, &cnt);
         free(f);
@@ -374,7 +374,7 @@ static int fpk_enumerate_fast(const fpk_problem *P, fpk_output *out, const doubl
     if (P->qmax >= (1LL << 22) || st == -11) {
         fpk_prep S = {dim, P->strict, P->nrows > 0, m0_level, P->Q, P->qmax, P->linmin,
                       (double)P->qmax, 0.0, 0.0, 0.0, U, Uinv, m0N, m0V, m0Va,
-                      P->linvec, P->mat, Hs, level_start, order};
+                      P->linvec, P->mat, Hs, level_start, order, NULL};
         fpk_search_consts(dim, P->qmax, P->eps, &S.slack, &S.Kerr, &S.max_err);
         st = fpk_search(&S, NULL, 0, 0, clist, fpk_fast_emit, &X, &cnt);
     }

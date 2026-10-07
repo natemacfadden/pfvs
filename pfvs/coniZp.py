@@ -29,14 +29,16 @@ import math
 import numba
 import numpy as np
 import os
+import time
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 
 from numpy.typing import ArrayLike
 
 # local imports
 from . import util
 from .conipfv_kernel import conipfv_kernel
-from .fp_kernel.fp_kernel import _coni_batch, _lattice_build
+from .fp_kernel.fp_kernel import _coni_batch, _coni_zpk_batch, _lattice_build
 from .cydata import CYData
 
 # coniZp helpers
@@ -582,6 +584,435 @@ def _raise_kernel_status(p, status: int):
         f"p={np.asarray(p).tolist()}: conipfv_kernel returned status {status} {reason}")
 
 
+# helpers for coniZpK and the exhaustive search
+# ==============================================
+def _thread_map(fn, items, n_threads):
+    """[fn(x) for x in items], in threads (for C calls that release the GIL)."""
+    if n_threads <= 1 or len(items) <= 1:
+        return [fn(x) for x in items]
+    with ThreadPoolExecutor(min(n_threads, len(items))) as ex:
+        return list(ex.map(fn, items))
+
+
+def _batch_points(f, kappa, Mbasis, p_full, idx, n_threads, *args):
+    """
+    A batched C pipeline (`_coni_batch` or `_coni_zpk_batch`: f(kappa,
+    Mbasis, ps, *args)) over the rows p_full[idx], in n_threads threads:
+    (M, Kn, q, pidx, status) with pidx indexing p_full and status[i] the
+    status of p_full[idx[i]].
+    """
+    idx = np.asarray(idx, dtype=np.int64)
+    chunks = [c for c in np.array_split(idx, max(1, min(4 * n_threads, len(idx) // 16))) if len(c)]
+    res = _thread_map(lambda c: f(kappa, Mbasis, p_full[c], *args), chunks, n_threads)
+    h = p_full.shape[1]
+    if not res:
+        z = np.zeros((0, h), dtype=np.int64)
+        return z, z.copy(), np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64), \
+            np.zeros(0, dtype=np.int32)
+    M = np.vstack([r[0] for r in res])
+    Kn = np.vstack([r[1] for r in res])
+    q = np.concatenate([r[2] for r in res])
+    pidx = np.concatenate([c[r[3]] for c, r in zip(chunks, res)])
+    status = np.concatenate([r[4] for r in res])
+    return M, Kn, q, pidx, status
+
+
+def _canonical(Ks, Ms, keys):
+    """Deduplicate PFVs and sort them by key (p-vector), then (M, K)."""
+    keys = np.asarray(keys)
+    if len(keys) == 0:
+        return Ks, Ms, keys.astype(np.int64)
+    if Ks.dtype == object or Ms.dtype == object:
+        rows = sorted({(int(k), tuple(int(x) for x in m), tuple(int(x) for x in kk))
+                       for k, kk, m in zip(keys, Ks, Ms)})
+        return (np.array([r[2] for r in rows], dtype=object),
+                np.array([r[1] for r in rows], dtype=object),
+                np.array([r[0] for r in rows], dtype=np.int64))
+    h = Ms.shape[1]
+    A = np.unique(np.hstack([keys[:, None].astype(np.int64), Ms, Ks]), axis=0)
+    return A[:, 1 + h:], A[:, 1:1 + h], A[:, 0]
+
+
+def _dilations(kappa, p_full, Ks, Ms, keys):
+    """
+    The dilation of each PFV (K, M) of the p-vector p_full[key]:
+    delta = gcd((Z M)_r) / gcd(K_r) with Z = kappa . p (since
+    (Z M)_r = delta K_r), as (numerator, denominator) integer arrays
+    (object dtype if int64 could overflow).
+    """
+    keys = np.asarray(keys)
+    n, h = len(keys), np.asarray(kappa).shape[0]
+    big = Ks.dtype == object or Ms.dtype == object or \
+        h * h * util.absmax(kappa) * util.absmax(p_full) * max(util.absmax(Ms), 1) >= 2**62
+    dt = object if big else np.int64
+    num = np.zeros(n, dtype=dt)
+    for k in np.unique(keys):
+        sel = np.flatnonzero(keys == k)
+        Z = util.exact_matmul(np.asarray(kappa).reshape(h * h, h), p_full[k]).reshape(h, h)
+        ZM = util.exact_matmul(np.asarray(Ms[sel]), np.asarray(Z).T)
+        num[sel] = np.gcd.reduce(np.abs(np.asarray(ZM, dtype=dt)[:, 1:]), axis=1)
+    den = np.gcd.reduce(np.abs(np.asarray(Ks, dtype=dt)[:, 1:]), axis=1) if n else np.zeros(0, dtype=dt)
+    return num, den
+
+
+def _in_kahler_cone(H, ps):
+    """Whether H p >= 1 for every row p of ps (in float64 -- BLAS -- when
+    every partial sum is an integer below 2^53, so exact; else exactly)."""
+    H, ps = np.asarray(H), np.asarray(ps)
+    if H.dtype != object and ps.dtype != object and np.issubdtype(ps.dtype, np.integer) \
+            and H.shape[1] * util.absmax(H) * util.absmax(ps) < 2**53:
+        for i in range(0, len(ps), 1 << 18):
+            if not np.all(H.astype(np.float64) @ ps[i:i + (1 << 18)].T.astype(np.float64) >= 1):
+                return False
+        return True
+    return bool(np.all(H @ ps.T >= 1))
+
+
+def _validate_ps(data, ps, checked=False):
+    if not data.coni:
+        raise ValueError("coniZpM/coniZpK only apply to coni contexts. Use Zp.py for non-coni PFVs.")
+    if len(ps) == 0:
+        raise ValueError("ps must be non-empty.")
+    ps = np.array(ps)
+    if not checked and not _in_kahler_cone(data.H_cob, ps):
+        raise ValueError("some p-vectors are not in the kahler cone (H_cob@ps.T >= 1 failed)")
+    p_int = util._as_integral(ps)
+    if p_int.dtype == object:
+        raise util.IncompleteSearchError("p-vector entries exceed int64")
+    return ps, np.hstack([np.zeros((len(ps), 1), dtype=np.int64), p_int.astype(np.int64)])
+
+
+def coniZpK(
+    data: CYData,
+    ps: ArrayLike,
+    D0: int,
+    Q: int | None = None,
+    M0min: int = 13,
+    n_jobs: int = -1,
+    max_N_pfvs: int = 1_000_000_000,
+    return_formal_pfvs: bool = False,
+    verbosity: int = 0,
+    ) -> tuple[ArrayLike, ArrayLike]:
+    """
+    The coni PFVs of each p-vector with dilation above D0: those with
+    p = p_hat / delta, delta > D0, for the direction p_hat given. Together
+    with ``coniZpM(..., ellipsoid_dilation=D0)``, which finds those with
+    delta <= D0, this is every coni PFV of the direction.
+
+    Each PFV above D0 has a short K_r: with A = kappa . p_hat,
+    S = -A_rr^-1 and s the Schur complement of A_rr (see `pfvs.dilation`),
+    the tadpole forces K_r^T S K_r < Q / D0 when s < 0 and S is positive
+    definite on the lattice {K : p_r . K = 0}. ZpK enumerates those K_r and,
+    for each, the PFVs it belongs to (exact C kernel, coni_zpk.h). A
+    p-vector it cannot handle exactly is searched by ``coniZpM`` up to its
+    dilation bound instead.
+
+    Parameters
+    ----------
+    data : CYData
+        The relevant data from the associated CY.
+    ps : iterable of shape (N, h11-1)
+        The p-vectors (directions) without their coni entry, p[1:], as for
+        ``coniZpM``.
+    D0 : int
+        Find the PFVs with dilation > D0 (a positive integer).
+    Q, M0min, n_jobs, max_N_pfvs, return_formal_pfvs, verbosity :
+        As for ``coniZpM`` (n_jobs: threads; the C kernel releases the GIL).
+
+    Returns
+    -------
+    Ks, Ms : ndarrays of shape (N, h11), or a list of PFV objects
+        The PFVs, grouped by p-vector (in the order of ps) and sorted by
+        (M, K) within one.
+
+    Raises
+    ------
+    IncompleteSearchError
+        For a p-vector whose PFVs above D0 cannot be enumerated: s >= 0, or
+        S is not positive definite on the lattice (then its PFVs' dilation
+        is not bounded this way), or its search is not exact.
+    """
+    ps, p_full = _validate_ps(data, ps)
+    if int(D0) != D0 or D0 < 1:
+        raise ValueError(f"D0 must be a positive integer, got {D0}")
+    D0 = int(D0)
+    kappa, Mbasis, h11 = data.kappa_cob, data.M_lattice(), data.h11
+    if Q is None:
+        Q = h11 + data.h21 + 4
+    if n_jobs == -1:
+        n_jobs = os.cpu_count()
+
+    Mv, Kv, qv, pv, st = _batch_points(_coni_zpk_batch, kappa, Mbasis, p_full,
+                                       np.arange(len(ps)), n_jobs, Q, M0min, D0, max_N_pfvs)
+    Ks, Ms, keys = _pfvs_from_points(Mv.T, Kv.T, qv, pv, kappa, h11, Q, M0min, verbosity)
+    pieces = [(Ks, Ms, keys)]
+    bad = np.flatnonzero(st != 0)
+    if verbosity >= 1:
+        print(f"ZpK: {len(qv)} lattice points for {len(ps)} p-vectors "
+              f"({len(bad)} searched by coniZpM to their bound instead)")
+    if len(bad):
+        from .dilation import coni_dilation_bounds
+        for i, b in zip(bad, coni_dilation_bounds(ps[bad], kappa, Q)):
+            if b is None:
+                raise util.IncompleteSearchError(
+                    f"p={ps[i].tolist()}: its PFVs above D0 cannot be enumerated (s >= 0, or "
+                    f"S not positive definite on the lattice orthogonal to p)")
+            K1, M1 = coniZpM(data, ps[i][None], Q=Q, M0min=M0min,
+                             ellipsoid_dilation=max(math.ceil(b), D0), n_jobs=1, device="cpu",
+                             max_N_pfvs=max_N_pfvs)
+            pieces.append((K1, M1, np.full(len(K1), i, dtype=np.int64)))
+    Ks = np.vstack([pc[0] for pc in pieces])
+    Ms = np.vstack([pc[1] for pc in pieces])
+    keys = np.concatenate([pc[2] for pc in pieces])
+    num, den = _dilations(kappa, p_full, Ks, Ms, keys)
+    above = np.asarray(num > D0 * den, dtype=bool)
+    Ks, Ms, keys = _canonical(Ks[above], Ms[above], keys[above])
+    if return_formal_pfvs:
+        from .pfv import PFV
+        return [PFV(data, K, M) for K, M in zip(Ks, Ms)]
+    return Ks, Ms
+
+
+# exhaustive search: each p-vector up to its dilation bound
+# ========================================================
+# candidate split dilations; p-vector counts above which the costs are
+# measured on a sample (below: the default model -- only speed depends on it)
+_SPLIT_D0S = (200, 400, 800, 1600)
+_PLAN_MIN_PS = 4096
+_PLAN_SAMPLE = 1 << 15
+_CAL_PS = (32, 256)
+
+
+def _grid_up(D):
+    """The smallest value >= D (integers >= 1) on a grid of ratio 2^(1/16):
+    ZpM at that dilation, so p-vectors with nearby bounds share one search
+    (rounding up keeps it exhaustive)."""
+    D = np.maximum(np.asarray(D, dtype=np.int64), 1)
+    k = np.ceil(16 * np.log2(D)).astype(np.int64)
+    g = np.ceil(2.0 ** (k / 16)).astype(np.int64)
+    return np.where(g >= D, g, D)
+
+
+# Measured costs per p-vector (us; 2026-10-05, Intel Core Ultra 7 270K,
+# RTX 5090, dataset geometries' frontier p-vectors): ZpM on one core and on
+# the GPU (wall, batches of 4000) at the dilations _COST_DS, and ZpK on one
+# core above the split dilations _SPLIT_D0S.
+_COST_DS = (150, 200, 400, 800, 1600, 3200, 6400)
+_DEFAULT_COSTS = {
+    4: ([3.35, 3.43, 2.88, 4.15, 7.06, 14.5, 28.4],
+        [0.374, 0.406, 0.351, 0.359, 0.38, 0.417, 0.451],
+        [2.62, 2.42, 2.13, 2.08]),
+    5: ([7.4, 7.8, 13.2, 31.0, 75.8, 263.0, 582.0],
+        [0.305, 0.312, 0.333, 0.349, 0.38, 0.439, 0.536],
+        [6.62, 5.06, 4.23, 3.94]),
+    6: ([9.69, 11.2, 18.8, 43.4, 115.0, 307.0, 805.0],
+        [0.341, 0.35, 0.385, 0.442, 0.536, 0.69, 1.06],
+        [14.4, 9.55, 7.49, 6.93]),
+    7: ([13.2, 14.7, 23.2, 51.5, 136.0, 394.0, 1090.0],
+        [0.467, 0.484, 0.489, 0.524, 0.592, 0.746, 1.12],
+        [106.0, 35.8, 17.8, 13.0]),
+    8: ([31.0, 42.3, 104.0, 296.0, 848.0, 2490.0, 7030.0],
+        [0.491, 0.514, 0.565, 0.698, 1.02, 1.83, 3.96],
+        [207.0, 49.6, 21.7, 16.7]),
+    9: ([50.9, 71.9, 190.0, 544.0, 1580.0, 4350.0, 12400.0],
+        [0.828, 0.85, 0.95, 1.16, 1.73, 3.17, 6.99],
+        [499.0, 82.4, 31.0, 24.0]),
+    10: ([114.0, 170.0, 483.0, 1400.0, 4040.0, 12200.0, 34700.0],
+         [0.852, 0.902, 1.09, 1.58, 2.8, 6.01, 14.8],
+         [1030.0, 122.0, 40.1, 31.5]),
+    11: ([98.5, 139.0, 368.0, 1050.0, 3050.0, 8660.0, 24800.0],
+         [1.04, 1.08, 1.22, 1.58, 2.5, 4.92, 11.5],
+         [2570.0, 199.0, 53.3, 42.9]),
+}
+
+
+def _default_cost_model(use_gpu, h11=None, n_cpu=None):
+    """
+    The measured costs above for h11 (the nearest measured h11 outside
+    4..11): ZpM on the GPU with ZpK on n_cpu cores (default: this machine's,
+    at 75% efficiency), or ZpM and ZpK sharing the CPU.
+    """
+    from .dilation import CostModel
+    h = min(max(int(h11 or 10), min(_DEFAULT_COSTS)), max(_DEFAULT_COSTS))
+    cpu, gpu, zpk = _DEFAULT_COSTS[h]
+    if use_gpu:
+        cores = 0.75 * (n_cpu or os.cpu_count() or 1)
+        return CostModel(_COST_DS, gpu, _SPLIT_D0S, [k / cores for k in zpk])
+    return CostModel(_COST_DS, cpu, _SPLIT_D0S, zpk, shared=True)
+
+
+def _zpm(data, p_full, idx, dil, Q, M0min, max_N_pfvs, use_gpu, gpu_required, n_jobs):
+    """
+    ZpM for the p-vectors p_full[idx], each at its own dilation dil[idx],
+    in one GPU call or in CPU threads: [(Ks, Ms, keys)] with keys indexing
+    p_full.
+    """
+    kappa, Mbasis, h11 = data.kappa_cob, data.M_lattice(), data.h11
+    idx = np.asarray(idx, dtype=np.int64)
+    if not len(idx):
+        return []
+    Ds, gi = np.unique(np.asarray(dil)[idx], return_inverse=True)
+    pieces, redo = [], []
+    if use_gpu:
+        from . import gpu
+        try:
+            geoms = [dict(kappa=kappa, Mbasis=Mbasis, Q=Q, dilation=float(D), M0min=M0min) for D in Ds]
+            M, Kn, q, pidx, pstat, _ = gpu.coni_batch_multi(geoms, p_full[idx], gi.astype(np.int32))
+            counts = np.bincount(pidx, minlength=len(idx))
+            pstat[counts > max_N_pfvs] = 1               # (the CPU path reports it)
+            keep = pstat[pidx] == 0
+            pieces.append(_pfvs_from_points(M[keep, :h11].T, Kn[keep, :h11].T, q[keep],
+                                            idx[pidx[keep]], kappa, h11, Q, M0min))
+            redo = list(idx[pstat != 0])
+        except RuntimeError as e:
+            if gpu_required:
+                raise
+            warnings.warn(f"GPU path failed ({e}); using the CPU", RuntimeWarning, stacklevel=4)
+            use_gpu = False
+    if not use_gpu:
+        for k, D in enumerate(Ds):
+            sel = idx[gi == k]
+            M, Kn, q, pidx, st = _batch_points(_coni_batch, kappa, Mbasis, p_full, sel, n_jobs,
+                                               Q, float(D), M0min, max_N_pfvs)
+            for j in np.flatnonzero(st < 0):
+                _raise_kernel_status(p_full[sel[j], 1:], int(st[j]))
+            pieces.append(_pfvs_from_points(M.T, Kn.T, q, pidx, kappa, h11, Q, M0min))
+            redo += list(sel[st == 1])
+    for i in redo:                                       # the exact per-p path
+        K1, M1 = coniZpM(data, p_full[i, 1:][None], Q=Q, M0min=M0min, ellipsoid_dilation=float(dil[i]),
+                         n_jobs=1, device="cpu", max_N_pfvs=max_N_pfvs)
+        pieces.append((K1, M1, np.full(len(K1), i, dtype=np.int64)))
+    return pieces
+
+
+def _calibrate(data, p_full, bceil, has, Q, M0min, max_N_pfvs, use_gpu, n_jobs, c):
+    """
+    Measure the costs of `bound_routing` on a sample of the p-vectors: ZpM
+    at the split dilations and at quantiles of the bounds, ZpK above each
+    split dilation (time per p-vector: on the GPU a larger sample, less the
+    time of a one-p-vector call; on the CPU one thread).
+    """
+    from .dilation import CostModel
+    idx = np.flatnonzero(has)
+    rng = np.random.default_rng(0)
+    ns = int(min(len(idx), _CAL_PS[1], max(_CAL_PS[0], len(idx) // 32)))
+    s = np.sort(rng.choice(idx, ns, replace=False))
+    sg = np.sort(rng.choice(idx, min(len(idx), 8 * _CAL_PS[1]), replace=False)) if use_gpu else s
+    qs = np.quantile(bceil[idx], [0.5, 0.9, 0.99])
+    Ds = sorted(set(_SPLIT_D0S) | {int(x) for x in qs if x >= 1})
+    kappa, Mbasis = data.kappa_cob, data.M_lattice()
+
+    def clock(fn):
+        t = time.perf_counter()
+        fn()
+        return time.perf_counter() - t
+
+    def per_p(fn, sel, budget=0.05):
+        """fn over pieces of sel until `budget` seconds: time per p-vector"""
+        t, done = 0.0, 0
+        for piece in np.array_split(sel, max(1, len(sel) // 16)):
+            t += clock(lambda piece=piece: fn(piece))
+            done += len(piece)
+            if t > budget:
+                break
+        return t / done
+
+    def zpm(sel, D):
+        return _zpm(data, p_full, sel, np.full(len(p_full), D), Q, M0min, max_N_pfvs, use_gpu, False, 1)
+    zpm(sg[:1], Ds[0])                                   # (warm-up: device start, caches)
+    if use_gpu:                                          # (less the per-call overhead)
+        t0 = clock(lambda: zpm(sg[:1], Ds[0]))
+        G = [max(clock(lambda D=D: zpm(sg, D)) - t0, 1e-9) / len(sg) for D in Ds]
+    else:
+        G = [per_p(lambda sel, D=D: zpm(sel, D), s) for D in Ds]
+    # (one thread: a small sample would not keep a pool busy; with a GPU,
+    # ZpK's time on the pool is its time on one core over 0.75 n_jobs)
+    K = [per_p(lambda sel, D0=D0: _coni_zpk_batch(kappa, Mbasis, p_full[sel], Q, M0min, D0, max_N_pfvs), s)
+         for D0 in _SPLIT_D0S]
+    if use_gpu:
+        K = [k / (0.75 * n_jobs) for k in K]
+    return CostModel(Ds, G, _SPLIT_D0S, K, c, shared=not use_gpu)
+
+
+def _coni_exhaustive(data, ps, p_full, Q, M0min, dilation, use_gpu, gpu_required, n_jobs,
+                     max_N_pfvs, cost_model, verbosity):
+    """coniZpM(..., exhaustive=True): (Ks, Ms, keys, complete), keys the
+    index of each PFV's p-vector.
+
+    The plan (b*, D0) comes from a random sample of the bounds; then the
+    bounds are computed in chunks (CPU threads), each chunk routed and handed
+    to ZpM (one GPU thread) as soon as it is, and ZpK runs on the CPU
+    threads once all bounds are in. So the GPU works while the CPU computes
+    bounds and runs ZpK."""
+    from .dilation import coni_dilation_bound_ceils
+    kappa, Mbasis, h11 = data.kappa_cob, data.M_lattice(), data.h11
+    n = len(ps)
+    t0 = time.perf_counter()
+    samp = np.sort(np.random.default_rng(0).choice(n, min(n, _PLAN_SAMPLE), replace=False))
+    bs = coni_dilation_bound_ceils(ps[samp], kappa, Q, n_jobs=n_jobs)
+    c = (time.perf_counter() - t0) / len(samp)
+    if cost_model is None:
+        cost_model = _calibrate(data, p_full[samp], bs, bs > 0, Q, M0min, max_N_pfvs, use_gpu,
+                                n_jobs, c) \
+            if np.sum(bs > 0) * n / len(samp) >= _PLAN_MIN_PS else _default_cost_model(use_gpu, h11)
+    b_star, D0, t = cost_model.route(np.where(bs > 0, bs, np.inf))
+    D0 = int(D0)
+    t2 = time.perf_counter()
+
+    # ZpM at ceil(b) >= b finds every PFV of the direction (delta < b)
+    bceil = np.zeros(n, dtype=np.int64)
+    dil = np.zeros(n)
+    gq, pieces = [], []
+
+    def route(idx):
+        bceil[idx] = coni_dilation_bound_ceils(ps[idx], kappa, Q, n_jobs=n_jobs)
+        b = bceil[idx]
+        to_bound = (b > 0) & (b <= max(b_star, D0))
+        dil[idx] = np.where(to_bound, _grid_up(b), np.where(b > 0, D0, 0))
+        dil[idx[b == 0]] = dilation
+
+    chunks = np.array_split(np.arange(n), max(1, min(64, n // 65536)))
+    with ThreadPoolExecutor(1) as gpu_ex:
+        for idx in chunks:
+            route(idx)
+            if use_gpu:           # (one device call per chunk, in order, on one thread)
+                gq.append(gpu_ex.submit(_zpm, data, p_full, idx, dil, Q, M0min, max_N_pfvs,
+                                        True, gpu_required, n_jobs))
+        t3 = time.perf_counter()
+        has = bceil > 0
+        split = has & (bceil > max(b_star, D0))
+        idx_k = np.flatnonzero(split)
+        if not use_gpu:           # ZpM in its own thread, beside ZpK's threads
+            gq.append(gpu_ex.submit(_zpm, data, p_full, np.arange(n), dil, Q, M0min, max_N_pfvs,
+                                    False, False, n_jobs))
+        Mv, Kv, qv, pv, st = _batch_points(_coni_zpk_batch, kappa, Mbasis, p_full, idx_k, n_jobs,
+                                           Q, M0min, D0, max_N_pfvs)
+        t4 = time.perf_counter()
+        for f in gq:
+            pieces += f.result()
+    t5 = time.perf_counter()
+    if verbosity >= 1:
+        print(f"exhaustive: {n} p-vectors, {int(np.sum(~has))} without a bound (searched at "
+              f"dilation {dilation}), {int(np.sum(has & ~split))} by ZpM to their bound "
+              f"(b* = {b_star:g}), {len(idx_k)} split at D0 = {D0}; {cost_model}")
+    pieces.append(_pfvs_from_points(Mv.T, Kv.T, qv, pv, kappa, h11, Q, M0min))
+    # split p-vectors ZpK could not do exactly: ZpM to their bound instead
+    redo = idx_k[st != 0]
+    if len(redo):
+        dil2 = np.zeros(n)
+        dil2[redo] = _grid_up(bceil[redo])
+        pieces += _zpm(data, p_full, redo, dil2, Q, M0min, max_N_pfvs, use_gpu, False, n_jobs)
+    Ks = np.vstack([pc[0] for pc in pieces])
+    Ms = np.vstack([pc[1] for pc in pieces])
+    keys = np.concatenate([pc[2] for pc in pieces])
+    Ks, Ms, keys = _canonical(Ks, Ms, keys)
+    if verbosity >= 1:
+        print(f"exhaustive: plan {t2 - t0:.2f} s, bounds {t3 - t2:.2f} s (with ZpM on the GPU), "
+              f"ZpK {t4 - t3:.2f} s, ZpM done {t5 - t2:.2f} s after the plan, the rest "
+              f"{time.perf_counter() - t5:.2f} s")
+    return Ks, Ms, keys, has
+
+
 # coni Zp
 # =======
 def coniZpM(
@@ -604,6 +1035,9 @@ def coniZpM(
     max_N_pfvs: int = 1_000_000_000,
     return_formal_pfvs: bool = False,
     verbosity: int = 0,
+    # exhaustive search
+    exhaustive: bool = False,
+    cost_model=None,
     ) -> tuple[ArrayLike, ArrayLike]:
     """
     A 'Zp' implementation that computes coniPFVs from input integer p-vectors.
@@ -681,6 +1115,21 @@ def coniZpM(
         returned. Defaults to False.
     verbosity : int, optional
         The verbosity level. Higher is more verbose. Defaults to 0.
+    exhaustive : bool, optional
+        Find every coni PFV of each direction, at any dilation, instead of
+        those within ``ellipsoid_dilation``. Each p-vector's dilation bound
+        b (``pfvs.dilation``: every coni PFV of the direction has
+        delta < b) decides how: ZpM up to the bound, or ZpM up to a split
+        dilation D0 plus ``coniZpK`` above it, whichever balances the GPU
+        and the CPU best (``pfvs.dilation.bound_routing``; on the CPU alone,
+        whichever is cheaper). Results are the same either way. A p-vector
+        without a bound (the bound's hypotheses fail) is searched up to
+        ``ellipsoid_dilation`` as usual and reported as incomplete. Defaults
+        to False.
+    cost_model : pfvs.dilation.CostModel, optional
+        The costs the exhaustive search plans with. Defaults to measuring
+        them on a sample of the p-vectors (from 4096 p-vectors with a
+        bound; fewer use a fixed rough model).
 
     Returns
     -------
@@ -693,7 +1142,12 @@ def coniZpM(
     pfvs : list of length N
          PFV objects (see ``pfv.PFV``). Only returned if
          return_formal_pfvs=True.
+    complete : ndarray of bool, shape (len(ps),)
+        Only if exhaustive=True: whether each p-vector's search found every
+        coni PFV of its direction. The PFVs are then grouped by p-vector and
+        sorted by (M, K) within one.
     """
+    n_threads = os.cpu_count() if n_jobs == -1 else max(1, n_jobs)
     if not data.coni:
         raise ValueError(
             "coniZpM only applies to coni contexts. "
@@ -702,7 +1156,7 @@ def coniZpM(
     if len(ps) == 0:
         raise ValueError("ps must be non-empty.")
     ps = np.array(ps)
-    if not np.all(data.H_cob @ ps.T >= 1):
+    if not _in_kahler_cone(data.H_cob, ps):
         raise ValueError("some p-vectors are not in the kahler cone (H_cob@ps.T >= 1 failed)")
     if ellipsoid_dilation <= 0:
         raise ValueError(f"ellipsoid_dilation must be > 0, got {ellipsoid_dilation}.")
@@ -734,6 +1188,18 @@ def coniZpM(
     use_gpu = _use_gpu(device, h11, len(ps), use_c_lattice, use_gcd_lattice,
                        extra_lll_reduction)
     gpu_required = use_gpu and device == "gpu"
+    if exhaustive:
+        if not use_c_lattice or use_gcd_lattice or not extra_lll_reduction:
+            raise ValueError("exhaustive=True needs use_c_lattice=True, use_gcd_lattice=False, "
+                             "extra_lll_reduction=True")
+        ps, p_full = _validate_ps(data, ps, checked=True)
+        Ks, Ms, _, complete = _coni_exhaustive(
+            data, ps, p_full, Q, M0min, ellipsoid_dilation, use_gpu, gpu_required,
+            n_threads, max_N_pfvs, cost_model, verbosity)
+        if return_formal_pfvs:
+            from .pfv import PFV
+            return [PFV(data, K, M) for K, M in zip(Ks, Ms)], complete
+        return Ks, Ms, complete
     if use_gpu:
         n_jobs = 1      # one device call for all p-vectors
 

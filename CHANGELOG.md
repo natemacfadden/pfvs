@@ -15,8 +15,18 @@ First packaged release. Relative to the code used for arXiv:2406.13751 ("dSv1"):
 - `pfvs.dilation.coni_dilation_bound` / `PFV.dilation_bound`: an exact upper
   bound on the dilation of every coni PFV with a given direction,
   delta < Q/mu0, from the Schur complement of kappa.p (checked on all 814,034
-  PFVs of the published dataset). A diagnostic, shown by `PFV.diagnostics()`;
-  not a search parameter, since at h11 >= 8 it is typically ~10^3.
+  PFVs of the published dataset), shown by `PFV.diagnostics()`. Exact C
+  version (`coni_bound.h`): 3-18 us per direction at h11 = 6-11, ~30x the
+  python-flint one, which remains the fallback.
+- `coniZpK`: the coni PFVs of each direction above a dilation D0 -- the
+  complement of `coniZpM` at dilation D0 -- by enumerating the short K that
+  such a PFV must have (exact C kernel, `coni_zpk.h`).
+- `coniZpM(..., exhaustive=True)`: every coni PFV of each direction, up to
+  its dilation bound, with a per-p-vector flag for directions it could not
+  bound. Each p-vector is searched by ZpM up to its bound or by ZpM up to D0
+  plus ZpK above it, as measured costs make cheapest
+  (`pfvs.dilation.bound_routing`, `CostModel`); the GPU and the CPU work at
+  the same time.
 
 ### Behaviour changes
 - PFV order: within each p-vector, PFVs are listed in a canonical order (by M,
@@ -39,8 +49,14 @@ First packaged release. Relative to the code used for arXiv:2406.13751 ("dSv1"):
   (CUDA) and AMD (HIP), built with `PFVS_GPU=auto|cuda|hip`. Results are
   identical to the CPU path's; batches size themselves to free device memory and
   recover from out-of-memory. `coniZpM(..., device="auto"|"cpu"|"gpu")`.
+  The search's expand stages are warp-cooperative (a warp's lanes share their
+  prefixes' candidates): about 2x faster at dilation 800 for h11 >= 8, on both
+  CUDA and HIP.
 - `pfvs.distributed`: a coordinator and CPU/GPU workers over TCP, with
   checkpoints, resume, dynamic splitting and backup copies for stragglers.
+  Exhaustive jobs: GPU workers route each p-vector at a price the
+  coordinator adjusts so that the GPU and CPU workers finish together; the
+  ZpK halves of split p-vectors go to the CPU workers.
 
 ### Fixes
 - `PFV`'s coni-only attributes no longer leak to non-coni PFVs.

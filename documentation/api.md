@@ -1205,6 +1205,63 @@ H : ndarray of shape (h11-1, h11-1)
     The HNF (Z@Binter)[1:]. Has interpretation that GCD(H@c) = GCD(K[1:])
     and that GCD(H[-m:,-m:]@c[-m:]) >= GCD(H[-n:,-n:]@c[-n:]) for m<n.
 
+<a id="pfvs.coniZp.coniZpK"></a>
+
+---
+
+
+#### coniZpK
+
+```python
+def coniZpK(data: CYData,
+            ps: ArrayLike,
+            D0: int,
+            Q: int | None = None,
+            M0min: int = 13,
+            n_jobs: int = -1,
+            max_N_pfvs: int = 1_000_000_000,
+            return_formal_pfvs: bool = False,
+            verbosity: int = 0) -> tuple[ArrayLike, ArrayLike]
+```
+
+The coni PFVs of each p-vector with dilation above D0: those with
+p = p_hat / delta, delta > D0, for the direction p_hat given. Together
+with ``coniZpM(..., ellipsoid_dilation=D0)``, which finds those with
+delta <= D0, this is every coni PFV of the direction.
+
+Each PFV above D0 has a short K_r: with A = kappa . p_hat,
+S = -A_rr^-1 and s the Schur complement of A_rr (see `pfvs.dilation`),
+the tadpole forces K_r^T S K_r < Q / D0 when s < 0 and S is positive
+definite on the lattice {K : p_r . K = 0}. ZpK enumerates those K_r and,
+for each, the PFVs it belongs to (exact C kernel, coni_zpk.h). A
+p-vector it cannot handle exactly is searched by ``coniZpM`` up to its
+dilation bound instead.
+
+Parameters
+----------
+data : CYData
+    The relevant data from the associated CY.
+ps : iterable of shape (N, h11-1)
+    The p-vectors (directions) without their coni entry, p[1:], as for
+    ``coniZpM``.
+D0 : int
+    Find the PFVs with dilation > D0 (a positive integer).
+Q, M0min, n_jobs, max_N_pfvs, return_formal_pfvs, verbosity :
+    As for ``coniZpM`` (n_jobs: threads; the C kernel releases the GIL).
+
+Returns
+-------
+Ks, Ms : ndarrays of shape (N, h11), or a list of PFV objects
+    The PFVs, grouped by p-vector (in the order of ps) and sorted by
+    (M, K) within one.
+
+Raises
+------
+IncompleteSearchError
+    For a p-vector whose PFVs above D0 cannot be enumerated: s >= 0, or
+    S is not positive definite on the lattice (then its PFVs' dilation
+    is not bounded this way), or its search is not exact.
+
 <a id="pfvs.coniZp.coniZpM"></a>
 
 ---
@@ -1227,7 +1284,9 @@ def coniZpM(data: CYData,
             device: str = "auto",
             max_N_pfvs: int = 1_000_000_000,
             return_formal_pfvs: bool = False,
-            verbosity: int = 0) -> tuple[ArrayLike, ArrayLike]
+            verbosity: int = 0,
+            exhaustive: bool = False,
+            cost_model=None) -> tuple[ArrayLike, ArrayLike]
 ```
 
 A 'Zp' implementation that computes coniPFVs from input integer p-vectors.
@@ -1305,6 +1364,21 @@ return_formal_pfvs : bool, optional
     returned. Defaults to False.
 verbosity : int, optional
     The verbosity level. Higher is more verbose. Defaults to 0.
+exhaustive : bool, optional
+    Find every coni PFV of each direction, at any dilation, instead of
+    those within ``ellipsoid_dilation``. Each p-vector's dilation bound
+    b (``pfvs.dilation``: every coni PFV of the direction has
+    delta < b) decides how: ZpM up to the bound, or ZpM up to a split
+    dilation D0 plus ``coniZpK`` above it, whichever balances the GPU
+    and the CPU best (``pfvs.dilation.bound_routing``; on the CPU alone,
+    whichever is cheaper). Results are the same either way. A p-vector
+    without a bound (the bound's hypotheses fail) is searched up to
+    ``ellipsoid_dilation`` as usual and reported as incomplete. Defaults
+    to False.
+cost_model : pfvs.dilation.CostModel, optional
+    The costs the exhaustive search plans with. Defaults to measuring
+    them on a sample of the p-vectors (from 4096 p-vectors with a
+    bound; fewer use a fixed rough model).
 
 Returns
 -------
@@ -1317,6 +1391,10 @@ Ms : ndarray of shape (N, h11)
 pfvs : list of length N
      PFV objects (see ``pfv.PFV``). Only returned if
      return_formal_pfvs=True.
+complete : ndarray of bool, shape (len(ps),)
+    Only if exhaustive=True: whether each p-vector's search found every
+    coni PFV of its direction. The PFVs are then grouped by p-vector and
+    sorted by (M, K) within one.
 
 <a id="pfvs.Zp"></a>
 
@@ -1729,7 +1807,8 @@ pts : ndarray of shape (N, h11)
 
 ```python
 def coni_mu0(p: ArrayLike,
-             kappa: ArrayLike) -> tuple[Fraction, list[int]] | None
+             kappa: ArrayLike,
+             use_c: bool = True) -> tuple[Fraction, list[int]] | None
 ```
 
 The minimum of K^T S K over nonzero K in Lambda, S = -A_rr^-1.
@@ -1746,6 +1825,9 @@ Returns
 (mu0, K) : the exact minimum and a minimizing K (length h11-1), or None
     if the bound's hypotheses fail (A_rr singular, s > 0, or S not
     positive definite on Lambda).
+use_c : bool, optional
+    Use the C version (falling back to Python where it cannot decide).
+    False: the exact python-flint version only.
 
 <a id="pfvs.dilation.coni_dilation_bound"></a>
 
@@ -1779,6 +1861,178 @@ Returns
 -------
 Fraction or None
     Q / mu0 (exact; the bound is strict), or None if the hypotheses fail.
+
+<a id="pfvs.dilation.coni_dilation_bound_ceils"></a>
+
+---
+
+
+#### coni\_dilation\_bound\_ceils
+
+```python
+def coni_dilation_bound_ceils(ps: ArrayLike,
+                              kappa: ArrayLike,
+                              Q: int,
+                              n_jobs: int = 1) -> np.ndarray
+```
+
+ceil(`coni_dilation_bound`) for each row of `ps`, as an int64 array (0:
+no bound): ZpM at that dilation finds every coni PFV of the direction.
+Like `coni_dilation_bounds`, without building a Fraction per row.
+
+<a id="pfvs.dilation.coni_dilation_bounds"></a>
+
+---
+
+
+#### coni\_dilation\_bounds
+
+```python
+def coni_dilation_bounds(ps: ArrayLike,
+                         kappa: ArrayLike,
+                         Q: int,
+                         n_jobs: int = 1) -> list[Fraction | None]
+```
+
+`coni_dilation_bound` for each row of `ps` (shape (n, h11-1)), in C (the
+Python path only for rows the C version cannot decide), in `n_jobs`
+threads.
+
+<a id="pfvs.dilation.bound_routing"></a>
+
+---
+
+
+#### bound\_routing
+
+```python
+def bound_routing(bounds: ArrayLike,
+                  G,
+                  K,
+                  D0s: ArrayLike,
+                  c: float = 0.0,
+                  shared: bool = False) -> tuple[float, float, float]
+```
+
+How to search the p-vectors of one geometry exhaustively, given their
+dilation bounds: p goes GPU-to-bound (ZpM at dilation b(p)) if
+b(p) <= b*, else it is split at D0 (ZpM up to D0 on the GPU, ZpK above
+D0 on the CPU). Chooses D0 and b* to minimize the run time, with the GPU
+and the CPU running at the same time.
+
+Parameters
+----------
+bounds : array of shape (n,)
+    b(p) = Q / mu0(p) for each p-vector (`coni_dilation_bounds`).
+    Non-finite entries (no bound: such p cannot be searched
+    exhaustively) are ignored.
+G : callable
+    G(D): mean GPU wall time per p-vector of ZpM at dilation D,
+    increasing in D (vectorized).
+K : callable
+    K(D0): mean CPU wall time per p-vector of ZpK above D0.
+D0s : array
+    Candidate split dilations (where K was measured).
+c : float, optional
+    CPU wall time per p-vector to compute b(p).
+shared : bool, optional
+    ZpM and ZpK run on the same processors (no GPU), so the run takes
+    T_GPU + T_CPU instead of the max: then p goes ZpM-to-bound exactly
+    when that is cheaper than its split.
+
+Returns
+-------
+(b_star, D0, t) : the threshold (-inf: split every p), the split
+    dilation, and the run time per p-vector, max(T_GPU, T_CPU) / n
+    (T_GPU + T_CPU if shared).
+
+<a id="pfvs.dilation.CostModel"></a>
+
+---
+
+
+## CostModel Objects
+
+```python
+class CostModel()
+```
+
+Measured search costs for one geometry, as `bound_routing` takes them:
+the mean wall time per p-vector of ZpM at dilations D (on the device it
+runs on) and of ZpK above split dilations D0 (on the CPU), and of
+computing the bound. G between and beyond the measured dilations is
+interpolated linearly in log-log (extrapolated with the last slope).
+
+Parameters
+----------
+D, G : sequences
+    Dilations (increasing) and ZpM's time per p-vector at each (made
+    nondecreasing).
+D0s, K : sequences
+    Split dilations (integers) and ZpK's time per p-vector above each.
+c : float, optional
+    Time per p-vector to compute the bound.
+shared : bool, optional
+    ZpM and ZpK share the same processors (no GPU): see `bound_routing`.
+
+<a id="pfvs.dilation.CostModel.G_at"></a>
+
+---
+
+
+#### G\_at
+
+```python
+def G_at(D)
+```
+
+ZpM's time per p-vector at dilation(s) D.
+
+<a id="pfvs.dilation.CostModel.K_at"></a>
+
+---
+
+
+#### K\_at
+
+```python
+def K_at(D0)
+```
+
+ZpK's time per p-vector above D0 (one of D0s).
+
+<a id="pfvs.dilation.CostModel.route"></a>
+
+---
+
+
+#### route
+
+```python
+def route(bounds: ArrayLike) -> tuple[float, float, float]
+```
+
+`bound_routing` with these costs: (b_star, D0, t).
+
+<a id="pfvs.dilation.CostModel.route_at_price"></a>
+
+---
+
+
+#### route\_at\_price
+
+```python
+def route_at_price(bounds: ArrayLike, lam: float) -> tuple[np.ndarray, int]
+```
+
+The routing rule at a given price lam (GPU time per CPU time; see
+`bound_routing`: when several geometries share the hardware, lam is
+common to all and set by balancing the totals). The split dilation
+D0 minimizes G(D0) + lam K(D0), the cost of a split, and p goes to
+the bound iff G(b) - G(D0) <= lam K(D0).
+
+Returns (to_bound, D0): a mask over bounds (False where a bound is
+not finite) and the split dilation.
 
 <a id="pfvs.gpu"></a>
 
@@ -1924,7 +2178,15 @@ path reports it as the CPU kernel would).
 #### make\_jobs
 
 ```python
-def make_jobs(datas, B, D, Q=None, M0min=13, ids=None, n_p=None)
+def make_jobs(datas,
+              B,
+              D,
+              Q=None,
+              M0min=13,
+              ids=None,
+              n_p=None,
+              exhaustive=False,
+              cost_model=None)
 ```
 
 **Description:**
@@ -1941,6 +2203,16 @@ cone with |p|_inf <= B, as coniZpM is usually driven).
 output file names, so they must be unique.
 - `n_p` *(list, optional)*: Estimated p-vector counts; used to shard large
 boxes into units of about `target_p` p-vectors (see `serve`).
+- `exhaustive` *(bool or list, optional)*: Every coni PFV of each
+direction, at any dilation (see the module description); `D` is then
+only used for p-vectors without a dilation bound, which are reported
+as incomplete.
+- `cost_model` *(CostModel or list, optional)*: The costs GPU workers
+route exhaustive jobs with (`pfvs.dilation.CostModel`: ZpM on the
+GPU, ZpK on the CPU workers). Only their shape matters -- the price
+lam absorbs the scale. Default: costs measured for the job's h11
+on an RTX 5090 and 24 CPU cores (so lam ~ 1 when the cluster has
+about 24 CPU cores per GPU).
 
 **Returns:**
 *(list of dict)* The jobs.
@@ -1960,9 +2232,11 @@ Lives in the manager's server process; its methods are the RPCs.
 
 Units are keyed (job id, path): a path is a tuple of ints -- (k,) for the
 k-th initial shard of a job, (k, i) for the i-th piece it was split into,
-and so on. A job is complete when all its leaf units are done; its PFVs
-are the leaves' in path order. Splits are logged (splits.pkl) so a
-resumed run rebuilds the same leaves.
+and so on; path + (-1,) is the ZpK unit of an exhaustive search unit
+(its split p-vectors). A job is complete when all its leaf units are
+done; its PFVs are the leaves' in path order. Splits are logged
+(splits.pkl) so a resumed run rebuilds the same leaves; ZpK units are
+rebuilt from their search units' results.
 
 <a id="pfvs.distributed._Coordinator.get_work"></a>
 
@@ -1972,11 +2246,14 @@ resumed run rebuilds the same leaves.
 #### get\_work
 
 ```python
-def get_work(worker, max_p)
+def get_work(worker, max_p, kinds=("search", ), gpu=False)
 ```
 
-Units totalling about max_p p-vectors (estimated), or [] if none
-is available now; None when everything is done.
+Units totalling about max_p p-vectors (estimated) of the given
+kinds ("zpk": ZpK units; "search"), in that order of preference, or
+[] if none is available now; None when everything is done. While a
+GPU worker (gpu=True) is active, CPU workers get no exhaustive search
+units (their ZpM would be far slower than the GPU's).
 
 <a id="pfvs.distributed._Coordinator.split"></a>
 
@@ -2009,7 +2286,8 @@ def serve(jobs,
           max_tries=3,
           poll_s=10.0,
           verbose=True,
-          backup_s=30.0)
+          backup_s=30.0,
+          lam0=1.0)
 ```
 
 **Description:**
@@ -2029,6 +2307,8 @@ in <out>/failed.txt.
 - `backup_s` *(float, optional)*: Once no unit is pending, a unit leased
 for longer than this is also given to an idle worker (the first
 result wins), so slow workers do not hold up the end.
+- `lam0` *(float, optional)*: The initial price of exhaustive jobs'
+routing (GPU time per CPU time; see the module description).
 
 **Returns:**
 *(dict)* The final progress counters.
@@ -2049,7 +2329,9 @@ The finished jobs of an output directory.
 
 **Returns:**
 *(dict)* job id -> dict(K, M, P, n_p, B, D, Q): the PFVs (K, M) and each
-one's p-vector P = p[1:].
+one's p-vector P = p[1:]. Exhaustive jobs also have `incomplete`: the
+p-vectors without a dilation bound (searched at dilation D only); their
+PFVs are each listed once, by p-vector, then (M, K).
 
 <a id="pfvs.distributed.work"></a>
 
@@ -2065,7 +2347,8 @@ def work(address,
          procs=None,
          batch_p=None,
          verbose=False,
-         max_unit_p=None)
+         max_unit_p=None,
+         bound_threads=None)
 ```
 
 **Description:**
@@ -2082,4 +2365,8 @@ CPU default 2^14).
 - `max_unit_p` *(int, optional)*: A unit with more p-vectors than this is
 sent back to be split (GPU default 2^23, CPU default 2^17), so that no
 worker holds a unit for long.
+- `bound_threads` *(int, optional)*: Host threads a GPU worker computes
+exhaustive jobs' dilation bounds with (default: half the cores). The
+bounds are CPU work that feeds the GPU: with CPU workers on the same
+machine, split its cores between the two.
 

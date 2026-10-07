@@ -32,6 +32,7 @@
 
 import gzip
 import itertools
+import math
 import json
 import os
 import warnings
@@ -43,7 +44,8 @@ import numpy as np
 import pytest
 
 from pfvs import CYData, coniZpM
-from pfvs.dilation import coni_dilation_bound, coni_mu0
+from pfvs.dilation import (bound_routing, coni_dilation_bound, coni_dilation_bound_ceils,
+                           coni_dilation_bounds, coni_mu0)
 
 DATA = Path(__file__).parent / "data"
 with gzip.open(DATA / "fixtures.json.gz") as _f:
@@ -286,3 +288,70 @@ def test_pfv_dilation_bound_diagnostic():
         else:
             data = CYData(h21=e["h21"], kappa=e["kappa"], c2=e["c2"], H=e["H"])
             assert not hasattr(PFV(data, K=e["K"], M=e["M"]), "dilation_bound")
+
+
+def test_c_matches_python():
+    """The C mu0 equals the exact python-flint one (or both give no bound) on
+    every PFV direction and on arbitrary directions (which often fail the
+    hypotheses); its minimizer lies in Lambda and attains mu0."""
+    from pfvs.dilation import _coni_mu0_c
+    rng = np.random.default_rng(3)
+    decided = 0
+    for kappa, _Q, p_hat, _ in PFVS[::3]:
+        h = kappa.shape[0]
+        ps = np.vstack([p_hat[1:], rng.integers(-5, 6, size=(8, h - 1))])
+        ps = ps[np.any(ps != 0, axis=1)]
+        st, num, den, K = _coni_mu0_c(ps, kappa)
+        for i, p in enumerate(ps):
+            ref = coni_mu0(p, kappa, use_c=False)
+            if st[i] < 0:
+                continue                                 # undecided in C: Python path
+            decided += 1
+            if st[i] == 1:
+                assert ref is None
+                continue
+            assert ref is not None and ref[0] == Fraction(int(num[i]), int(den[i]))
+            assert any(K[i]) and int(np.dot(K[i].astype(object), p.astype(object))) == 0
+    assert decided > 100
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_bound_routing_is_optimal(shared):
+    """The threshold rule's run time equals the best over every assignment of
+    the p-vectors (ZpM-to-bound or split) and every candidate D0; p-vectors
+    without a bound are left out."""
+    rng = np.random.default_rng(5)
+    for _ in range(20):
+        a, kc = rng.uniform(0.5, 1.8), rng.uniform(0.1, 20)
+        def G(D, a=a):
+            return (np.asarray(D, dtype=float) / 100) ** a
+        def K(D0, kc=kc):
+            return kc * 800 / D0
+        b = rng.uniform(200, 3000, size=9)
+        b[rng.random(9) < 0.2] = np.inf
+        D0s, c = [400, 800, 1600], rng.uniform(0, 0.5)
+        b_star, D0, t = bound_routing(b, G, K, D0s, c, shared=shared)
+        bf = b[np.isfinite(b)]
+
+        def run_time(x, D, bf=bf, G=G, K=K, c=c):
+            t_gpu = np.where(x, G(np.where(x, bf, D)), G(D)).sum()
+            t_cpu = (~x).sum() * K(D) + len(bf) * c
+            return ((t_gpu + t_cpu) if shared else max(t_gpu, t_cpu)) / max(len(bf), 1)
+        best = min(run_time(np.array(x, dtype=bool), D)
+                   for D in D0s for x in itertools.product([0, 1], repeat=len(bf)))
+        assert t == pytest.approx(best)
+        assert run_time(bf <= b_star, D0) == pytest.approx(t)    # the rule's own assignment
+
+
+def test_bound_ceils():
+    """coni_dilation_bound_ceils is ceil of coni_dilation_bounds (0 for none),
+    threaded or not, including directions without a bound."""
+    rng = np.random.default_rng(4)
+    for kappa, Q, p_hat, _ in PFVS[::5]:
+        h = kappa.shape[0]
+        ps = np.vstack([p_hat[1:], rng.integers(-5, 6, size=(12, h - 1))])
+        ps = ps[np.any(ps != 0, axis=1)]
+        want = [math.ceil(b) if b is not None else 0 for b in coni_dilation_bounds(ps, kappa, Q)]
+        for n_jobs in (1, 3):
+            assert coni_dilation_bound_ceils(ps, kappa, Q, n_jobs=n_jobs).tolist() == want
+

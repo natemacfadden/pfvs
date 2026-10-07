@@ -225,10 +225,17 @@ FPK_HD static inline pfl_i128 pfl_fdiv128(pfl_i128 a, pfl_i128 b)
 // -1 on overflow (the host then redoes it in GMP), 0 on success.
 
 // r = a*b + c, checked
+// a * b, nonzero on overflow (int64 factors cannot overflow: no check)
+FPK_HD static inline int pfl_mul_chk(pfl_i128 a, pfl_i128 b, pfl_i128 *r)
+{
+    if (a == (int64_t)a && b == (int64_t)b) { *r = a * b; return 0; }
+    return pfl_mul_ovf(a, b, r);
+}
+
 FPK_HD static inline int pfl_muladd(pfl_i128 a, pfl_i128 b, pfl_i128 c, pfl_i128 *r)
 {
     pfl_i128 x;
-    if (pfl_mul_ovf(a, b, &x) || fpk_add_ovf(x, c, &x) || !PFL_FITS125(x)) return -1;
+    if (pfl_mul_chk(a, b, &x) || fpk_add_ovf(x, c, &x) || !PFL_FITS125(x)) return -1;
     *r = x;
     return 0;
 }
@@ -296,8 +303,8 @@ FPK_HD static int pfl_hnf(const int64_t *A64, int r, int n, pfl_i128 *H)
                 pfl_i128 ag = a / r0, bg = b / r0;
                 for (int c = j; c < n; ++c) {
                     pfl_i128 hn, vn, t1;
-                    if (pfl_mul_ovf(s0, h[c], &t1) || pfl_muladd(x0, v[c], t1, &hn)) return -1;
-                    if (pfl_mul_ovf(-bg, h[c], &t1) || pfl_muladd(ag, v[c], t1, &vn)) return -1;
+                    if (pfl_mul_chk(s0, h[c], &t1) || pfl_muladd(x0, v[c], t1, &hn)) return -1;
+                    if (pfl_mul_chk(-bg, h[c], &t1) || pfl_muladd(ag, v[c], t1, &vn)) return -1;
                     w[c] = hn; v[c] = vn;
                 }
                 for (int c = j; c < n; ++c) h[c] = w[c];

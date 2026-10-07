@@ -96,6 +96,14 @@ The GPUs of the build machine are targeted (`native`); set `PFVS_CUDA_ARCH` / `P
 
 Then `coniZpM(..., device="auto")` (the default) uses the GPU for batches of 256+ p-vectors, `device="gpu"` requires it and `device="cpu"` avoids it; `PFVS_DEVICE` overrides `"auto"`. `pfvs.gpu.available()` reports whether a device is usable, and `pfvs.gpu.coni_batch_multi` runs many geometries in one device call.
 
+## Every PFV of a direction
+
+`coniZpM` searches each p-vector up to `ellipsoid_dilation`. But every coni PFV with direction $\hat p$ has dilation $\delta < Q/\mu_0(\hat p)$ (`pfvs.dilation`; $\mu_0$ is the shortest vector of a quadratic form on $\{K : \hat p \cdot K = 0\}$), so a search up to that bound finds all of them. `coniZpM(..., exhaustive=True)` does this for every p-vector and returns, besides the PFVs, which p-vectors it could search completely (all of them unless a bound's hypotheses fail; we have not seen that for a p-vector in the Kähler cone):
+```python
+Ks, Ms, complete = coniZpM(data, ps, exhaustive=True)
+```
+The bound is ~10³ at $h^{1,1}\ge 8$, which makes ZpM up to it expensive. So each p-vector is searched one of two ways, with identical results: ZpM up to its bound, or ZpM up to a split dilation $D_0$ plus `coniZpK` above it (a search over the short $K$ that a PFV with $\delta > D_0$ must have, on the CPU). The choice follows measured costs (`pfvs.dilation.bound_routing`): p-vectors with low bounds go to the bound, the rest are split, at the threshold where the GPU and the CPU finish together (on a CPU alone, whichever is cheaper). `coniZpK(data, ps, D0)` on its own gives the PFVs above $D_0$.
+
 ## Running on many machines
 
 `pfvs.distributed` spreads coni-PFV searches over any number of machines and devices -- NVIDIA and AMD GPUs and CPUs, Linux or macOS. A coordinator splits each geometry's p-box into units; workers lease units, search them, and send back PFVs. Units are checkpointed as they arrive (a restarted coordinator resumes), units of vanished workers are reissued, oversized units are split on the fly, and slow workers get backup copies near the end.
@@ -111,6 +119,8 @@ python -m pfvs.distributed work HOST:5055 --device gpu           # a worker per 
 python -m pfvs.distributed work HOST:5055 --device cpu --procs 16
 ```
 `distributed.load_results("out/")` then gives each job's PFVs (K, M) and their p-vectors. The connection is authenticated, but it exchanges pickles: use it on a trusted network only.
+
+`make_jobs(..., exhaustive=True)` makes the jobs exhaustive (as above): GPU workers route each p-vector to ZpM up to its bound or to a split, and the ZpK halves of the splits go to the CPU workers. The coordinator steers the routing (a price, `--lam`) so the GPU and CPU workers finish together.
 
 ## Examples
 

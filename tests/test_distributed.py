@@ -151,3 +151,112 @@ def test_authkey_required(tmp_path):
         distributed._connect(addr, "wrong-key", retries=3)
     distributed.work(addr, KEY, device="cpu", procs=1)      # let it finish
     th.join(timeout=120)
+
+
+# exhaustive jobs
+# ---------------
+def _expected_exhaustive(job):
+    """(P, K, M) of every coni PFV of each direction in the job's box: ZpM at
+    each direction's bound."""
+    import math
+    from pfvs.dilation import coni_dilation_bounds
+    data = job["data"]
+    Q = data.h11 + data.h21 + 4
+    ps, st, _ = box_enum(job["B"], np.ascontiguousarray(data.H_cob.astype(np.int32)), 1,
+                         10**6, primitive=True)
+    out = set()
+    for p, b in zip(ps, coni_dilation_bounds(ps, data.kappa_cob, Q)):
+        K, M = coniZpM(data, p[None], ellipsoid_dilation=math.ceil(b), n_jobs=1, device="cpu")
+        out |= {(tuple(map(int, p)), tuple(map(int, k)), tuple(map(int, m))) for k, m in zip(K, M)}
+    return out
+
+
+def _run_exhaustive(tmp_path, devices, lam0, cost_model=None):
+    jobs = distributed.make_jobs([cydata(g) for g in CASES], [g["B"] for g in CASES], 150,
+                                 ids=[f"g{i}" for i in range(len(CASES))], n_p=[400] * len(CASES),
+                                 exhaustive=True, cost_model=cost_model)
+    addr = f"127.0.0.1:{_free_port()}"
+    out = str(tmp_path / "out")
+    th = threading.Thread(target=distributed.serve, args=(jobs, out, addr, KEY),
+                          kwargs=dict(target_p=64, verbose=False, lam0=lam0), daemon=True)
+    th.start()
+    for dev in devices:
+        distributed.work(addr, KEY, device=dev, procs=2)
+    th.join(timeout=300)
+    assert not th.is_alive()
+    res = distributed.load_results(out)
+    for j in jobs:
+        r = res[j["id"]]
+        got = [(tuple(map(int, p)), tuple(map(int, k)), tuple(map(int, m)))
+               for p, k, m in zip(r["P"], r["K"], r["M"])]
+        assert len(got) == len(set(got)) and set(got) == _expected_exhaustive(j)
+        assert r["exhaustive"] and len(r["incomplete"]) == 0
+    pr = distributed.serve(jobs, out, f"127.0.0.1:{_free_port()}", KEY, verbose=False)
+    assert pr["done"] == pr["units"] and pr["failed"] == 0      # resumes as done
+    return out
+
+
+def test_exhaustive_cpu_workers(tmp_path):
+    """CPU workers alone do whole exhaustive search units (ZpM and ZpK)."""
+    _run_exhaustive(tmp_path, ["cpu"], 1.0)
+
+
+@pytest.mark.skipif(not gpu.available(), reason=gpu.unavailable_reason() or "")
+def test_exhaustive_gpu_worker(tmp_path):
+    """A GPU worker splits the directions with a bound above 20 (a low
+    price makes CPU time cheap) and, without CPU workers, does their ZpK
+    units itself once no search unit is left."""
+    import glob
+    from pfvs.dilation import CostModel
+    out = _run_exhaustive(tmp_path, ["gpu:0"], 1e-4, CostModel([10, 1000], [1, 100], [20], [1.0]))
+    assert glob.glob(f"{out}/units/*.-1.pkl")                   # ZpK units ran
+
+
+def test_zpk_units(tmp_path):
+    """A CPU worker's ZpK unit plus ZpM up to D0 is every PFV of the
+    split directions."""
+    import math
+    from pfvs.dilation import coni_dilation_bounds
+    for g in CASES[:4]:
+        job = distributed.make_jobs([cydata(g)], g["B"], 150, exhaustive=True)[0]
+        data = job["data"]
+        Q = data.h11 + data.h21 + 4
+        ps = distributed._enumerate_unit(job, [])[:60]
+        D0 = 20
+        r = distributed._zpk_unit(job, ps, D0)
+        assert r["n_p"] == 0
+        got = {(tuple(map(int, p)), tuple(map(int, k)), tuple(map(int, m)))
+               for p, k, m in zip(r["P"], r["K"], r["M"])}
+        K, M = coniZpM(data, ps, ellipsoid_dilation=D0, n_jobs=1, device="cpu")
+        for p, b in zip(ps, coni_dilation_bounds(ps, data.kappa_cob, Q)):
+            Kb, Mb = coniZpM(data, p[None], ellipsoid_dilation=max(math.ceil(b), D0), n_jobs=1,
+                             device="cpu")
+            K0, M0 = coniZpM(data, p[None], ellipsoid_dilation=D0, n_jobs=1, device="cpu")
+            want = _pset(Kb, Mb) - _pset(K0, M0)
+            mine = {(k, m) for q, k, m in got if q == tuple(map(int, p))}
+            assert want <= mine <= _pset(Kb, Mb)
+
+
+def test_price_controller(tmp_path):
+    """lam rises while ZpK work piles up, falls while CPU workers find
+    none, and stays put once no search unit is pending."""
+    job = distributed.make_jobs([cydata(CASES[0])], CASES[0]["B"], 150, exhaustive=True,
+                                n_p=[10**4])[0]
+    c = distributed._Coordinator([job], str(tmp_path / "o"), 100, 3600.0, 3, lam0=1.0)
+    key = next(iter(c.pending))
+    c._add_zpk(key, dict(zpk=np.zeros((10**5, job["data"].h11 - 1), np.int64), D0=800))
+    t = c.t0 + 1000
+    c.zpk_log = [(t - 10, 100)]                                  # ~0.3 p/s: hours of backlog
+    c._update_lam(t)
+    assert c.lam == pytest.approx(1.5)
+    c._update_lam(t + 1)                                         # (at most every LAM_DT)
+    assert c.lam == pytest.approx(1.5)
+    c.pending_zpk.clear()
+    c.zpk_hungry = True
+    c._update_lam(t + 100)
+    assert c.lam == pytest.approx(1.0)
+    c.pending.clear()
+    c.zpk_hungry = True
+    c._update_lam(t + 200)
+    assert c.lam == pytest.approx(1.0)
+

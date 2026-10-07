@@ -190,6 +190,7 @@ __device__ void make_prep(const Geo &g, PData *D, PR *S)
     set_arrays(D, S);
     S->linvec = &D->R.Binter[0]; S->mat = D->R.mat; S->Hs = D->Hs;
     S->level_start = D->ls; S->order = D->ord;
+    S->node_out = nullptr;
 }
 
 __device__ int run_search(const Glob *G, PData *D, const int32_t *prefix, int npre, int sd,
@@ -313,10 +314,10 @@ __global__ void k_fin(Glob G, int n)
 }
 
 // The search is split into subtrees in stages: k_top (thread per p) emits
-// the depth-1 prefixes; k_expand (thread per depth-s prefix) extends them to
+// the depth-1 prefixes; k_expand (stages s < sd) extends depth-s prefixes to
 // depth s + 1, or searches the rest of the subtree when s is that p's split
-// depth; k_search (thread per final prefix) searches the subtrees. Each stage
-// has one short work item per thread, so the work stays balanced.
+// depth; k_leaf (stage sd, thread per prefix) searches the subtrees. Each
+// stage has short work items, so the work stays balanced.
 __global__ void k_top(Glob G, int n)
 {
     int ip = blockIdx.x * blockDim.x + threadIdx.x;
@@ -335,7 +336,11 @@ __global__ void k_top(Glob G, int n)
 #ifndef PFG_EXP_BOUNDS
 #define PFG_EXP_BOUNDS 128
 #endif
-__global__ void __launch_bounds__(PFG_EXP_BOUNDS) k_expand(Glob G, const int32_t *src, const int *src_p, unsigned long long n, int s)
+#ifndef PFG_COOP
+#define PFG_COOP 1                   /* 0: k_expand searches a prefix per thread */
+#endif
+
+__global__ void __launch_bounds__(PFG_EXP_BOUNDS) k_leaf(Glob G, const int32_t *src, const int *src_p, unsigned long long n, int s)
 {
     unsigned long long k = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (k >= n) return;
@@ -343,9 +348,88 @@ __global__ void __launch_bounds__(PFG_EXP_BOUNDS) k_expand(Glob G, const int32_t
     PData *D = &G.pd[ip];
     if (D->status != ST_OK) return;
     Ctx X = {&G, ip};
-    int st = split_depth(G, D) > s ? run_search(&G, D, &src[k * G.sd], s, s + 1, emit_pre, &X)
-                                   : run_search(&G, D, &src[k * G.sd], s, 0, emit_pt, &X);
+    int st = run_search(&G, D, &src[k * G.sd], s, 0, emit_pt, &X);
     if (st == -8 || st == -11) D->status = ST_CPU;   // int32 range; float precision
+}
+
+// k_expand is warp-cooperative: each thread sets up its prefix's level node
+// (fpk_search with node_out), then the warp's lanes share the union of their
+// nodes' candidates, one candidate per lane per round (a thread per prefix
+// leaves most lanes idle: the candidate counts and gcd lengths vary). Nodes
+// with several H rows at the level and double geometries keep the
+// thread-per-prefix search.
+struct CoopSlot { fpk_node_f nd; unsigned long long k; int ip, geo, cnt, end; };
+
+__global__ void __launch_bounds__(PFG_EXP_BOUNDS) k_expand(Glob G, const int32_t *src, const int *src_p, unsigned long long n, int s)
+{
+    unsigned long long k = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+#if PFG_COOP
+    __shared__ CoopSlot slot[PFG_EXP_BLOCK];
+    CoopSlot &my = slot[threadIdx.x];
+    my.cnt = 0;
+#endif
+    if (k < n) {                                  // (no early return: the warp syncs below)
+        int ip = src_p[k];
+        PData *D = &G.pd[ip];
+        if (D->status == ST_OK) {
+            Ctx X = {&G, ip};
+            int st;
+            if (split_depth(G, D) > s) {
+#if PFG_COOP
+                const Geo &g = G.geo[D->geo];
+                if (g.use_f) {
+                    fpk_prep_f P; make_prep(g, D, &P);
+                    P.node_out = &my.nd;
+                    st = fpk_search_f(&P, &src[k * G.sd], s, s + 1, nullptr, emit_pre, &X, nullptr);
+                    if (st == 1) {
+                        my.k = k; my.ip = ip; my.geo = D->geo;
+                        my.cnt = my.nd.hi >= my.nd.lo ? (int)(my.nd.hi - my.nd.lo + 1) : 0;
+                        st = 0;
+                    }
+                } else
+#endif
+                st = run_search(&G, D, &src[k * G.sd], s, s + 1, emit_pre, &X);
+            } else {
+                st = run_search(&G, D, &src[k * G.sd], s, 0, emit_pt, &X);
+            }
+            if (st == -8 || st == -11) D->status = ST_CPU;   // int32 range; float precision
+        }
+    }
+#if PFG_COOP
+    // the warp's candidates: inclusive prefix sums of the counts
+    // (the block size is a multiple of the warp size: whole warps)
+    const int W = pfg::wave_size();
+    const int lane = threadIdx.x & (W - 1), w0 = threadIdx.x & ~(W - 1);
+    int incl = my.cnt;
+    for (int o = 1; o < W; o <<= 1) {
+        int t = pfg::wave_shfl_up(incl, o);
+        if (lane >= o) incl += t;
+    }
+    my.end = incl;
+    const int total = pfg::wave_shfl(incl, W - 1);
+    pfg::wave_sync();
+    for (int base = 0; base < total; base += W) {
+        const int t = base + lane;
+        if (t >= total) break;
+        int a = 0, b = W - 1;                     // owner: first slot with end > t
+        while (a < b) { int m = (a + b) >> 1; if (slot[w0 + m].end > t) b = m; else a = m + 1; }
+        const CoopSlot &O = slot[w0 + a];
+        const int32_t v = (int32_t)(O.nd.lo + (t - (O.end - O.cnt)));
+        PData *D = &G.pd[O.ip];
+        fpk_prep_f P; make_prep(G.geo[O.geo], D, &P);
+        int r = fpk_node_test_f(&P, &O.nd, v);
+        if (r == 1) {                             // as emit_pre: the prefix (v, src[k])
+            unsigned long long kk = agg_inc(G.npre);
+            if (kk < G.pre_cap) {
+                G.pre[kk * G.sd] = v;
+                for (int j = 0; j < s; ++j) G.pre[kk * G.sd + 1 + j] = src[O.k * G.sd + j];
+                G.pre_p[kk] = O.ip;
+            }
+        } else if (r == -11) {
+            D->status = ST_CPU;
+        }
+    }
+#endif
 }
 
 #define CK(x) do { cudaError_t e_ = (x); if (e_ != cudaSuccess) { last_err = e_; \
@@ -561,7 +645,9 @@ restart:                                         // (after an out-of-memory: sma
                 for (;;) {
                     G.pre = buf[dst].pre; G.pre_p = buf[dst].pre_p; G.pre_cap = buf[dst].cap;
                     CK(cudaMemset(G.npre, 0, 8));
-                    k_expand<<<(unsigned)((nsrc + PFG_EXP_BLOCK - 1) / PFG_EXP_BLOCK), PFG_EXP_BLOCK>>>(G, buf[cur].pre, buf[cur].pre_p, nsrc, s);
+                    const unsigned nb = (unsigned)((nsrc + PFG_EXP_BLOCK - 1) / PFG_EXP_BLOCK);
+                    if (s < sd) k_expand<<<nb, PFG_EXP_BLOCK>>>(G, buf[cur].pre, buf[cur].pre_p, nsrc, s);
+                    else k_leaf<<<nb, PFG_EXP_BLOCK>>>(G, buf[cur].pre, buf[cur].pre_p, nsrc, s);
                     if (s == sd) { ndst = 0; break; }  // the last stage emits points only
                     CK(cudaMemcpy(&ndst, G.npre, 8, cudaMemcpyDeviceToHost));
                     if (ndst <= buf[dst].cap) break;

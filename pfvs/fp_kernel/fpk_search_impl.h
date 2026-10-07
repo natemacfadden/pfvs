@@ -162,6 +162,17 @@ FPK_HD static inline int FPK_N(fpk_sparse_candidates)(
     return cnt;
 }
 
+// A level-i node handed out instead of searched (fpk_search with node_out set
+// and stop_depth = dim - i; at most one H row at level i): the candidates are
+// v in [lo, hi], each tested by fpk_node_test exactly as the search loop does.
+typedef struct {
+    fpk_i128 m0p, pre;
+    fpk_u128 g;                                 // gcd of the rows above
+    int64_t lo, hi, h, linv;
+    FPK_R Uii, off, aoff, rem, err;
+    int nrow, is_m0;
+} FPK_N(fpk_node);
+
 typedef struct {
     int dim, strict, use_gcd, m0_level;
     int64_t Q, qmax, linmin;
@@ -171,11 +182,46 @@ typedef struct {
     const int64_t *linvec, *mat;               // mat: exact, for the leaf
     const int64_t *Hs;                         // (nrows, dim), all rows int64
     const int     *level_start, *order;        // rows grouped by first nonzero
+    FPK_N(fpk_node) *node_out;                 // (see fpk_node; NULL: search it)
 } FPK_N(fpk_prep);
 
+// 1: v passes all cuts at the node's level; 0: cut; -11: float precision
+FPK_HD static inline int FPK_N(fpk_node_test)(const FPK_N(fpk_prep) *S, const FPK_N(fpk_node) *nd, int32_t v)
+{
+    const FPK_R slack = S->slack, Kerr = S->Kerr;
+    FPK_R x  = nd->Uii * v + nd->off;
+    FPK_R nr = nd->rem - x * x;
+    FPK_R ai = FPK_FABS(nd->Uii * v) + nd->aoff;
+    FPK_R en = nd->err + Kerr * (ai * ai + nd->rem);
+    if (en > S->max_err) return -11;
+    if (nr < -(slack + en)) return 0;
+    if (nd->is_m0 && nd->m0p + (fpk_i128)nd->linv * v < S->linmin) return 0;
+    if (S->use_gcd) {
+        fpk_gval gn;
+        gn.big = 0;
+        gn.s = nd->g;
+        FPK_R q_lb = (S->qmax_d - nr) - (slack + en);
+        if (nd->nrow) {
+            if (FPK_N(fpk_gcd_fails)(&gn, S->Q, q_lb, S->strict)) return 0;
+            fpk_u128 a = fpk_abs128(nd->pre + (fpk_i128)nd->h * v);
+            if ((gn.s >> 64) == 0 && (a >> 64) == 0 && (gn.s | a) != 0) {
+                uint64_t need = FPK_N(fpk_need)(q_lb, S->Q, S->strict);
+                uint64_t gg = fpk_gcd64_ge((uint64_t)gn.s, (uint64_t)a, need);
+                if (!gg) return 0;
+                gn.s = gg;
+            } else {
+                gn.s = fpk_gcd128(gn.s, a);
+            }
+        }
+        if (FPK_N(fpk_gcd_fails)(&gn, S->Q, q_lb, S->strict)) return 0;
+    }
+    return 1;
+}
 
-// Status: 0 done; -2 emit asked to stop; -8 a coordinate range exceeds int32;
-// -11 the error bound exceeded max_err (use a wider floating-point type).
+
+// Status: 0 done; 1 a node handed out to S->node_out; -2 emit asked to stop;
+// -8 a coordinate range exceeds int32; -11 the error bound exceeded max_err
+// (use a wider floating-point type).
 FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32_t *prefix,
                                     int n_prefix, int stop_depth, int32_t *clist,
                                     fpk_emit_fn emit, void *ctx, fpk_counts *cnt)
@@ -381,6 +427,22 @@ FPK_HD static inline int FPK_N(fpk_search)(const FPK_N(fpk_prep) *S, const int32
             err[i - 1] = en;
             i--;
             FPK_ENTER(i);
+            if (S->node_out && i == dim - stop_depth
+                    && S->level_start[i + 1] - S->level_start[i] <= 1) {
+                FPK_N(fpk_node) *nd = S->node_out;   // hand the node out (status 1)
+                nd->lo = cur[i]; nd->hi = hi[i];
+                nd->Uii = U[i * dim + i]; nd->off = off[i]; nd->aoff = aoff[i];
+                nd->rem = rem[i]; nd->err = err[i];
+                nd->m0p = m0p[i]; nd->linv = linvec ? linvec[i] : 0;
+                nd->is_m0 = i == S->m0_level;
+                nd->g = g[i + 1];
+                nd->nrow = S->use_gcd ? S->level_start[i + 1] - S->level_start[i] : 0;
+                if (nd->nrow) {
+                    int r = S->order[S->level_start[i]];
+                    nd->pre = pre_s[r]; nd->h = S->Hs[r * dim + i];
+                }
+                return 1;
+            }
             continue;
         }
 
