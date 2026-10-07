@@ -25,7 +25,7 @@
 #   units are reissued. Output equals coniZpM's over the whole box (as a set).
 #
 #   Exhaustive jobs (make_jobs(..., exhaustive=True)) find every coni PFV of
-#   each direction, as coniZpM(..., exhaustive=True). Workers route each p
+#   each direction, as coniZp. Workers route each p
 #   between ZpM and ZpM + ZpK at a price lam that the coordinator adjusts so
 #   GPU (ZpM) and CPU (ZpK) workers finish together.
 #
@@ -73,9 +73,9 @@ def make_jobs(datas, B, D, Q=None, M0min=13, ids=None, n_p=None, exhaustive=Fals
         output file names, so they must be unique.
     - `n_p` *(list, optional)*: Estimated p-vector counts, for sharding
         large boxes (see `serve`'s target_p).
-    - `exhaustive` *(bool or list, optional)*: Every coni PFV of each
-        direction, at any dilation; `D` is then used only for p-vectors
-        without a dilation bound, reported as incomplete.
+    - `exhaustive` *(bool or list, optional)*: Search with coniZp (every
+        coni PFV of each direction) instead of coniZpM; `D` is then its
+        fallback_dilation.
     - `cost_model` *(CostModel or list, optional)*: Routing costs for
         exhaustive jobs (`pfvs.dilation.CostModel`); only their shape
         matters. Default: measured for the job's h11.
@@ -566,7 +566,7 @@ def _post_process(job, ps, M, Kn, q, pidx, pstat, dil=None):
     """PFVs of one unit from its lattice points (the coniZpM post-processing);
     p-vectors the batched path could not finish go through coniZpM (at
     dil[i], each p-vector's dilation, if given; else the job's)."""
-    from .coniZp import _pfvs_from_points, coniZpM
+    from .coni import _pfvs_from_points, coniZpM
     from .fp_kernel.fp_kernel import _coni_batch  # noqa: F401  (import check)
     data = job["data"]
     h, Q = data.h11, _job_Q(job)
@@ -575,7 +575,7 @@ def _post_process(job, ps, M, Kn, q, pidx, pstat, dil=None):
     Ks, Ms, keys = [Ks], [Ms], [keys]
     for ip in np.flatnonzero(pstat != 0):
         if pstat[ip] < 0:
-            from .coniZp import _raise_kernel_status
+            from .coni import _raise_kernel_status
             _raise_kernel_status(ps[ip], int(pstat[ip]))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -611,7 +611,7 @@ def _route(job, ps, lam, n_threads):
     without a bound), the p-vectors split at D0 (their ZpK half becomes a
     ZpK unit), D0, and the p-vectors without a bound.
     """
-    from .coniZp import _default_cost_model, _grid_up
+    from .coni import _default_cost_model, _grid_up
     from .dilation import coni_dilation_bound_ceils
     data = job["data"]
     bceil = coni_dilation_bound_ceils(ps, data.kappa_cob, _job_Q(job), n_jobs=n_threads)
@@ -628,7 +628,7 @@ def _route(job, ps, lam, n_threads):
 def _zpk_unit(job, ps, D0, n_threads=1):
     """A ZpK unit: the PFVs above D0 of its p-vectors (all with a bound);
     those ZpK cannot do exactly are searched by ZpM up to their bound."""
-    from .coniZp import _batch_points, _grid_up, _pfvs_from_points, coniZpM
+    from .coni import _batch_points, _grid_up, _pfvs_from_points, coniZpM
     from .dilation import coni_dilation_bounds
     from .fp_kernel.fp_kernel import _coni_zpk_batch
     data = job["data"]
@@ -655,7 +655,7 @@ def _zpk_unit(job, ps, D0, n_threads=1):
 
 def _cpu_exhaustive_unit(job, ps):
     """An exhaustive search unit wholly on the CPU (ZpM and ZpK)."""
-    from .coniZp import _coni_exhaustive, _default_cost_model
+    from .coni import _coni_exhaustive, _default_cost_model
     data = job["data"]
     h = data.h11
     if len(ps) == 0:

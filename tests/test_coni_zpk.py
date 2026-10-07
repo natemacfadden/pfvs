@@ -16,9 +16,9 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  coniZpK (coni PFVs above a dilation D0) and coniZpM's
-#               exhaustive search, against ZpM at each direction's dilation
-#               bound.
+# Description:  coniZpK (coni PFVs above a dilation D0) and coniZp (every
+#               coni PFV of a direction), against ZpM at each direction's
+#               dilation bound.
 # -----------------------------------------------------------------------------
 
 import math
@@ -27,9 +27,9 @@ import numpy as np
 import pytest
 from latticepts import box_enum
 
-import pfvs.coniZp as CZ
-from pfvs import IncompleteSearchError, coniZpK, coniZpM, gpu
-from pfvs.coniZp import _dilations, _pfvs_from_points
+import pfvs.coni as CZ
+from pfvs import IncompleteSearchError, coniZp, coniZpK, coniZpM, gpu
+from pfvs.coni import _dilations, _pfvs_from_points
 from pfvs.dilation import CostModel, coni_dilation_bounds
 from pfvs.fp_kernel.fp_kernel import _coni_batch, _coni_zpk_batch
 from test_dataset import GEOMS, as_set, cydata
@@ -170,13 +170,13 @@ def test_coniZpK_raises_without_a_bound(monkeypatch):
 
 
 def _check_exhaustive(device, cost_model=None, cases=CASES[::2]):
-    """coniZpM(exhaustive=True) equals ZpM at each direction's bound, each
+    """coniZp equals ZpM at each direction's bound, each
     PFV once."""
     n_pfvs = 0
     for data, Q, ps in cases:
         kap = data.kappa_cob
-        Ks, Ms, complete = coniZpM(data, ps, Q=Q, exhaustive=True, device=device, n_jobs=2,
-                                   cost_model=cost_model)
+        Ks, Ms, complete = coniZp(data, ps, Q=Q, device=device, n_jobs=2,
+                                  cost_model=cost_model)
         assert complete.all()
         b = coni_dilation_bounds(ps, kap, Q)
         want = set()
@@ -201,15 +201,15 @@ def test_exhaustive_cpu(plan, monkeypatch):
 
 
 def test_exhaustive_reports_directions_without_a_bound(monkeypatch):
-    """A p-vector without a bound is searched at ellipsoid_dilation, as
+    """A p-vector without a bound is searched at fallback_dilation, as
     coniZpM would, and marked incomplete; the others are exhaustive."""
     data, Q, ps = CASES[25]
     want = set()
     for i, b in enumerate(coni_dilation_bounds(ps, data.kappa_cob, Q)):
         want |= _zpm(data, Q, ps[i:i + 1], 30 if i == 0 else math.ceil(b))[0]
     _without_bound(monkeypatch, ps[0])
-    Ks, Ms, complete = coniZpM(data, ps, Q=Q, exhaustive=True, ellipsoid_dilation=30,
-                               device="cpu", n_jobs=2)
+    Ks, Ms, complete = coniZp(data, ps, Q=Q, fallback_dilation=30,
+                              device="cpu", n_jobs=2)
     assert not complete[0] and complete[1:].all()
     assert as_set(Ks, Ms) == want and len(Ks) == len(want)
 

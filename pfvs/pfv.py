@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     import cytools
 
 # local imports
-from . import util, cydata, coniZp, dilation
+from . import util, cydata, coni, dilation
 from .cydata import CYData
 
 class PFV():
@@ -367,7 +367,7 @@ class PFV():
         if not self.coni:
             raise NotImplementedError
 
-        mat, Z, Binter = coniZp.coni_M_ellipsoid(self.pgrading, self._cydata)
+        mat, Z, Binter = coni.coni_M_ellipsoid(self.pgrading, self._cydata)
         return mat
 
     @property
@@ -379,7 +379,7 @@ class PFV():
         if not self.coni:
             raise NotImplementedError
 
-        mat, Z, Binter = coniZp.coni_M_ellipsoid(self.pgrading, self._cydata)
+        mat, Z, Binter = coni.coni_M_ellipsoid(self.pgrading, self._cydata)
         c = np.rint(np.linalg.lstsq(Binter, self.M)[0]).astype(int)
         if not np.all(self.M == Binter@c):
             raise RuntimeError(

@@ -26,7 +26,7 @@
 #                 delta < Q / mu0,   mu0 = min_{0 != K in Lambda} K^T S K.
 #
 #               Otherwise there is no bound. Computed in C (coni_bound.h), with
-#               python-flint as fallback. Used by coniZpM(exhaustive=True), via
+#               python-flint as fallback. Used by coniZp, via
 #               bound_routing, and as a diagnostic (PFV.dilation_bound).
 # -----------------------------------------------------------------------------
 

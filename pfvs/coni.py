@@ -16,9 +16,10 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  coniPFVs by "Zp" search: for each p-vector, enumerate the
-#               lattice points of an ellipsoid (coniZpM), or the PFVs above a
-#               dilation (coniZpK).
+# Description:  coniPFVs by "Zp" search, per p-vector: coniZpM (the lattice
+#               points of an ellipsoid, up to a dilation), coniZpK (the PFVs
+#               above a dilation), and coniZp (every PFV of the direction,
+#               combining the two).
 # -----------------------------------------------------------------------------
 
 # external imports
@@ -538,7 +539,7 @@ def _in_kahler_cone(H, ps):
 
 def _validate_ps(data, ps, checked=False):
     if not data.coni:
-        raise ValueError("coniZpM/coniZpK only apply to coni contexts. Use Zp.py for non-coni PFVs.")
+        raise ValueError("coniZp/coniZpM/coniZpK only apply to coni contexts. Use ZpM for non-coni PFVs.")
     if len(ps) == 0:
         raise ValueError("ps must be non-empty.")
     ps = np.array(ps)
@@ -633,8 +634,8 @@ def coniZpK(
     return Ks, Ms
 
 
-# exhaustive search: each p-vector up to its dilation bound
-# ========================================================
+# coniZp: each p-vector up to its dilation bound
+# ==============================================
 # candidate split dilations; above _PLAN_MIN_PS p-vectors the costs are
 # measured on a sample, else the default model (affects speed only)
 _SPLIT_D0S = (200, 400, 800, 1600)
@@ -782,7 +783,7 @@ def _calibrate(data, p_full, bceil, has, Q, M0min, max_N_pfvs, use_gpu, n_jobs, 
 
 def _coni_exhaustive(data, ps, p_full, Q, M0min, dilation, use_gpu, gpu_required, n_jobs,
                      max_N_pfvs, cost_model, verbosity):
-    """coniZpM(..., exhaustive=True): (Ks, Ms, keys, complete). Plans on a
+    """coniZp: (Ks, Ms, keys, complete). Plans on a
     sample of the bounds, then overlaps ZpM (GPU) with computing the bounds
     and ZpK (CPU)."""
     from .dilation import coni_dilation_bound_ceils
@@ -876,9 +877,6 @@ def coniZpM(
     max_N_pfvs: int = 1_000_000_000,
     return_formal_pfvs: bool = False,
     verbosity: int = 0,
-    # exhaustive search
-    exhaustive: bool = False,
-    cost_model=None,
     ) -> tuple[ArrayLike, ArrayLike]:
     """
     The coni PFVs of each p-vector up to a dilation: the lattice points of
@@ -922,28 +920,17 @@ def coniZpM(
         Return PFV objects instead of (Ks, Ms). Defaults to False.
     verbosity : int, optional
         Defaults to 0.
-    exhaustive : bool, optional
-        Find every coni PFV of each direction at any dilation, using each
-        p-vector's dilation bound (`pfvs.dilation`): ZpM to the bound, or ZpM
-        to D0 plus `coniZpK` above, as `bound_routing` plans. p-vectors
-        without a bound are searched to ellipsoid_dilation and reported
-        incomplete. Defaults to False.
-    cost_model : pfvs.dilation.CostModel, optional
-        Costs for the exhaustive plan. Defaults to measuring them on a sample.
 
     Returns
     -------
     Ks, Ms : ndarrays of shape (N, h11)
         The PFVs (or a list of PFV objects if return_formal_pfvs), grouped by
         p-vector and sorted by (M, K) within one.
-    complete : ndarray of bool, shape (len(ps),)
-        Only if exhaustive: whether each p-vector's search is complete.
     """
-    n_threads = os.cpu_count() if n_jobs == -1 else max(1, n_jobs)
     if not data.coni:
         raise ValueError(
             "coniZpM only applies to coni contexts. "
-            "Use Zp.py for non-coni PFVs."
+            "Use ZpM for non-coni PFVs."
         )
     if len(ps) == 0:
         raise ValueError("ps must be non-empty.")
@@ -980,18 +967,6 @@ def coniZpM(
     use_gpu = _use_gpu(device, h11, len(ps), use_c_lattice, use_gcd_lattice,
                        extra_lll_reduction)
     gpu_required = use_gpu and device == "gpu"
-    if exhaustive:
-        if not use_c_lattice or use_gcd_lattice or not extra_lll_reduction:
-            raise ValueError("exhaustive=True needs use_c_lattice=True, use_gcd_lattice=False, "
-                             "extra_lll_reduction=True")
-        ps, p_full = _validate_ps(data, ps, checked=True)
-        Ks, Ms, _, complete = _coni_exhaustive(
-            data, ps, p_full, Q, M0min, ellipsoid_dilation, use_gpu, gpu_required,
-            n_threads, max_N_pfvs, cost_model, verbosity)
-        if return_formal_pfvs:
-            from .pfv import PFV
-            return [PFV(data, K, M) for K, M in zip(Ks, Ms)], complete
-        return Ks, Ms, complete
     if use_gpu:
         n_jobs = 1      # one device call for all p-vectors
 
@@ -1191,3 +1166,58 @@ def coniZpM(
         return [PFV(data, K, M) for K,M in zip(all_Ks, all_Ms)]
     else:
         return all_Ks, all_Ms
+
+
+def coniZp(
+    data: CYData,
+    ps: ArrayLike,
+    Q: int | None = None,
+    M0min: int = 13,
+    fallback_dilation: float = 1,
+    n_jobs: int = -1,
+    device: str = "auto",
+    cost_model=None,
+    max_N_pfvs: int = 1_000_000_000,
+    return_formal_pfvs: bool = False,
+    verbosity: int = 0,
+    ) -> tuple:
+    """
+    Every coni PFV of each p-vector's direction, at any dilation.
+
+    Each direction's PFVs have dilation below a bound (`pfvs.dilation`).
+    Each p-vector is searched either by coniZpM up to its bound, or by
+    coniZpM up to a split dilation D0 plus `coniZpK` above it, whichever
+    measured costs favour (`pfvs.dilation.bound_routing`); the GPU and the
+    CPU work in parallel.
+
+    Parameters
+    ----------
+    data, ps, Q, M0min, n_jobs, device, max_N_pfvs, return_formal_pfvs, verbosity :
+        As for coniZpM.
+    fallback_dilation : float, optional
+        Dilation for p-vectors without a bound (reported incomplete).
+        Defaults to 1.
+    cost_model : pfvs.dilation.CostModel, optional
+        Costs for the routing. Defaults to measuring them on a sample.
+
+    Returns
+    -------
+    Ks, Ms : ndarrays of shape (N, h11), or a list of PFV objects
+        As for coniZpM.
+    complete : ndarray of bool, shape (len(ps),)
+        Whether each p-vector's search is complete.
+    """
+    if fallback_dilation <= 0:
+        raise ValueError(f"fallback_dilation must be > 0, got {fallback_dilation}.")
+    ps, p_full = _validate_ps(data, ps)
+    if Q is None:
+        Q = data.h11 + data.h21 + 4
+    n_threads = os.cpu_count() if n_jobs == -1 else max(1, n_jobs)
+    use_gpu = _use_gpu(device, data.h11, len(ps), True, False, True)
+    Ks, Ms, _, complete = _coni_exhaustive(
+        data, ps, p_full, Q, M0min, fallback_dilation, use_gpu, use_gpu and device == "gpu",
+        n_threads, max_N_pfvs, cost_model, verbosity)
+    if return_formal_pfvs:
+        from .pfv import PFV
+        return [PFV(data, K, M) for K, M in zip(Ks, Ms)], complete
+    return Ks, Ms, complete

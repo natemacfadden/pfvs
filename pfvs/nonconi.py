@@ -329,8 +329,8 @@ def ZpM(
     warnings.warn("non-coni Zp methods are slightly outdated relative to the coni path", stacklevel=2)
     if data.coni:
         raise ValueError(
-            "Methods in Zp.py only apply to non-coni contexts. "
-            "Use coniZp.py for coni PFVs."
+            "ZpM and ZpK only apply to non-coni contexts. "
+            "Use coniZpM for coni PFVs."
         )
     if len(ps) == 0:
         raise ValueError("ps must be non-empty.")
@@ -574,8 +574,8 @@ def ZpK(
     warnings.warn("non-coni Zp methods are slightly outdated relative to the coni path", stacklevel=2)
     if data.coni:
         raise ValueError(
-            "Methods in Zp.py only apply to non-coni contexts. "
-            "Use coniZp.py for coni PFVs."
+            "ZpM and ZpK only apply to non-coni contexts. "
+            "Use coniZpM for coni PFVs."
         )
     if len(ps) == 0:
         raise ValueError("ps must be non-empty.")

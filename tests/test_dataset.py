@@ -137,7 +137,7 @@ def test_large_p_not_skipped(g, p):
     Large p-vectors whose M-lattice computation overflows int64 are handled
     exactly (previously: corrupted basis, non-PD ellipsoid, p silently skipped).
     """
-    from pfvs.coniZp import coni_M_ellipsoid
+    from pfvs.coni import coni_M_ellipsoid
     data = cydata(g)
     pf = np.concatenate([[0], p])
     mat, _, Binter = coni_M_ellipsoid(pf, data=data)

@@ -50,15 +50,11 @@ In either case, for PFVs or coniPFVs, specification of $K$ and $M$ suffices to d
 
 ## Algorithm
 
-We provide only cursory descriptions of the algorithms here. Full detail will be provided in an upcoming (as of March 2026) paper. There are subtle differences between the non-coni and coniPFV algorithms - the following discussion will implicitly be non-coni PFV focused.
+Details will be in an upcoming paper. Two classes of algorithm (described for non-coni PFVs):
+1. **Box:** enumerate $K$, $M$ obeying #1, #2, #5 in a box, then check #6, compute $p$ from #7 and check #3, #4. Efficient at low $h^{1,1}$; scales poorly.
+2. **Zp:** enumerate integer $\hat p$ obeying #3 and set $p = \hat p/p_{denom}$. Through #7, constraint #5 becomes an ellipsoid on $M$, $0\leq -M^T (\kappa \hat{p}) M \leq p_{denom} Q$ (**ZpM**), or on $K$, $0\leq -K^T (\kappa \hat{p})^{-1} K \leq Q/p_{denom}$ (**ZpK**). #1, #2, #4 become lattice bases.
 
-There are two general classes of algorithms
-1. 'box-style algorithms': (non-exhaustively) enumerate $K$ and $M$ satisfying constraints #1, #2, and #5. This can be done by trying all $|K_i|\leq bound_K$ and $|M_i|\leq bound_M$, hence the name 'box' (there are better ways of enumerating such $K$, $M$ though). One can then rejection sample on constraint #6. Likewise, one can compute $p$ using #7 and then allows checking of constraints #3 and #4.
-2. 'Zp-style algorithms': (non-exhaustively) enumerate $\hat{p} \in \mathbb{Z}^{h^{1,1}}$ obeying #3. Define $p = \hat{p}/p_{denom}$ for some $p\_{denom} \in \mathbb{Z}\_{>0}$. Use #7 to rewrite constraint #5 as an ellipsoidal constraint on $M$, $0\leq -M^T (\kappa \hat{p}) M \leq p_{denom} Q$. This defines the 'ZpM algorithm'. For non-coni PFVs only, one can invert constraint #7 to rewrite constraint #5 as an ellipsoid on $K$, $0\leq -K^T (\kappa \hat{p})^{-1} K \leq Q/p_{denom}$. This defines the 'ZpK algorithm'. One can integrate constraints #1, #2, and #4 as modifications to the ellipsoid via certain lattice bases.
-
-Zp algorithms require special care with $p_{denom}$. Focus on ZpM and call $0\leq -M^T (\kappa \hat{p}) M \leq Q$ the 'base' ellipsoid. To generate a non-coni PFV with $p_{denom}=d$, one needs to dilate the base ellipsoid $d$-times. An $M$ in this $d$-dilated ellipsoid only gives rise to $p_{denom}=d$ if $g | (\kappa M) \hat{p}$. This is a strong cut on an increasingly wide search space, making large $p_{denom}$ expensive/difficult to find with ZpM (in contrast to box which has no difficulty finding such $p_{denom}$). The purpose of ZpK was to invert this: the base ellipsoid in ZpK is sensitive to any $p_{denom} \geq 1$.
-
-This gets to the point of efficiency (no careful analysis is done here). First, box-style algorithms are efficient at low $h^{1,1}$ but scale poorly with $h^{1,1}$. This is potentially due to the increasing narrowness of the Kähler cone $\\{x : Hx\geq 0\\}$ as dimension increases. In contrast, Zp-style algorithms typically scale better with $h^{1,1}$ than box. ZpM is particularly efficient, arguably running up to $h^{1,1}=60$. Unfortunately, the base ZpK ellipsoid is typically too large for ZpK to be usable.
+ZpM is the workhorse (usable up to $h^{1,1}\approx 60$). A PFV with $p_{denom}=d$ needs the base ellipsoid dilated $d$ times (the `ellipsoid_dilation` argument), so large $p_{denom}$ is expensive for ZpM. ZpK's ellipsoid covers every $p_{denom}$ but is usually too large on its own; **Zp** (`coniZp`) combines the two.
 
 ## Installation
 
@@ -86,30 +82,28 @@ PFVS_NATIVE=1 pip install -e .
 ```
 
 ### GPU backend (optional; NVIDIA or AMD)
-`coniZpM` can run its lattice setup and search on a GPU, with results identical to the CPU path (same arrays, same order). The backend is a small shared library built from `pfvs/fp_kernel/cuda/` by `nvcc` (NVIDIA, CUDA 11.5+) or `hipcc` (AMD, ROCm 6+). By default (`PFVS_GPU=auto`) the build uses whichever toolchain it finds and never fails the install over it:
+`coniZpM` can run on a GPU, with results identical to the CPU path. The build uses `nvcc` (CUDA 11.5+) or `hipcc` (ROCm 6+) if found:
 ```bash
 pip install -e .                    # + GPU backend if nvcc/hipcc is found
 PFVS_GPU=cuda pip install -e .      # require the NVIDIA backend
 PFVS_GPU=hip  pip install -e .      # require the AMD backend
 ```
-The GPUs of the build machine are targeted (`native`); set `PFVS_CUDA_ARCH` / `PFVS_HIP_ARCH` (e.g. `sm_80,sm_90` or `gfx90a,gfx1100`) to build for others. A pip-installed ROCm SDK is found automatically, or point `PFVS_ROCM_PATH` at a ROCm tree; `NVCC_CCBIN` selects nvcc's host compiler. See `setup.py` for the rest.
+It targets the build machine's GPUs; `PFVS_CUDA_ARCH` / `PFVS_HIP_ARCH` build for others (see `setup.py` for the remaining variables). `coniZpM(..., device="auto")` uses the GPU for batches of 256+ p-vectors; `"gpu"` requires it, `"cpu"` avoids it. `pfvs.gpu.available()` reports whether a device is usable.
 
-Then `coniZpM(..., device="auto")` (the default) uses the GPU for batches of 256+ p-vectors, `device="gpu"` requires it and `device="cpu"` avoids it; `PFVS_DEVICE` overrides `"auto"`. `pfvs.gpu.available()` reports whether a device is usable, and `pfvs.gpu.coni_batch_multi` runs many geometries in one device call.
+## Every PFV of a direction: `coniZp`
 
-## Every PFV of a direction
-
-`coniZpM` searches each p-vector up to `ellipsoid_dilation`. But every coni PFV with direction $\hat p$ has dilation $\delta < Q/\mu_0(\hat p)$ (`pfvs.dilation`; $\mu_0$ is the shortest vector of a quadratic form on $\{K : \hat p \cdot K = 0\}$), so a search up to that bound finds all of them. `coniZpM(..., exhaustive=True)` does this for every p-vector and returns, besides the PFVs, which p-vectors it could search completely (all of them unless a bound's hypotheses fail; we have not seen that for a p-vector in the Kähler cone):
+Every coni PFV with direction $\hat p$ has dilation $\delta < Q/\mu_0(\hat p)$ (`pfvs.dilation`), so searching up to that bound finds all of them:
 ```python
-Ks, Ms, complete = coniZpM(data, ps, exhaustive=True)
+Ks, Ms, complete = coniZp(data, ps)   # complete[i]: p-vector i fully searched
 ```
-The bound is ~10³ at $h^{1,1}\ge 8$, which makes ZpM up to it expensive. So each p-vector is searched one of two ways, with identical results: ZpM up to its bound, or ZpM up to a split dilation $D_0$ plus `coniZpK` above it (a search over the short $K$ that a PFV with $\delta > D_0$ must have, on the CPU). The choice follows measured costs (`pfvs.dilation.bound_routing`): p-vectors with low bounds go to the bound, the rest are split, at the threshold where the GPU and the CPU finish together (on a CPU alone, whichever is cheaper). `coniZpK(data, ps, D0)` on its own gives the PFVs above $D_0$.
+The bound is ~10³ at $h^{1,1}\ge 8$, so each p-vector is searched either by ZpM up to its bound, or by ZpM up to a split dilation $D_0$ plus ZpK above it (`coniZpK`, CPU), whichever measured costs favour (`pfvs.dilation.bound_routing`).
 
 ## Running on many machines
 
 `pfvs.distributed` spreads coni-PFV searches over machines, GPUs and CPUs. A coordinator splits each geometry's p-box into units, checkpoints results, and reissues units of vanished workers.
 ```python
 from pfvs import distributed
-jobs = distributed.make_jobs(datas, B=..., D=..., n_p=...)   # exhaustive=True for exhaustive jobs
+jobs = distributed.make_jobs(datas, B=..., D=..., n_p=...)   # exhaustive=True: coniZp instead of coniZpM
 pickle.dump(jobs, open("jobs.pkl", "wb"))
 ```
 ```bash
@@ -154,8 +148,8 @@ pfvs/
 │   │   └── cuda/          # GPU backend (CUDA/HIP): pipeline + C API (pfvs_gpu.cu)
 │   ├── conipfv_kernel/    # re-exports fp_kernel.conipfv_kernel (coni-PFV enumeration)
 │   ├── pfv_kernel/        # re-exports fp_kernel.pfv_kernel (non-coni PFV enumeration)
-│   ├── coniZp.py          # coniZpM / coniZpK: coni-PFV generation pipeline
-│   ├── Zp.py              # ZpM / ZpK: PFV generation pipeline
+│   ├── coni.py            # coniZp / coniZpM / coniZpK: coni-PFV search
+│   ├── nonconi.py         # ZpM / ZpK: non-coni PFV search
 │   ├── cydata.py          # CYData: CY-data holder
 │   ├── pfv.py             # PFV class + diagnostics
 │   ├── gpu.py             # GPU backend loader (ctypes)

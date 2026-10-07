@@ -47,10 +47,10 @@ from numpy.typing import ArrayLike
 from scipy.special import gammaln
 
 # local imports
-from .coniZp import coni_M_ellipsoid, coniZpM
+from .coni import coni_M_ellipsoid, coniZpM
 from .cydata import CYData
 from .pvectors import pvecs
-from .Zp import ZpM
+from .nonconi import ZpM
 
 # helpers
 # =======
