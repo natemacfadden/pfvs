@@ -1856,7 +1856,7 @@ data : CYData
 ps : ArrayLike of shape (n, h11-1), optional
     The p-vectors. Or pass N instead.
 N : integer, optional
-    Use the same N p-vectors as `score_coni_geometries`. Above 10^7 they
+    Use the same N p-vectors as `score_geometries`. Above 10^7 they
     are sampled without enumerating them (absolute level then depends on
     N0; keep it fixed).
 Q, ellipsoid_dilation, M0min : optional
@@ -1873,48 +1873,52 @@ Returns
 float
     The predicted count.
 
-<a id="pfvs.scoring.score_coni_geometries"></a>
+<a id="pfvs.scoring.score_geometries"></a>
 
 ---
 
 
-#### score\_coni\_geometries
+#### score\_geometries
 
 ```python
-def score_coni_geometries(datas: list[CYData],
-                          N: int,
-                          ellipsoid_dilation: float = 1,
-                          method: str = "search",
-                          n_prefetch: int = 4,
-                          seed: int = 0,
-                          verbosity: int = 0,
-                          **kwargs) -> np.ndarray
+def score_geometries(datas: list[CYData],
+                     N: int,
+                     ellipsoid_dilation: float = 1,
+                     method: str = "search",
+                     n_prefetch: int = 4,
+                     seed: int = 0,
+                     verbosity: int = 0,
+                     **kwargs) -> np.ndarray
 ```
 
-Score each conifold by the number of coniPFVs coniZpM finds on its first
-N p-vectors (`pvecs(data, N)`, trimmed to exactly N). On a GPU: seconds
-per conifold for N = 2M at dilation 150.
+Score each geometry by the number of PFVs coniZpM (coni) or ZpM
+(non-coni) finds on its first N p-vectors (`pvecs(data, N)`, trimmed to
+exactly N). Coni: seconds per geometry on a GPU for N = 2M at dilation
+150. Non-coni runs on the CPU but finds ~10 PFVs per p, so N ~ 1e4-1e5
+suffices.
 
 Parameters
 ----------
 datas : list of CYData
-    The conifolds.
+    The geometries, coni or not (can be mixed, but scores are only
+    comparable within a kind).
 N : integer
-    p-vectors per conifold.
+    p-vectors per geometry.
 ellipsoid_dilation : float, optional
-    As in coniZpM. Defaults to 1.
+    As in coniZpM / ZpM. Defaults to 1.
 method : str, optional
     "search" (default) counts; "estimate" uses `estimate_coni_pfvs`
-    instead (no GPU needed, ranks worse).
+    instead (coni only; no GPU needed, ranks worse).
 n_prefetch : integer, optional
-    Worker processes generating the next conifolds' p-vectors during the
+    Worker processes generating the next geometries' p-vectors during the
     search; each holds N x h11 int64. Defaults to 4.
 seed : integer, optional
     Seed for the trimming. Defaults to 0.
 verbosity : integer, optional
-    1 prints a line per conifold. Defaults to 0.
+    1 prints a line per geometry. Defaults to 0.
 **kwargs :
-    Passed to coniZpM (Q, M0min, device, n_jobs) or `estimate_coni_pfvs`.
+    Passed to the search (e.g. n_jobs; Q, M0min, device for coniZpM;
+    Qmax, Qmin for ZpM) or to `estimate_coni_pfvs`.
 
 Returns
 -------

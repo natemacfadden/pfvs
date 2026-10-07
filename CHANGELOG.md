@@ -18,9 +18,9 @@ First packaged release. Relative to the code used for arXiv:2406.13751 ("dSv1"):
   PFVs of the published dataset). A diagnostic, shown by `PFV.diagnostics()`;
   not a search parameter, since at h11 >= 8 it is typically ~10^3.
 
-### Scoring conifolds
-- `pfvs.scoring.score_coni_geometries`: scores conifolds by the coni PFV count
-  of a size-N search, or (`method="estimate"`) a prediction of it.
+### Scoring geometries
+- `pfvs.scoring.score_geometries`: scores geometries (coni or not) by the PFV
+  count of a size-N search; for coni, `method="estimate"` predicts it instead.
 
 ### Behaviour changes
 - PFV order: within each p-vector, PFVs are listed in a canonical order (by M,

@@ -16,12 +16,12 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  Score conifolds by how many coniPFVs a search finds.
+# Description:  Score geometries by how many PFVs a search finds.
 #
-#               score_coni_geometries: coniZpM's count on each conifold's first
-#               N p-vectors. Fast on a GPU.
-#               estimate_coni_pfvs / expected_pfvs_per_p: a Gaussian-heuristic
-#               prediction of that count, without searching. Overcounts 3-5x,
+#               score_geometries: the number of PFVs coniZpM (coni) or ZpM
+#               (non-coni) finds on each geometry's first N p-vectors.
+#               estimate_coni_pfvs / expected_pfvs_per_p (coni only): a
+#               Gaussian-heuristic prediction of that count, without searching. Overcounts 3-5x,
 #               mostly because it ignores det N != 0. Ranks worse than the
 #               search (Spearman 0.89 vs 0.98 on 63 dataset conifolds).
 #
@@ -50,6 +50,7 @@ from scipy.special import gammaln
 from .coniZp import coni_M_ellipsoid, coniZpM
 from .cydata import CYData
 from .pvectors import pvecs
+from .Zp import ZpM
 
 # helpers
 # =======
@@ -105,8 +106,9 @@ def _sample_frontier(data: CYData, N: int, n_samp: int, rng: np.random.Generator
 # instead of enumerating the search's p-vectors
 _ENUM_MAX = 10_000_000
 
-# p-vectors per coniZpM call in _count_coni_pfvs (bounds memory)
-_COUNT_CHUNK = 1_000_000
+# p-vectors per search call in _count_pfvs, bounding memory (non-coni finds
+# ~10 PFVs per p, coni far fewer)
+_COUNT_CHUNK = {True: 1_000_000, False: 100_000}
 
 
 def _first_N(data: CYData, N: int, seed: int = 0) -> np.ndarray:
@@ -225,7 +227,7 @@ def estimate_coni_pfvs(
     ps : ArrayLike of shape (n, h11-1), optional
         The p-vectors. Or pass N instead.
     N : integer, optional
-        Use the same N p-vectors as `score_coni_geometries`. Above 10^7 they
+        Use the same N p-vectors as `score_geometries`. Above 10^7 they
         are sampled without enumerating them (absolute level then depends on
         N0; keep it fixed).
     Q, ellipsoid_dilation, M0min : optional
@@ -274,20 +276,21 @@ def estimate_coni_pfvs(
 
 # scores by search
 # =================
-def _count_coni_pfvs(
+def _count_pfvs(
     data: CYData,
     ps: np.ndarray,
     ellipsoid_dilation: float = 1,
     **kwargs) -> int:
-    """Internal: len(coniZpM(data, ps, ...)), in chunks to bound memory."""
+    """Internal: len(coniZpM or ZpM(data, ps, ...)), in chunks."""
+    search, chunk = (coniZpM if data.coni else ZpM), _COUNT_CHUNK[data.coni]
     n_pfvs = 0
-    for i in range(0, len(ps), _COUNT_CHUNK):
-        n_pfvs += len(coniZpM(data, ps[i:i + _COUNT_CHUNK],
-                              ellipsoid_dilation=ellipsoid_dilation, **kwargs)[0])
+    for i in range(0, len(ps), chunk):
+        n_pfvs += len(search(data, ps[i:i + chunk],
+                             ellipsoid_dilation=ellipsoid_dilation, **kwargs)[0])
     return n_pfvs
 
 
-def score_coni_geometries(
+def score_geometries(
     datas: list[CYData],
     N: int,
     ellipsoid_dilation: float = 1,
@@ -297,30 +300,34 @@ def score_coni_geometries(
     verbosity: int = 0,
     **kwargs) -> np.ndarray:
     """
-    Score each conifold by the number of coniPFVs coniZpM finds on its first
-    N p-vectors (`pvecs(data, N)`, trimmed to exactly N). On a GPU: seconds
-    per conifold for N = 2M at dilation 150.
+    Score each geometry by the number of PFVs coniZpM (coni) or ZpM
+    (non-coni) finds on its first N p-vectors (`pvecs(data, N)`, trimmed to
+    exactly N). Coni: seconds per geometry on a GPU for N = 2M at dilation
+    150. Non-coni runs on the CPU but finds ~10 PFVs per p, so N ~ 1e4-1e5
+    suffices.
 
     Parameters
     ----------
     datas : list of CYData
-        The conifolds.
+        The geometries, coni or not (can be mixed, but scores are only
+        comparable within a kind).
     N : integer
-        p-vectors per conifold.
+        p-vectors per geometry.
     ellipsoid_dilation : float, optional
-        As in coniZpM. Defaults to 1.
+        As in coniZpM / ZpM. Defaults to 1.
     method : str, optional
         "search" (default) counts; "estimate" uses `estimate_coni_pfvs`
-        instead (no GPU needed, ranks worse).
+        instead (coni only; no GPU needed, ranks worse).
     n_prefetch : integer, optional
-        Worker processes generating the next conifolds' p-vectors during the
+        Worker processes generating the next geometries' p-vectors during the
         search; each holds N x h11 int64. Defaults to 4.
     seed : integer, optional
         Seed for the trimming. Defaults to 0.
     verbosity : integer, optional
-        1 prints a line per conifold. Defaults to 0.
+        1 prints a line per geometry. Defaults to 0.
     **kwargs :
-        Passed to coniZpM (Q, M0min, device, n_jobs) or `estimate_coni_pfvs`.
+        Passed to the search (e.g. n_jobs; Q, M0min, device for coniZpM;
+        Qmax, Qmin for ZpM) or to `estimate_coni_pfvs`.
 
     Returns
     -------
@@ -329,9 +336,8 @@ def score_coni_geometries(
     """
     if method not in ("search", "estimate"):
         raise ValueError(f"method must be 'search' or 'estimate', got {method!r}.")
-    for data in datas:
-        if not data.coni:
-            raise ValueError("score_coni_geometries only applies to coni contexts.")
+    if method == "estimate" and not all(d.coni for d in datas):
+        raise ValueError("method='estimate' only applies to coni contexts.")
     scores = np.zeros(len(datas))
 
     def report(i, t0):
@@ -347,8 +353,7 @@ def score_coni_geometries(
     elif n_prefetch <= 0:
         for i, data in enumerate(datas):
             t0 = time.time()
-            scores[i] = _count_coni_pfvs(data, _first_N(data, N, seed),
-                                         ellipsoid_dilation, **kwargs)
+            scores[i] = _count_pfvs(data, _first_N(data, N, seed), ellipsoid_dilation, **kwargs)
             report(i, t0)
     else:
         ctx = multiprocessing.get_context("spawn")
@@ -360,6 +365,6 @@ def score_coni_geometries(
                 futs[i] = None                      # free it once searched
                 if i + n_prefetch < len(datas):
                     futs.append(pool.submit(_first_N, datas[i + n_prefetch], N, seed))
-                scores[i] = _count_coni_pfvs(data, ps, ellipsoid_dilation, **kwargs)
+                scores[i] = _count_pfvs(data, ps, ellipsoid_dilation, **kwargs)
                 report(i, t0)
     return scores
