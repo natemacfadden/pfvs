@@ -114,12 +114,12 @@ python -m pfvs.distributed work HOST:5055 --device cpu --procs 16
 
 ## Scoring conifolds
 
-`pfvs.scoring` scores conifolds by how many coni PFVs a search of the same size finds in each, e.g. to decide which to search in depth:
+To pick which conifolds to search in depth:
 ```python
 from pfvs.scoring import score_coni_geometries
 scores = score_coni_geometries(datas, N=2_000_000, ellipsoid_dilation=150)
 ```
-`scores[i]` is the number of coni PFVs `coniZpM` finds on the first N p-vectors of `datas[i]` (those of `pvecs`, trimmed to exactly N), so it is exact for those p-vectors. On a GPU a geometry takes seconds, mostly generating the p-vectors, which `score_coni_geometries` does for the next geometries in worker processes. On 63 dataset conifolds (h11 = 5-11, N = 2M, dilation 150) the scores rank the dataset's recorded counts with Spearman 0.98. Without a GPU, `method="estimate"` uses a parameter-free lattice-point prediction instead (`estimate_coni_pfvs`; Spearman 0.89 on the same conifolds; it overcounts 3-5x, see `pfvs/scoring.py`).
+`scores[i]` is the number of coni PFVs `coniZpM` finds on the first N p-vectors of `datas[i]`. Use a GPU; without one, `method="estimate"` predicts the count instead (ranks worse).
 
 ## Examples
 

@@ -16,61 +16,22 @@
 # =============================================================================
 #
 # -----------------------------------------------------------------------------
-# Description:  Scoring conifolds by how many coniPFVs a search finds.
+# Description:  Score conifolds by how many coniPFVs a search finds.
 #
-#               `score_coni_geometries` scores each conifold by the number of
-#               coniPFVs coniZpM finds on its first N p-vectors (those `pvecs`
-#               generates, trimmed to exactly N). The score is exact for those
-#               p-vectors and, on a GPU, cheap (2M p-vectors at dilation 150 in
-#               1-10 s for h11 = 5-10).
+#               score_coni_geometries: coniZpM's count on each conifold's first
+#               N p-vectors. Fast on a GPU.
+#               estimate_coni_pfvs / expected_pfvs_per_p: a Gaussian-heuristic
+#               prediction of that count, without searching. Overcounts 3-5x,
+#               mostly because it ignores det N != 0. Ranks worse than the
+#               search (Spearman 0.89 vs 0.98 on 63 dataset conifolds).
 #
-#               `expected_pfvs_per_p` / `estimate_coni_pfvs` predict the same
-#               count without searching: a parameter-free estimate from the
-#               Gaussian heuristic applied to coniZpM's ellipsoids, for when no
-#               GPU is available (about 0.3 ms per p-vector on one CPU core).
-#
-#               For a p-vector p, coniZpM enumerates c in Z^n (n = h11-1) with
-#
-#                   val = c^T mat c <= Q * dilation,   M0 = l.c >= M0min,
-#                   val < Q * gcd(A c),
-#
-#               where (mat, Z, Binter) = coni_M_ellipsoid(p), A = (Z@Binter)[1:]
-#               and l = Binter[0], and keeps c only if some K0 hits the tadpole
-#               exactly, which needs M0 | (Qperp - Q): roughly a 1/M0 chance.
-#               Replacing lattice-point counts by volumes (exact on average over
-#               random lattices: Siegel's mean value theorem) gives
-#
-#                   E_p = sum_{g=1}^{dilation} dens(g) * I(g)
-#
-#                   dens(g) = prod_i gcd(s_i, g) / g    (s_i: Smith invariants
-#                                                        of A; P(g | A c))
-#                   I(g)    = int_{c^T mat c <= Q g, l.c >= M0min} dc / (l.c)
-#                           = Vol_n(Q g) / sqrt(det mat) * F_n(t0) / rho,
-#                   rho     = sqrt(Q g) * sqrt(l^T mat^-1 l),  t0 = M0min / rho,
-#                   F_n(t0) = E[1[t >= t0] / t], t the unit ball's 1-D marginal.
-#
-#               All three ingredients (det mat, s_i, l^T mat^-1 l) are invariant
-#               under unimodular changes of the c-basis, so the estimate does not
-#               depend on how coni_M_ellipsoid reduces Binter.
-#
-#               Caveats. The estimate overcounts, by a factor that varies
-#               between conifolds and grows with h11 and with |p|. Measured
-#               stage by stage against coniZpM (208 conifolds of the coni_pfvs
-#               dataset, all 500k p-vectors of each at dilation 150; median
-#               over conifolds with PFVs):
-#                 - det N != 0, which the estimate does not model, removes
-#                   1.9x (h11 = 5) to 6.2x (h11 = 9-10) of the candidates that
-#                   hit the tadpole. Singular candidates mostly recur from many
-#                   p (p and p + t v give the same (K, M) when N(M) v = 0);
-#                 - the 1/M0 chance of an exact tadpole hit is optimistic by
-#                   about 2.5x;
-#                 - volumes undercount the lattice points of these thin
-#                   ellipsoids (0.2-0.9x), partly cancelling the above.
-#               Net: 3-5x overall (interquartile 2.8-9x per conifold); the
-#               K' > 0 cut removes nothing (the kernel's gcd cut implies it).
-#               Rank-based use is still good: Spearman 0.87 against the true
-#               counts on those 208 conifolds; on 2,626 conifolds of held-out
-#               polytopes, AUC 0.945 for >0 PFVs, 0.979 for >50 (pfvscorer).
+#               Heuristic for one p, with (mat, Z, Binter) = coni_M_ellipsoid(p),
+#               l = Binter[0], s_i the Smith invariants of (Z@Binter)[1:]:
+#                   E_p = sum_{g <= dilation} prod_i gcd(s_i, g)/g
+#                         * Vol_n(Q g)/sqrt(det mat) * F_n(M0min/rho)/rho,
+#                   rho = sqrt(Q g * l^T mat^-1 l),
+#               i.e. the volume of {c^T mat c <= Q g, l.c >= M0min}, weighted by
+#               the ~1/M0 chance of hitting the tadpole exactly.
 # -----------------------------------------------------------------------------
 
 # external imports
@@ -117,14 +78,9 @@ def _tail(n: int, t0: np.ndarray) -> np.ndarray:
 def _sample_frontier(data: CYData, N: int, n_samp: int, rng: np.random.Generator,
                      N0: int) -> np.ndarray:
     """
-    Approximately uniform sample of the primitive p-vectors that `pvecs(data, N)`
-    would return, without enumerating all N of them.
-
-    Enumerates a base set of ~min(N, N0) and scales it by s = (N/N0)^(1/n) with
-    uniform jitter, rejecting points outside the cone or non-primitive. Scaling
-    under-samples the H p ~ 1 wall shell, which lowers the estimate's absolute
-    level (0.4-0.75x of direct sampling for N0 = 2e4-2.5e5) but not its ranking
-    (Spearman 0.975 vs direct sampling). Keep N0 fixed when comparing estimates.
+    Roughly uniform sample of `pvecs(data, N)` without enumerating it: scale
+    pvecs(data, N0) up by (N/N0)^(1/n), with jitter. Undersamples near the
+    cone walls, which lowers the estimate but not the ranking.
     """
     H  = data.H_cob
     P0 = pvecs(data, min(N, N0))
@@ -155,10 +111,8 @@ _COUNT_CHUNK = 1_000_000
 
 def _first_N(data: CYData, N: int, seed: int = 0) -> np.ndarray:
     """
-    Exactly N of the p-vectors `pvecs(data, N)` returns (it returns whole
-    L-inf boxes, so up to several times N): every p inside the outermost
-    shell |p|_inf = B, plus a uniform random subset of that shell. Makes
-    searches of different conifolds the same size.
+    Exactly N of `pvecs(data, N)`, which returns whole L-inf boxes: all of
+    the inner box plus a random subset of the outermost shell.
     """
     ps = pvecs(data, N)
     if len(ps) <= N:
@@ -182,37 +136,26 @@ def expected_pfvs_per_p(
     M0min: int = 13,
     return_cumulative: bool = False) -> float | np.ndarray:
     """
-    Gaussian-heuristic expected number of coniPFVs coniZpM finds from one p.
-
-    See the module description for the formula and its caveats.
+    Gaussian-heuristic expected number of coniPFVs coniZpM finds from one p
+    (formula in the module description).
 
     Parameters
     ----------
     p : ArrayLike of shape (h11,) or (h11-1,)
-        The p-vector (perpendicular components, as passed to coniZpM, or full).
+        The p-vector, as passed to coniZpM, or full.
     data : CYData, optional
-        The relevant data from the associated CY. Mutually exclusive with kappa
-        and Mbasis (pass those to avoid recomputing them per p).
-    kappa : ArrayLike of shape (h11, h11, h11), optional
-        data.kappa_cob.
-    Mbasis : ArrayLike of shape (h11, h11), optional
-        data.M_lattice().
-    Q : integer, optional
-        The tadpole. Required with kappa/Mbasis; defaults to coniZpM's
-        h11+h21+4 when data is given.
-    ellipsoid_dilation : float, optional
-        As in coniZpM. Defaults to 1.
-    M0min : integer, optional
-        As in coniZpM. Defaults to 13.
+        The CY. Or pass kappa (data.kappa_cob), Mbasis (data.M_lattice()) and
+        Q instead, to avoid recomputing them per p.
+    Q, ellipsoid_dilation, M0min : optional
+        As in coniZpM.
     return_cumulative : bool, optional
-        If True, return E_p for every integer dilation 1..floor(ellipsoid_dilation)
-        instead of only the last. Defaults to False.
+        Return E_p for each integer dilation 1..ellipsoid_dilation. Defaults
+        to False.
 
     Returns
     -------
     float or ndarray
-        The expected count (0 when the ellipsoid form is not positive definite,
-        as coniZpM then finds nothing for this p).
+        The expected count (0 if the ellipsoid is not positive definite).
     """
     if data is not None:
         if kappa is not None or Mbasis is not None:
@@ -271,45 +214,33 @@ def estimate_coni_pfvs(
     N0: int = 100_000,
     seed: int = 0) -> float:
     """
-    Estimated number of coniPFVs a coniZpM search finds. For ranking.
-
-    Either pass the p-vectors you would give coniZpM (`ps`), or a search size
-    `N` (the p-vectors `pvecs(data, N)` would return). The estimate averages
-    `expected_pfvs_per_p` over at most `n_samp` of them and scales by the total.
+    Predicted number of coniPFVs coniZpM finds on a set of p-vectors: the
+    mean of `expected_pfvs_per_p` over n_samp of them, times their number.
+    Overcounts 3-5x; compare estimates with each other, not with counts.
 
     Parameters
     ----------
     data : CYData
-        The relevant data from the associated CY (coni).
-    ps : ArrayLike of shape (N, h11-1), optional
-        The p-vectors of the search. Mutually exclusive with N.
+        The CY (coni).
+    ps : ArrayLike of shape (n, h11-1), optional
+        The p-vectors. Or pass N instead.
     N : integer, optional
-        Search size: estimate for the N p-vectors `score_coni_geometries`
-        searches. Up to 10^7 they are enumerated and subsampled uniformly;
-        beyond, they are sampled without enumerating them all (see
-        `_sample_frontier`).
-    ellipsoid_dilation : float, optional
-        As in coniZpM. Defaults to 1.
-    Q : integer, optional
-        As in coniZpM. Defaults to h11+h21+4.
-    M0min : integer, optional
-        As in coniZpM. Defaults to 13.
+        Use the same N p-vectors as `score_coni_geometries`. Above 10^7 they
+        are sampled without enumerating them (absolute level then depends on
+        N0; keep it fixed).
+    Q, ellipsoid_dilation, M0min : optional
+        As in coniZpM.
     n_samp : integer, optional
-        Number of p-vectors to average over. Per-p estimates are heavy-tailed;
-        512 gave stable rankings on the coni_pfvs dataset. Defaults to 512.
+        Number of p-vectors evaluated. Defaults to 512.
     N0 : integer, optional
-        Base enumeration size when sampling from N > 10^7. Changes the
-        absolute level, not the ranking; keep it fixed across compared
-        estimates. Defaults to 100,000.
+        Base size for sampling above 10^7. Defaults to 100,000.
     seed : integer, optional
-        Seed for the p-vector subsample. Defaults to 0.
+        Seed for the subsample. Defaults to 0.
 
     Returns
     -------
     float
-        Estimated count. Overestimates by 3-5x (median; see the module
-        description) with a wide per-conifold spread; compare estimates with
-        each other rather than with absolute counts.
+        The predicted count.
     """
     if not data.coni:
         raise ValueError("estimate_coni_pfvs only applies to coni contexts.")
@@ -348,11 +279,7 @@ def _count_coni_pfvs(
     ps: np.ndarray,
     ellipsoid_dilation: float = 1,
     **kwargs) -> int:
-    """
-    Internal to `score_coni_geometries`: the number of coniPFVs coniZpM
-    finds on the p-vectors ps, searched in chunks of _COUNT_CHUNK to bound
-    memory. kwargs (Q, M0min, device, n_jobs) are passed to coniZpM.
-    """
+    """Internal: len(coniZpM(data, ps, ...)), in chunks to bound memory."""
     n_pfvs = 0
     for i in range(0, len(ps), _COUNT_CHUNK):
         n_pfvs += len(coniZpM(data, ps[i:i + _COUNT_CHUNK],
@@ -370,45 +297,35 @@ def score_coni_geometries(
     verbosity: int = 0,
     **kwargs) -> np.ndarray:
     """
-    Score conifolds by how many coniPFVs a size-N search finds in each.
-
-    The search is coniZpM on exactly N p-vectors per conifold: those of
-    `pvecs(data, N)` (every primitive p in the cone in the smallest L-inf box
-    |p_i| <= B holding at least N), trimmed to N by keeping a uniform random
-    subset of the outermost shell |p|_inf = B. On a GPU this takes 1-10 s per
-    conifold for N = 2M at dilation 150 and h11 = 5-10, most of it generating
-    the p-vectors.
+    Score each conifold by the number of coniPFVs coniZpM finds on its first
+    N p-vectors (`pvecs(data, N)`, trimmed to exactly N). On a GPU: seconds
+    per conifold for N = 2M at dilation 150.
 
     Parameters
     ----------
     datas : list of CYData
-        The conifolds (coni contexts).
+        The conifolds.
     N : integer
-        Number of p-vectors searched per conifold.
+        p-vectors per conifold.
     ellipsoid_dilation : float, optional
         As in coniZpM. Defaults to 1.
     method : str, optional
-        "search" (the default): the exact count; use a GPU. "estimate":
-        `estimate_coni_pfvs`, the Gaussian-heuristic prediction of it (CPU
-        only; ranks worse, see the module description).
+        "search" (default) counts; "estimate" uses `estimate_coni_pfvs`
+        instead (no GPU needed, ranks worse).
     n_prefetch : integer, optional
-        For "search": generate the p-vectors of the next conifolds in this
-        many worker processes while the current one is searched (generating
-        them is single-threaded and, at h11 >= 10, often slower than the GPU
-        search). Each holds N x h11 int64. 0 generates them in turn.
-        Defaults to 4.
+        Worker processes generating the next conifolds' p-vectors during the
+        search; each holds N x h11 int64. Defaults to 4.
     seed : integer, optional
-        Seed for the trimming of the outermost shell. Defaults to 0.
+        Seed for the trimming. Defaults to 0.
     verbosity : integer, optional
-        >= 1 prints one line per conifold. Defaults to 0.
+        1 prints a line per conifold. Defaults to 0.
     **kwargs :
         Passed to coniZpM (Q, M0min, device, n_jobs) or `estimate_coni_pfvs`.
 
     Returns
     -------
     ndarray of shape (len(datas),)
-        scores[i]: the number of coniPFVs found in datas[i] (or, for
-        "estimate", the predicted number).
+        scores[i] for datas[i].
     """
     if method not in ("search", "estimate"):
         raise ValueError(f"method must be 'search' or 'estimate', got {method!r}.")

@@ -19,12 +19,8 @@ First packaged release. Relative to the code used for arXiv:2406.13751 ("dSv1"):
   not a search parameter, since at h11 >= 8 it is typically ~10^3.
 
 ### Scoring conifolds
-- `pfvs.scoring`: `score_coni_geometries` scores conifolds by the number of
-  coni PFVs coniZpM finds on exactly the first N p-vectors of `pvecs`,
-  generating the next geometries' p-vectors in worker processes while the GPU
-  searches. `expected_pfvs_per_p` / `estimate_coni_pfvs` predict the same
-  count without searching (Gaussian heuristic on coniZpM's ellipsoids; ranks
-  worse, and overcounts 3-5x, mostly because it does not model det N != 0).
+- `pfvs.scoring.score_coni_geometries`: scores conifolds by the coni PFV count
+  of a size-N search, or (`method="estimate"`) a prediction of it.
 
 ### Behaviour changes
 - PFV order: within each p-vector, PFVs are listed in a canonical order (by M,

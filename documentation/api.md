@@ -1805,37 +1805,26 @@ def expected_pfvs_per_p(p: ArrayLike,
                         return_cumulative: bool = False) -> float | np.ndarray
 ```
 
-Gaussian-heuristic expected number of coniPFVs coniZpM finds from one p.
-
-See the module description for the formula and its caveats.
+Gaussian-heuristic expected number of coniPFVs coniZpM finds from one p
+(formula in the module description).
 
 Parameters
 ----------
 p : ArrayLike of shape (h11,) or (h11-1,)
-    The p-vector (perpendicular components, as passed to coniZpM, or full).
+    The p-vector, as passed to coniZpM, or full.
 data : CYData, optional
-    The relevant data from the associated CY. Mutually exclusive with kappa
-    and Mbasis (pass those to avoid recomputing them per p).
-kappa : ArrayLike of shape (h11, h11, h11), optional
-    data.kappa_cob.
-Mbasis : ArrayLike of shape (h11, h11), optional
-    data.M_lattice().
-Q : integer, optional
-    The tadpole. Required with kappa/Mbasis; defaults to coniZpM's
-    h11+h21+4 when data is given.
-ellipsoid_dilation : float, optional
-    As in coniZpM. Defaults to 1.
-M0min : integer, optional
-    As in coniZpM. Defaults to 13.
+    The CY. Or pass kappa (data.kappa_cob), Mbasis (data.M_lattice()) and
+    Q instead, to avoid recomputing them per p.
+Q, ellipsoid_dilation, M0min : optional
+    As in coniZpM.
 return_cumulative : bool, optional
-    If True, return E_p for every integer dilation 1..floor(ellipsoid_dilation)
-    instead of only the last. Defaults to False.
+    Return E_p for each integer dilation 1..ellipsoid_dilation. Defaults
+    to False.
 
 Returns
 -------
 float or ndarray
-    The expected count (0 when the ellipsoid form is not positive definite,
-    as coniZpM then finds nothing for this p).
+    The expected count (0 if the ellipsoid is not positive definite).
 
 <a id="pfvs.scoring.estimate_coni_pfvs"></a>
 
@@ -1856,45 +1845,33 @@ def estimate_coni_pfvs(data: CYData,
                        seed: int = 0) -> float
 ```
 
-Estimated number of coniPFVs a coniZpM search finds. For ranking.
-
-Either pass the p-vectors you would give coniZpM (`ps`), or a search size
-`N` (the p-vectors `pvecs(data, N)` would return). The estimate averages
-`expected_pfvs_per_p` over at most `n_samp` of them and scales by the total.
+Predicted number of coniPFVs coniZpM finds on a set of p-vectors: the
+mean of `expected_pfvs_per_p` over n_samp of them, times their number.
+Overcounts 3-5x; compare estimates with each other, not with counts.
 
 Parameters
 ----------
 data : CYData
-    The relevant data from the associated CY (coni).
-ps : ArrayLike of shape (N, h11-1), optional
-    The p-vectors of the search. Mutually exclusive with N.
+    The CY (coni).
+ps : ArrayLike of shape (n, h11-1), optional
+    The p-vectors. Or pass N instead.
 N : integer, optional
-    Search size: estimate for the N p-vectors `score_coni_geometries`
-    searches. Up to 10^7 they are enumerated and subsampled uniformly;
-    beyond, they are sampled without enumerating them all (see
-    `_sample_frontier`).
-ellipsoid_dilation : float, optional
-    As in coniZpM. Defaults to 1.
-Q : integer, optional
-    As in coniZpM. Defaults to h11+h21+4.
-M0min : integer, optional
-    As in coniZpM. Defaults to 13.
+    Use the same N p-vectors as `score_coni_geometries`. Above 10^7 they
+    are sampled without enumerating them (absolute level then depends on
+    N0; keep it fixed).
+Q, ellipsoid_dilation, M0min : optional
+    As in coniZpM.
 n_samp : integer, optional
-    Number of p-vectors to average over. Per-p estimates are heavy-tailed;
-    512 gave stable rankings on the coni_pfvs dataset. Defaults to 512.
+    Number of p-vectors evaluated. Defaults to 512.
 N0 : integer, optional
-    Base enumeration size when sampling from N > 10^7. Changes the
-    absolute level, not the ranking; keep it fixed across compared
-    estimates. Defaults to 100,000.
+    Base size for sampling above 10^7. Defaults to 100,000.
 seed : integer, optional
-    Seed for the p-vector subsample. Defaults to 0.
+    Seed for the subsample. Defaults to 0.
 
 Returns
 -------
 float
-    Estimated count. Overestimates by 3-5x (median; see the module
-    description) with a wide per-conifold spread; compare estimates with
-    each other rather than with absolute counts.
+    The predicted count.
 
 <a id="pfvs.scoring.score_coni_geometries"></a>
 
@@ -1914,45 +1891,35 @@ def score_coni_geometries(datas: list[CYData],
                           **kwargs) -> np.ndarray
 ```
 
-Score conifolds by how many coniPFVs a size-N search finds in each.
-
-The search is coniZpM on exactly N p-vectors per conifold: those of
-`pvecs(data, N)` (every primitive p in the cone in the smallest L-inf box
-|p_i| <= B holding at least N), trimmed to N by keeping a uniform random
-subset of the outermost shell |p|_inf = B. On a GPU this takes 1-10 s per
-conifold for N = 2M at dilation 150 and h11 = 5-10, most of it generating
-the p-vectors.
+Score each conifold by the number of coniPFVs coniZpM finds on its first
+N p-vectors (`pvecs(data, N)`, trimmed to exactly N). On a GPU: seconds
+per conifold for N = 2M at dilation 150.
 
 Parameters
 ----------
 datas : list of CYData
-    The conifolds (coni contexts).
+    The conifolds.
 N : integer
-    Number of p-vectors searched per conifold.
+    p-vectors per conifold.
 ellipsoid_dilation : float, optional
     As in coniZpM. Defaults to 1.
 method : str, optional
-    "search" (the default): the exact count; use a GPU. "estimate":
-    `estimate_coni_pfvs`, the Gaussian-heuristic prediction of it (CPU
-    only; ranks worse, see the module description).
+    "search" (default) counts; "estimate" uses `estimate_coni_pfvs`
+    instead (no GPU needed, ranks worse).
 n_prefetch : integer, optional
-    For "search": generate the p-vectors of the next conifolds in this
-    many worker processes while the current one is searched (generating
-    them is single-threaded and, at h11 >= 10, often slower than the GPU
-    search). Each holds N x h11 int64. 0 generates them in turn.
-    Defaults to 4.
+    Worker processes generating the next conifolds' p-vectors during the
+    search; each holds N x h11 int64. Defaults to 4.
 seed : integer, optional
-    Seed for the trimming of the outermost shell. Defaults to 0.
+    Seed for the trimming. Defaults to 0.
 verbosity : integer, optional
-    >= 1 prints one line per conifold. Defaults to 0.
+    1 prints a line per conifold. Defaults to 0.
 **kwargs :
     Passed to coniZpM (Q, M0min, device, n_jobs) or `estimate_coni_pfvs`.
 
 Returns
 -------
 ndarray of shape (len(datas),)
-    scores[i]: the number of coniPFVs found in datas[i] (or, for
-    "estimate", the predicted number).
+    scores[i] for datas[i].
 
 <a id="pfvs.gpu"></a>
 
